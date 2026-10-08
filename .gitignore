@@ -1,0 +1,10 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+.vscode/
+data/*.tbl.tmp
+logs/
+run/
+app.conf
