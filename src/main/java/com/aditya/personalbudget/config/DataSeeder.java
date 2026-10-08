@@ -30,10 +30,12 @@ public class DataSeeder implements ApplicationRunner {
     private final DemoDataGenerator demoData;
     private final BudgetProperties properties;
     private final AppUserRepository users;
+    private final HostedChitDemoSeeder hostedChitDemo;
 
     public DataSeeder(TenantRepository tenants, TenantProvisioningService provisioning, DemoDataGenerator demoData,
-                      BudgetProperties properties, AppUserRepository users) {
+                      BudgetProperties properties, AppUserRepository users, HostedChitDemoSeeder hostedChitDemo) {
         this.users = users;
+        this.hostedChitDemo = hostedChitDemo;
         this.tenants = tenants;
         this.provisioning = provisioning;
         this.demoData = demoData;
@@ -65,5 +67,7 @@ public class DataSeeder implements ApplicationRunner {
                 UserContext.clear();
             }
         }
+        // the sample hosted chit, so Host a Chit is not empty (removable from that page)
+        hostedChitDemo.seed(tenants.findById(admin.getTenantId()).orElseThrow());
     }
 }

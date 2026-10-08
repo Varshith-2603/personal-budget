@@ -73,6 +73,17 @@ public class AppSettingsService {
         return approvalEnabled();
     }
 
+    /** The sample hosted chit was added once ({@code hosted-chit.demo-seeded}), so a cleared demo stays cleared. */
+    public boolean hostedChitDemoSeeded() {
+        return "true".equalsIgnoreCase(read().getProperty("hosted-chit.demo-seeded", "false").trim());
+    }
+
+    public synchronized void markHostedChitDemoSeeded() {
+        Properties p = read();
+        p.setProperty("hosted-chit.demo-seeded", "true");
+        write(p);
+    }
+
     public static boolean valid(String path) {
         return path != null && path.matches("[a-z0-9][a-z0-9-]{0,29}") && !RESERVED.contains(path);
     }

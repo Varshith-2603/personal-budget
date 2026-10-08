@@ -26,6 +26,7 @@ import * as income from './views/income.js';
 import * as settings from './views/settings.js';
 import * as accounts from './views/accounts.js';
 import * as chits from './views/chits.js';
+import * as hostChits from './views/host-chits.js';
 import * as planning from './views/planning.js';
 import * as balanceSheet from './views/balance-sheet.js';
 import * as reports from './views/reports.js';
@@ -43,6 +44,8 @@ const ROUTES = [
     { path: 'transactions', label: 'Journal', iconName: 'journal', view: transactions, feature: 'JOURNAL' },
     { path: 'accounts', label: 'Accounts', iconName: 'wallet', view: accounts, feature: 'ACCOUNTS' },
     { path: 'chits', label: 'Chits', iconName: 'chit', view: chits, feature: 'CHITS' },
+    // chits the user runs as the organiser (shared with the Chits section)
+    { path: 'host-chits', label: 'Host a Chit', iconName: 'hand-coins', view: hostChits, feature: 'CHITS' },
     { path: 'planning', label: 'Budgets', iconName: 'target', view: planning, feature: 'BUDGETS' },
     { path: 'balance-sheet', label: 'Balance Sheet', iconName: 'scale', view: balanceSheet, feature: 'BALANCE_SHEET' },
     { path: 'reports', label: 'Reports', iconName: 'report', view: reports, feature: 'REPORTS' },

@@ -11,6 +11,8 @@ public enum VoucherType {
     TRANSFER("Transfer", "TR"),
     CHIT_INSTALLMENT("Chit Installment", "CI"),
     CHIT_PAYOUT("Chit Payout", "CP"),
+    HOSTED_CHIT_COLLECTION("Chit Collection", "HC"),
+    HOSTED_CHIT_PAYOUT("Hosted Chit Payout", "HP"),
     LENDING("Money Lent", "LN"),
     PAID_FOR("Paid for Others", "PO"),
     REPAYMENT("Repayment Received", "RR"),

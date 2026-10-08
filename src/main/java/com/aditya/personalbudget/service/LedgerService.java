@@ -242,6 +242,8 @@ public class LedgerService {
                     new Lock("Opening balance. Change it on the account.", "accounts", false, reversedBy, null);
             case SOURCE_CHIT_INSTALLMENT, SOURCE_CHIT_PAYOUT ->
                     new Lock("Chit posting. Undo it from the Chits screen.", "chits", false, reversedBy, null);
+            case HostedChitService.SOURCE_COLLECTION, HostedChitService.SOURCE_PAYOUT, HostedChitService.SOURCE_COMMISSION ->
+                    new Lock("Posted from a chit you host. Edit or undo it on Host a Chit.", "host-chits", false, reversedBy, null);
             case SOURCE_CLAIM, SOURCE_CLAIM_REPAYMENT, SOURCE_CLAIM_INTEREST ->
                     new Lock("Money lent, borrowed or its interest. Manage it from Expenses.", "expenses", false, reversedBy, null);
             case SOURCE_REFUND ->

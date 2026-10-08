@@ -14,6 +14,8 @@ const KINDS = {
     TRANSFER: { iconName: 'transfer', tone: '', label: 'Transfer' },
     CHIT_INSTALLMENT: { iconName: 'chit', tone: 'gold', label: 'Chit payment' },
     CHIT_PAYOUT: { iconName: 'gift', tone: 'aqua', label: 'Chit payout' },
+    HOSTED_CHIT_COLLECTION: { iconName: 'hand-coins', tone: 'aqua', label: 'Chit collection (hosted)' },
+    HOSTED_CHIT_PAYOUT: { iconName: 'crown', tone: 'gold', label: 'Chit payout (hosted)' },
     OPENING: { iconName: 'flag', tone: 'gray', label: 'Opening balance' },
     LENDING: { iconName: 'hand', tone: 'violet', label: 'Money lent' },
     PAID_FOR: { iconName: 'users', tone: 'violet', label: 'Paid for someone' },

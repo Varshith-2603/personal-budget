@@ -18,7 +18,8 @@ import { openCustomizer } from '../components/dashboard-customizer.js';
 import { DASHBOARD_WIDGETS, dashboardLayout } from '../core/prefs.js';
 
 export async function render(container, _params, isCurrent) {
-    const [d, chits] = await Promise.all([api.get('/dashboard'), api.get('/chits').catch(() => [])]);
+    const [d, chits, hosted] = await Promise.all([api.get('/dashboard'), api.get('/chits').catch(() => []),
+        api.get('/hosted-chits/summary').catch(() => null)]);
     if (!isCurrent()) return;
     const reload = () => render(container, [], isCurrent);
     const k = d.kpis;
@@ -85,6 +86,7 @@ export async function render(container, _params, isCurrent) {
             ${kpi({ label: 'Savings rate', value: percent(k.savingsRate), iconName: 'piggy', tone: 'violet', sub: 'Share of income kept' })}
             ${kpi({ label: 'Chits', value: money(k.chitInvested), iconName: 'chit', tone: 'gold', sub: `${k.activeChits} running · accrued ${moneyShort(k.chitAccruedInterest)}` })}
         </div>` : ''}
+        ${hosted?.running ? hostedDuesHtml(hosted) : ''}
         ${layout.bands.insights ? '<div class="insight-ribbon" id="insight-ribbon"></div>' : ''}
         <div class="dash-grid">${widgets.map(id => `<div class="dash-cell" style="grid-column: span ${layout.spans[id]}">${bodies[id]()}</div>`).join('')
             || emptyState('Every panel is switched off. Use Customize to add some.', 'dashboard')}</div>
@@ -378,4 +380,14 @@ function drawRibbon(el, { score, grade, parts, insights }) {
             <div class="hc-breakdown">${parts.map(p => `<div><span>${esc(p.label)}</span><b>${Math.round(p.score)} / ${p.max}</b><small>${esc(p.note)}</small></div>`).join('')}</div>`,
         actions: [{ label: 'Close' }],
     }));
+}
+
+/** Chits the user hosts: dues still to collect from members (opens Host a Chit). */
+function hostedDuesHtml(h) {
+    const due = Number(h.pendingDues);
+    return `<a class="hc-dash" href="#/host-chits" title="Chits you run as the organiser">${icon('hand-coins')}
+        <b>Pending chit dues</b><span class="hc-dash-amt ${due ? '' : 'clear'}">${due ? money(due) : 'none'}</span>
+        <small>${h.pendingCount} installment${h.pendingCount === 1 ? '' : 's'} to collect · ${h.running} hosted chit${h.running === 1 ? '' : 's'}
+            · collected this month ${moneyShort(h.collectedThisMonth)} of ${moneyShort(h.expectedThisMonth)}${h.nextDueDate ? ` · next due ${shortDate(h.nextDueDate)}` : ''}</small>
+        ${icon('chevron-right', 'chev')}</a>`;
 }
