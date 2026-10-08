@@ -4,7 +4,7 @@ out/
 .idea/
 *.iml
 .vscode/
-data/*.tbl.tmp
+data/
 logs/
 run/
 app.conf
