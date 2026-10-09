@@ -48,6 +48,10 @@ public class HostedChitMember implements TenantOwned {
     @Column(length = 20)
     private String phone;
 
+    /** For e-mailed reminders and receipts. */
+    @Column(length = 120)
+    private String email;
+
     @Version
     private Long version;
 }

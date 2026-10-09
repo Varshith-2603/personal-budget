@@ -23,6 +23,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
+    // Sending reminders and receipts by e-mail (only when budget.mail is configured)
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+
     // JPA annotations (mapping metadata + constraints) and Spring Data repository contracts.
     // Persistence itself is done by our own tab-separated file store - no database needed.
     implementation 'jakarta.persistence:jakarta.persistence-api'

@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -48,9 +49,26 @@ public class HostedChitPayment implements TenantOwned {
     @Column(nullable = false)
     private Integer monthNo;
 
-    @Positive
+    /** Towards the month's installment (can be 0 when only late interest is paid). */
+    @PositiveOrZero
     @Column(nullable = false)
     private BigDecimal amount;
+
+    /** Late payment interest collected with this payment (the organiser's income). */
+    @PositiveOrZero
+    private BigDecimal lateFee;
+
+    /** Late payment interest let off with this payment. */
+    @PositiveOrZero
+    private BigDecimal lateFeeWaived;
+
+    /** UPI reference, cheque or bank transfer number. */
+    @Column(length = 60)
+    private String reference;
+
+    /** RC-000123: printed on the receipt. */
+    @Column(length = 20)
+    private String receiptNo;
 
     @Column(nullable = false)
     private LocalDate paidDate;

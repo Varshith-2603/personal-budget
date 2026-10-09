@@ -1,0 +1,440 @@
+/**
+ * The page behind a chit link (/chit-share.html#<token>): no sign-in, only the token. One page, four kinds of link:
+ *   MEMBER     a member's statement: what is due now (with late interest), "Pay now" when the organiser has a UPI ID:
+ *              one tap for Google Pay, PhonePe, Paytm or BHIM (or any UPI app) on a phone, a QR code on a computer;
+ *              every month and every payment with its receipt number
+ *   CHIT       every month with the winners and collections, optionally the organiser's earnings
+ *   RECEIPT    one payment's receipt
+ *   AGREEMENT  the winner's agreement, which the member accepts with their name, mobile number and a drawn signature
+ *              (location if they allow it); the device's details are recorded as evidence
+ * Worked out when the page is opened, so it is always current. The token stays in the address fragment.
+ */
+import { qrSvg } from './core/qr.js';
+
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const day = iso => iso ? new Date(iso.length === 10 ? iso + 'T00:00:00' : iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const when = iso => new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+const token = location.hash.slice(1);
+let ch, fmt;
+const money = v => fmt.format(Math.round(Number(v || 0)));
+const STATUS = { COMPLETED: ['done', 'Done'], ONGOING: ['open', 'This month'], UPCOMING: ['', 'Coming up'] };
+const DUE = { PAID: ['done', 'Paid'], PARTIAL: ['part', 'Part paid'], PENDING: ['late', 'Not paid'], NOTDUE: ['', 'Not due yet'] };
+const TITLES = { RECEIPT: 'Receipt', AGREEMENT: 'Agreement', MEMBER: 'Statement' };
+
+async function start() {
+    const main = $('sh-main');
+    if (!token) { main.innerHTML = message('This link is incomplete.'); return; }
+    if (token.startsWith('plan=')) { planPage(main, token.slice(5)); return; }
+    try {
+        ch = await call(`/api/public/hosted-chits/${encodeURIComponent(token)}`);
+    } catch (error) { main.innerHTML = message(error.message); return; }
+    fmt = new Intl.NumberFormat(ch.currency === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency: ch.currency || 'INR', maximumFractionDigits: 0 });
+    document.title = TITLES[ch.kind] ? `${TITLES[ch.kind]} · ${ch.name}` : ch.name;
+    draw();
+}
+
+async function call(url, body) {
+    const r = await fetch(url, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.message || 'This link does not work any more.');
+    return data;
+}
+
+function draw() {
+    const main = $('sh-main');
+    const foot = `<p class="sh-meta hc-share-note">As of ${day(ch.asOf)} · shared by ${esc(ch.sharedBy)}${ch.sharedWith ? ` with ${esc(ch.sharedWith)}` : ''} · this link works until ${when(ch.expiresAt)}</p>`;
+    if (ch.kind === 'RECEIPT') { main.innerHTML = receiptHtml() + foot; return; }
+    if (ch.kind === 'AGREEMENT') { main.innerHTML = agreementHtml() + foot; bindAccept(); return; }
+    main.innerHTML = (ch.kind === 'MEMBER' ? memberHtml() : chitHtml()) + foot;
+    main.querySelectorAll('[data-desktop]').forEach(b => b.addEventListener('click', () => {
+        const tip = $('cs-pay-tip');
+        tip.textContent = 'These buttons open the app on a phone. On a computer, scan the code with your phone instead.';
+        tip.classList.add('cs-flash');
+    }));
+    main.querySelector('[data-copy-upi]')?.addEventListener('click', async e => {
+        try { await navigator.clipboard.writeText(ch.upiId); e.target.textContent = 'Copied'; } catch { /* not allowed */ }
+    });
+}
+
+// ---------------------------------------------------------------- a chit table shared before the chit starts
+
+/**
+ * #plan=<data>: the chit table the organiser shared while setting up a chit. The figures travel in the link itself
+ * (nothing is stored on the server), so the page works them out here.
+ */
+function planPage(main, encoded) {
+    let p;
+    try {
+        p = JSON.parse(decodeURIComponent(escape(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')))));
+    } catch { main.innerHTML = message('This chit table link is damaged.'); return; }
+    fmt = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
+    document.title = `Chit table · ${p.n}`;
+    const n = Number(p.m) || 0;
+    const auction = p.t === 'AUCTION';
+    const [y, mo] = String(p.s).split('-').map(Number);
+    const dueOf = no => new Date(y, mo - 1 + no - 1, Math.min(Number(p.d) || 1, 28));
+    const fmtDay = d => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
+    const short = v => { const a = Math.abs(v); return a >= 1e5 ? `₹${(v / 1e5).toFixed(2).replace(/\.?0+$/, '')}L` : a >= 1e3 ? `₹${(v / 1e3).toFixed(1).replace(/\.0$/, '')}K` : money(v); };
+    const rows = [];
+    for (let no = 1; no <= n; no++) {
+        const value = auction ? p.b : p.b + (no - 1) * p.inc;
+        rows.push({ no, due: dueOf(no), value, collect: auction ? p.b : n * p.i + (no - 1) * p.x, payout: value - p.c });
+    }
+    const maxBid = Math.round(p.b * (Number(p.mb) || 0) / 100);
+    const minPay = p.i - Math.floor((maxBid - p.c) / Math.max(1, n));
+    const table = auction ? `<table class="st-table cs-plan"><thead><tr><th>Month</th><th>Pay by</th><th class="r">Winning bid</th><th class="r">Each pays</th><th class="r">Winner gets</th></tr></thead>
+        <tbody>${rows.map(x => x.no === n
+            ? `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${money(p.c)}</td><td class="r">${money(p.i)}</td><td class="r"><b>${money(p.b - p.c)}</b></td></tr>`
+            : `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${short(p.c)} – ${short(maxBid)}</td><td class="r">${short(minPay)} – ${short(p.i)}</td><td class="r"><b>${short(p.b - maxBid)} – ${short(p.b - p.c)}</b></td></tr>`).join('')}</tbody></table>`
+        : `<table class="st-table cs-plan"><thead><tr><th>Month</th><th>Pay by</th><th class="r">Members pay</th><th class="r">Past winners pay</th><th class="r">Chit value</th><th class="r">Winner gets</th></tr></thead>
+        <tbody>${rows.map(x => `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${money(p.i)}</td><td class="r">${x.no > 1 ? money(p.i + p.x) : '—'}</td>
+            <td class="r">${money(x.value)}</td><td class="r"><b>${money(x.payout)}</b></td></tr>`).join('')}</tbody></table>`;
+    main.innerHTML = `
+        <section class="sh-card st-hero">
+            <div class="sh-head"><div><small>${esc(p.h || '')}${p.h ? ' · ' : ''}chit table${auction ? ' · auction chit' : ''}</small><h1>${esc(p.n)}</h1></div></div>
+            <p class="cs-plan-meta">${n} members · ${n} months · ${fmtDay(rows[0].due)} – ${fmtDay(rows.at(-1).due)}${p.o ? ` · run by ${esc(p.o)}` : ''}</p>
+            <div class="st-total">
+                <div><span>Each member pays</span><b>${money(p.i)}</b><small>${auction ? 'a month, less that month’s dividend' : `a month${p.x ? `; ${money(p.i + p.x)} after winning` : ''}`}</small></div>
+                <div class="st-side"><span>Chit value</span><b>${money(p.b)}</b><small>${auction ? `bids ${money(p.c)} – ${money(maxBid)}` : p.inc ? `rising ${money(p.inc)} a month` : 'every month'}</small></div>
+                <div class="st-side"><span>Pay by</span><b>${Number(p.d)}${['th', 'st', 'nd', 'rd'][(Number(p.d) % 10 > 3 || Math.floor(Number(p.d) % 100 / 10) === 1) ? 0 : Number(p.d) % 10]}</b><small>of every month${Number(p.l) ? ` · ${p.l}% a month if late (after ${p.g} days)` : ''}</small></div>
+            </div>
+        </section>
+        <section class="sh-card st-section"><h2>Every month</h2><div class="st-scroll">${table}</div>
+            <button class="cs-print" onclick="window.print()">Print or save as PDF</button></section>
+        <p class="sh-meta hc-share-note">A proposed chit table shared by the organiser before the chit starts. The final figures are those of the chit once it runs.</p>`;
+}
+
+// ---------------------------------------------------------------- member statement (with the payment link)
+
+/** The UPI payment's query string (payee, name, amount, note). */
+function upiQuery(amount) {
+    const params = [['pa', ch.upiId], ['pn', ch.payeeName || ch.upiId], ['am', Number(amount).toFixed(2)], ['cu', 'INR'],
+        ['tn', `${ch.name} - ${ch.member.name}`.slice(0, 50)]];
+    return params.map(([k, v]) => `${k}=${encodeURIComponent(v).replace(/%40/g, '@')}`).join('&');
+}
+
+function upiLink(amount) {
+    return 'upi://pay?' + upiQuery(amount);
+}
+
+/**
+ * One button per app. On Android an intent link opens exactly that app (or its Play Store page when it is not
+ * installed); on an iPhone each app's own link; on a computer the buttons explain to scan the QR code instead.
+ */
+const UPI_APPS = [
+    { name: 'Google Pay', short: 'G Pay', cls: 'gpay', pkg: 'com.google.android.apps.nbu.paisa.user', ios: 'gpay://upi/pay?' },
+    { name: 'PhonePe', short: 'PhonePe', cls: 'phonepe', pkg: 'com.phonepe.app', ios: 'phonepe://pay?' },
+    { name: 'Paytm', short: 'Paytm', cls: 'paytm', pkg: 'net.one97.paytm', ios: 'paytmmp://pay?' },
+    { name: 'BHIM', short: 'BHIM', cls: 'bhim', pkg: 'in.org.npci.upiapp', ios: 'upi://pay?' },
+];
+
+function appLink(app, amount) {
+    const ua = navigator.userAgent;
+    const query = upiQuery(amount);
+    if (/Android/i.test(ua)) {
+        const store = encodeURIComponent(`https://play.google.com/store/apps/details?id=${app.pkg}`);
+        return `intent://pay?${query}#Intent;scheme=upi;package=${app.pkg};S.browser_fallback_url=${store};end`;
+    }
+    if (/iPhone|iPad|iPod/i.test(ua)) return app.ios + query;
+    return null;
+}
+
+function memberHtml() {
+    const auction = ch.chitType === 'AUCTION';
+    const m = ch.member;
+    const today = new Date().toISOString().slice(0, 10);
+    const late = m.dues.filter(x => (x.status === 'PENDING' || x.status === 'PARTIAL') && x.dueDate < today);
+    const overdue = late.reduce((s, x) => s + Number(x.due) - Number(x.paid), 0) + Number(m.lateFeeDue || 0);
+    const payNow = Number(m.payNow || 0);
+    const phone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const pay = ch.upiId && payNow > 0 ? `
+        <section class="sh-card cs-pay">
+            <div class="cs-pay-main"><span>Pay now</span><b>${money(payNow)}</b>
+                <small>${Number(m.lateFeeDue) ? `includes ${money(m.lateFeeDue)} late interest · ` : ''}to ${esc(ch.payeeName || ch.upiId)}</small>
+                <div class="cs-apps">${UPI_APPS.map(app => {
+                    const href = appLink(app, payNow);
+                    return href ? `<a class="cs-app ${app.cls}" href="${esc(href)}"><i>${app.short.slice(0, 1)}</i>Pay with ${app.name}</a>`
+                        : `<button type="button" class="cs-app ${app.cls}" data-desktop><i>${app.short.slice(0, 1)}</i>${app.name}</button>`;
+                }).join('')}</div>
+                <a class="cs-pay-btn" href="${upiLink(payNow)}">Any UPI app</a>
+                <div class="cs-upi-id"><span>UPI ID <b>${esc(ch.upiId)}</b></span><button type="button" data-copy-upi>Copy</button></div>
+                <small id="cs-pay-tip">${phone ? 'Tap your app: the amount and note are filled in. Check the name before you pay.'
+                    : 'On a computer: scan the code with your phone’s UPI app, or open this link on your phone.'}</small></div>
+            <div class="cs-qr">${qrSvg(upiLink(payNow), { size: 170 })}<small>Scan to pay ${money(payNow)}</small></div>
+        </section>` : '';
+    return `
+        <section class="sh-card st-hero">
+            ${head(m.name, ch.name)}
+            ${msg()}
+            <div class="st-total">
+                <div><span>${overdue > 0 ? 'Overdue' : m.nextDueDate ? 'Next payment' : 'All paid'}</span>
+                    <b>${overdue > 0 ? money(overdue) : m.nextDueAmount ? money(m.nextDueAmount) : money(0)}</b>
+                    <small>${overdue > 0 ? `for ${late.map(x => 'month ' + x.monthNo).join(', ') || 'late interest'} · please pay at the earliest`
+                        : m.nextDueDate ? `due on ${day(m.nextDueDate)}` : 'nothing more is due'}</small></div>
+                <div class="st-side"><span>${m.wonMonth ? `You won month ${m.wonMonth}` : 'Not won yet'}</span>
+                    <b>${m.wonMonth ? money(m.received) : '—'}</b><small>${m.receivedOn ? `received ${day(m.receivedOn)}` : m.wonMonth ? 'to be paid' : auction ? 'bid in a coming auction' : 'your turn will come'}</small></div>
+                <div class="st-side"><span>Paid so far</span><b>${money(m.totalPaid)}</b><small>${m.payments.length} payment${m.payments.length === 1 ? '' : 's'}</small></div>
+            </div>
+            ${progress()}
+        </section>
+        ${pay}
+        <div class="st-figs">
+            <div class="st-fig"><span>Each month</span><b>${money(ch.installment)}</b><small>${auction ? 'less that month’s dividend' : Number(ch.winnerExtraAmount) ? `+${money(ch.winnerExtraAmount)} after winning` : 'every month'}</small></div>
+            ${auction ? `<div class="st-fig"><span>Dividends so far</span><b class="pos">${money(m.dividends)}</b><small>your share of the bids</small></div>` : ''}
+            <div class="st-fig"><span>Late payments</span><b>${Number(ch.lateFeePercent) ? `${Number(ch.lateFeePercent)}% a month` : 'no interest'}</b><small>${Number(ch.lateFeePercent) ? `after ${ch.lateGraceDays} days` : 'pay on time anyway'}</small></div>
+            <div class="st-fig"><span>Chit value</span><b>${money(ch.baseValue)}</b><small>${ch.memberCount} members</small></div>
+        </div>
+        <section class="sh-card st-section"><h2>Your months</h2>
+            <div class="st-scroll"><table class="st-table"><thead><tr><th>Month</th><th>Pay by</th><th class="r">Due</th><th class="r">Paid</th><th class="r">Late int.</th><th>Status</th></tr></thead>
+            <tbody>${m.dues.map(x => {
+                const isLate = (x.status === 'PENDING' || x.status === 'PARTIAL') && x.dueDate < today;
+                const badge = (x.status === 'PENDING' || x.status === 'PARTIAL') && !isLate ? (x.status === 'PARTIAL' ? DUE.PARTIAL : ['part', 'Due']) : DUE[x.status];
+                return `<tr class="${isLate ? 'late' : ''}"><td>${x.monthNo}${m.wonMonth === x.monthNo ? ' 👑' : ''}</td><td>${day(x.dueDate)}</td>
+                    <td class="r">${money(x.due)}</td><td class="r">${Number(x.paid) ? money(x.paid) : '—'}</td><td class="r">${Number(x.lateFeeDue) ? money(x.lateFeeDue) : '—'}</td>
+                    <td><span class="st-badge sm ${badge[0]}">${badge[1]}</span></td></tr>`;
+            }).join('')}</tbody></table></div></section>
+        ${m.payments.length ? `<section class="sh-card st-section"><h2>Your payments</h2>
+            <div class="st-scroll"><table class="st-table"><thead><tr><th>Receipt</th><th>Date</th><th>Month</th><th class="r">Amount</th><th>How</th></tr></thead>
+            <tbody>${m.payments.map(p => `<tr><td>${esc(p.receiptNo || '')}</td><td>${day(p.paidDate)}</td><td>${p.monthNo}</td>
+                <td class="r">${money(Number(p.amount) + Number(p.lateFee))}${Number(p.lateFee) ? `<small class="muted"> incl. ${money(p.lateFee)} late</small>` : ''}</td>
+                <td>${esc(p.mode)}${p.reference ? ` · ${esc(p.reference)}` : ''}</td></tr>`).join('')}</tbody></table></div></section>` : ''}`;
+}
+
+// ---------------------------------------------------------------- whole chit
+
+function chitHtml() {
+    const auction = ch.chitType === 'AUCTION';
+    return `
+        <section class="sh-card st-hero">
+            ${head(ch.name, '')}
+            ${msg()}
+            <div class="st-total">
+                <div><span>Collected so far</span><b>${money(ch.totalCollected)}</b><small>${Number(ch.pendingDues) ? `${money(ch.pendingDues)} still to come` : 'nothing pending'}</small></div>
+                <div class="st-side"><span>Paid to winners</span><b>${money(ch.totalPaidOut)}</b><small>${ch.completedMonths} winners</small></div>
+                ${ch.showEarnings ? `<div class="st-side"><span>Organiser's commission</span><b>${money(ch.commissionEarned)}</b><small>${money(ch.commission)} a month</small></div>` : ''}
+            </div>
+            ${progress()}
+        </section>
+        <div class="st-figs">
+            <div class="st-fig"><span>Each member pays</span><b>${money(ch.installment)}</b><small>${auction ? 'less the month’s dividend' : 'a month'}</small></div>
+            <div class="st-fig"><span>Chit value</span><b>${money(ch.baseValue)}</b><small>${auction ? `bids up to ${money(ch.maxBid)}` : 'in month 1'}</small></div>
+            <div class="st-fig"><span>Members</span><b>${ch.memberCount}</b><small>${ch.months} months</small></div>
+            ${ch.showEarnings ? `<div class="st-fig"><span>Money held</span><b>${money(ch.held)}</b><small>collected, not yet paid out</small></div>` : ''}
+        </div>
+        <section class="sh-card st-section"><h2>Every month</h2>
+            <div class="st-scroll"><table class="st-table"><thead><tr><th>Month</th><th>Pay by</th>${auction ? '<th class="r">Bid</th><th class="r">Dividend</th>' : '<th class="r">Chit value</th>'}
+                <th class="r">Winner gets</th><th>Winner</th><th class="r">Collected</th><th>Status</th></tr></thead>
+            <tbody>${ch.schedule.map(x => `<tr><td>${x.monthNo}</td><td>${day(x.dueDate)}</td>
+                ${auction ? `<td class="r">${x.bid !== null ? money(x.bid) : '—'}</td><td class="r">${x.bid !== null ? money(x.dividend) : '—'}</td>` : `<td class="r">${money(x.chitValue)}</td>`}
+                <td class="r">${x.estimated ? 'up to ' : ''}${money(x.payout)}</td><td>${esc(x.winner || '—')}</td>
+                <td class="r">${Number(x.collected) ? money(x.collected) : '—'}</td>
+                <td><span class="st-badge sm ${STATUS[x.status][0]}">${STATUS[x.status][1]}</span></td></tr>`).join('')}</tbody></table></div></section>`;
+}
+
+// ---------------------------------------------------------------- receipt
+
+function receiptHtml() {
+    const r = ch.receipt;
+    const line = (label, value) => `<div class="cs-line"><span>${label}</span><b>${value}</b></div>`;
+    return `
+        <section class="sh-card cs-receipt">
+            <div class="sh-head"><div><small>${esc(ch.household)} · payment receipt</small><h1>${esc(ch.name)}</h1></div>
+                <span class="st-badge done">${esc(r.receiptNo || '')}</span></div>
+            <div class="cs-amount"><span>Received from ${esc(r.memberName)}</span><b>${money(r.total)}</b><small>on ${day(r.paidDate)}</small></div>
+            ${line('Towards', `month ${r.monthNo} installment (due ${day(r.monthDueDate)})`)}
+            ${line('Installment paid', money(r.amount))}
+            ${Number(r.lateFee) ? line('Late payment interest', money(r.lateFee)) : ''}
+            ${Number(r.lateFeeWaived) ? line('Late interest let off', money(r.lateFeeWaived)) : ''}
+            ${line('Paid by', `${esc(r.mode)}${r.reference ? ` · ref ${esc(r.reference)}` : ''}`)}
+            ${line(`Month ${r.monthNo} so far`, `${money(r.paidForMonth)} of ${money(r.dueForMonth)}${Number(r.balanceForMonth) ? ` · ${money(r.balanceForMonth)} still due` : ' · fully paid'}`)}
+            <div class="cs-rc-sign">
+                <div class="cs-rc-seal"><b>✓ Digitally sealed by the organiser</b>
+                    <small>This seal is worked out from every figure above with the organiser's secret key. It matches the organiser's records today; a printed copy whose seal differs has been changed.</small>
+                    <code>${esc(r.seal || '')}</code></div>
+                <div class="cs-rc-signer">${r.signature ? signatureSvg(r.signature) : ''}<b>${esc(r.signer || ch.sharedBy || '')}</b><small>${r.signature ? 'Digitally signed · organiser' : 'Organiser'}</small></div>
+            </div>
+            <div class="cs-rc-acts">
+                <a class="cs-pay-btn" href="/api/public/hosted-chits/${encodeURIComponent(token)}/receipt.pdf" download="Receipt ${esc(r.receiptNo || '')}.pdf">Download signed PDF</a>
+                <button class="cs-print" onclick="window.print()">Print</button>
+            </div>
+        </section>`;
+}
+
+// ---------------------------------------------------------------- agreement
+
+function agreementHtml() {
+    const a = ch.agreement;
+    const done = a.status !== 'DRAFT';
+    return `
+        <section class="sh-card cs-agreement">
+            <div class="sh-head"><div><small>${esc(ch.household)} · chit prize agreement · ${esc(a.agreementNo)}</small><h1>${esc(a.memberName)}</h1>
+                <small>${esc(ch.name)} · month ${a.monthNo}</small></div>
+                <span class="st-badge ${done ? 'done' : 'part'}">${done ? (a.status === 'SIGNED' ? 'Signed' : 'Accepted') : 'Waiting for you'}</span></div>
+            <div class="st-total">
+                <div><span>Amount received</span><b>${money(a.payoutAmount)}</b><small>${esc(a.payoutInWords)}${a.payoutDate ? ` · ${day(a.payoutDate)}` : ''}${a.payoutMode ? ` · ${esc(a.payoutMode)}` : ''}${a.payoutReference ? ` · ref ${esc(a.payoutReference)}` : ''}</small></div>
+                <div class="st-side"><span>Chit value</span><b>${money(a.chitValue)}</b><small>${ch.chitType === 'AUCTION' ? 'less the winning bid' : 'less the commission'} ${money(a.deduction)}</small></div>
+                <div class="st-side"><span>Still to pay</span><b>${a.remainingInstallments} months</b><small>about ${money(a.remainingAmount)}</small></div>
+            </div>
+            <div class="cs-terms">${esc(a.terms)}</div>
+            ${done ? `<div class="cs-accepted">✓ ${a.status === 'SIGNED' ? 'Signed on paper' : 'Accepted'} by <b>${esc(a.acceptedName)}</b> on ${when(a.acceptedAt)}
+                ${a.acceptedPhoneMasked ? ` · mobile ${esc(a.acceptedPhoneMasked)}` : ''}${a.locationShared ? ' · location shared' : ''}
+                ${a.signature ? `<div class="cs-sign-show">${signatureSvg(a.signature)}</div>` : ''}
+                ${a.acceptanceSeal ? `<small>Acceptance seal (SHA-256) <code>${esc(a.acceptanceSeal)}</code></small>` : ''}</div>` : `
+            <form class="cs-accept" id="cs-accept" onsubmit="return false">
+                <label class="cs-check"><input type="checkbox" name="agree"> I have read this agreement, I received the amount above in full, and I accept it.</label>
+                <div class="cs-fields">
+                    <label class="cs-name"><span>Your full name <small>check it is right</small></span><input name="name" maxlength="100" autocomplete="name" value="${esc(a.memberName)}"></label>
+                    <label class="cs-name"><span>Your mobile number <small>your phone can fill it in</small></span>
+                        <span class="cs-phone"><input name="phone" type="tel" inputmode="tel" maxlength="16" autocomplete="tel" placeholder="10 digits">
+                        ${'contacts' in navigator && 'select' in navigator.contacts ? '<button type="button" id="cs-pick-phone" title="Pick your number from your contacts (your own card)">Contacts</button>' : ''}</span></label>
+                </div>
+                <div class="cs-sign"><div class="cs-sign-head"><span>Sign here with your finger or mouse</span><button type="button" id="cs-sign-clear">Clear</button></div>
+                    <canvas id="cs-sign-pad" width="1000" height="300"></canvas></div>
+                <label class="cs-check"><input type="checkbox" name="location"> Add my current location to the record (your phone will ask)</label>
+                <p class="cs-error" id="cs-error"></p>
+                <button type="submit" class="cs-pay-btn">Accept and sign</button>
+                <small class="muted">Recorded with your acceptance: your name, mobile number and signature, the time, your IP address and this device
+                    (browser, system, screen, language and time zone)${''}, and your location if you allow it. They are sealed with a fingerprint so any change shows.</small>
+            </form>`}
+            <p class="cs-hash">Made ${when(a.createdAt)} · fingerprint (SHA-256) <code>${esc(a.contentHash)}</code></p>
+            <button class="cs-print" onclick="window.print()">Print or save as PDF</button>
+        </section>`;
+}
+
+function bindAccept() {
+    const form = $('cs-accept');
+    if (!form) return;
+    const sig = signaturePad($('cs-sign-pad'));
+    $('cs-sign-clear').addEventListener('click', () => sig.clear());
+    // web pages cannot read a phone's own number: the browser's autofill (autocomplete="tel") offers it as the member
+    // taps the field, and on Android Chrome the contacts picker can fill it from the member's own contact card
+    $('cs-pick-phone')?.addEventListener('click', async () => {
+        try {
+            const [picked] = await navigator.contacts.select(['tel', 'name'], { multiple: false });
+            const tel = picked?.tel?.[0];
+            if (tel) form.phone.value = tel.replace(/[^\d+]/g, '');
+            if (picked?.name?.[0] && !form.name.value.trim()) form.name.value = picked.name[0];
+        } catch { /* closed or not allowed */ }
+    });
+    form.phone.addEventListener('change', () => {   // autofill gives +91 98765 43210: keep the 10 digits
+        const digits = form.phone.value.replace(/\D/g, '');
+        if (digits.length > 10 && digits.startsWith('91')) form.phone.value = digits.slice(-10);
+    });
+    form.addEventListener('submit', async () => {
+        const button = form.querySelector('button[type=submit]');
+        const error = $('cs-error');
+        error.textContent = '';
+        if (!form.agree.checked) { error.textContent = 'Tick the box to confirm you agree'; return; }
+        if (form.name.value.trim().length < 2) { error.textContent = 'Type your full name'; return; }
+        if (!/^(\+?91)?[6-9]\d{9}$/.test(form.phone.value.replace(/[\s-]/g, ''))) { error.textContent = 'Enter your 10-digit mobile number'; return; }
+        if (sig.empty()) { error.textContent = 'Sign in the box'; return; }
+        button.disabled = true;
+        button.textContent = 'Recording…';
+        try {
+            const location = form.location.checked ? await locate() : null;
+            ch = await call(`/api/public/hosted-chits/${encodeURIComponent(token)}/accept`, {
+                name: form.name.value, agree: true, phone: form.phone.value, signature: sig.path(), location, device: JSON.stringify(deviceInfo()),
+            });
+            draw();
+            window.scrollTo(0, 0);
+        } catch (err) {
+            error.textContent = err.message;
+            button.disabled = false;
+            button.textContent = 'Accept and sign';
+        }
+    });
+}
+
+/** A signature pad on a canvas; the strokes come back as an SVG path in a 1000 x 300 box. */
+function signaturePad(canvas) {
+    const ctx = canvas.getContext('2d');
+    const strokes = [];
+    let current = null;
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#0a2e4f';
+    const point = e => {
+        const box = canvas.getBoundingClientRect();
+        return [Math.round(((e.clientX - box.left) / box.width) * 1000), Math.round(((e.clientY - box.top) / box.height) * 300)];
+    };
+    canvas.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        canvas.setPointerCapture(e.pointerId);
+        current = [point(e)];
+        strokes.push(current);
+    });
+    canvas.addEventListener('pointermove', e => {
+        if (!current) return;
+        const [x, y] = point(e);
+        const [px, py] = current[current.length - 1];
+        if (Math.abs(x - px) + Math.abs(y - py) < 4) return;
+        current.push([x, y]);
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    });
+    const end = () => { current = null; };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+    return {
+        empty: () => strokes.reduce((n, s) => n + s.length, 0) < 6,
+        clear: () => { strokes.length = 0; ctx.clearRect(0, 0, canvas.width, canvas.height); },
+        path: () => strokes.filter(s => s.length > 1).map(s => 'M' + s.map(([x, y]) => `${x} ${y}`).join(' L')).join(' ').slice(0, 20000),
+    };
+}
+
+function signatureSvg(path) {
+    const safe = String(path).replace(/[^MLml0-9 .-]/g, '');
+    return `<svg viewBox="0 0 1000 300" role="img" aria-label="Signature"><path d="${safe}" fill="none" stroke="#0a2e4f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+/** The location, when the member allows it (lat,lng,accuracy); nothing when they refuse or it takes too long. */
+function locate() {
+    return new Promise(resolve => {
+        if (!navigator.geolocation) { resolve(null); return; }
+        navigator.geolocation.getCurrentPosition(
+            p => resolve(`${p.coords.latitude.toFixed(6)},${p.coords.longitude.toFixed(6)},${Math.round(p.coords.accuracy)}`),
+            () => resolve(null), { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+    });
+}
+
+/** What this device reports about itself: kept with the acceptance as evidence. */
+function deviceInfo() {
+    const n = navigator;
+    return {
+        userAgent: n.userAgent, platform: n.userAgentData?.platform || n.platform, mobile: n.userAgentData?.mobile ?? /Mobi|Android|iPhone/i.test(n.userAgent),
+        language: n.language, languages: (n.languages || []).slice(0, 4), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timeZoneOffset: new Date().getTimezoneOffset(), localTime: new Date().toString(),
+        screen: `${screen.width}x${screen.height}@${window.devicePixelRatio || 1}`, viewport: `${innerWidth}x${innerHeight}`,
+        touchPoints: n.maxTouchPoints || 0, cores: n.hardwareConcurrency || null, memoryGb: n.deviceMemory || null,
+        connection: n.connection?.effectiveType || null, cookies: n.cookieEnabled,
+    };
+}
+
+// ---------------------------------------------------------------- parts
+
+function head(title, sub) {
+    const done = ch.status === 'COMPLETED';
+    return `<div class="sh-head"><div><small>${esc(ch.household)} · ${ch.chitType === 'AUCTION' ? 'auction chit' : 'chit'} of ${money(ch.baseValue)}</small>
+        <h1>${esc(title)}</h1>${sub ? `<small>${esc(sub)}</small>` : ''}</div>
+        <span class="st-badge ${done ? 'done' : 'open'}">${done ? 'Finished' : `Month ${ch.currentMonth} of ${ch.months}`}</span></div>`;
+}
+
+function msg() {
+    return ch.message ? `<p class="st-message">${esc(ch.message)}<br><span>— ${esc(ch.sharedBy)}</span></p>` : '';
+}
+
+function progress() {
+    return `<div class="st-progress"><div class="row"><span>Months paid out</span><b>${ch.completedMonths} of ${ch.months}</b></div>
+        <i><em style="width:${(ch.completedMonths / ch.months) * 100}%"></em></i></div>`;
+}
+
+function message(text) {
+    return `<section class="sh-card sh-empty"><h1>Chit</h1><p>${esc(text)}</p></section>`;
+}
+
+start();

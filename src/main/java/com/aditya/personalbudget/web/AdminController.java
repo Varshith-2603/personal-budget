@@ -30,8 +30,10 @@ public class AdminController {
 
     private final UserService users;
     private final AppSettingsService appSettings;
+    private final com.aditya.personalbudget.service.TenantMailService mail;
 
-    public AdminController(UserService users, AppSettingsService appSettings) {
+    public AdminController(UserService users, AppSettingsService appSettings, com.aditya.personalbudget.service.TenantMailService mail) {
+        this.mail = mail;
         this.users = users;
         this.appSettings = appSettings;
     }
@@ -41,6 +43,27 @@ public class AdminController {
     @RequiresPermission(Permission.MANAGE_USERS)
     public AppSettingsService.AppSettings updateAppSettings(@RequestBody AppSettingsService.AppSettings settings) {
         return appSettings.update(settings);
+    }
+
+    /** The household's own e-mail account for chit reminders and receipts (password never returned). */
+    @GetMapping("/mail-settings")
+    @RequiresPermission(Permission.MANAGE_USERS)
+    public com.aditya.personalbudget.service.TenantMailService.MailSettingsView mailSettings() {
+        return mail.view();
+    }
+
+    @PutMapping("/mail-settings")
+    @RequiresPermission(Permission.MANAGE_USERS)
+    public com.aditya.personalbudget.service.TenantMailService.MailSettingsView saveMailSettings(
+            @jakarta.validation.Valid @RequestBody com.aditya.personalbudget.service.TenantMailService.MailSettingsRequest request) {
+        return mail.save(request);
+    }
+
+    @PostMapping("/mail-settings/test")
+    @RequiresPermission(Permission.MANAGE_USERS)
+    public com.aditya.personalbudget.service.TenantMailService.MailSettingsView testMailSettings(
+            @jakarta.validation.Valid @RequestBody com.aditya.personalbudget.service.TenantMailService.TestRequest request) {
+        return mail.test(request);
     }
 
     @GetMapping("/users")

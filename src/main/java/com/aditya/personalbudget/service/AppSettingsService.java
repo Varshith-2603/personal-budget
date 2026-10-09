@@ -73,15 +73,26 @@ public class AppSettingsService {
         return approvalEnabled();
     }
 
-    /** The sample hosted chit was added once ({@code hosted-chit.demo-seeded}), so a cleared demo stays cleared. */
-    public boolean hostedChitDemoSeeded() {
-        return "true".equalsIgnoreCase(read().getProperty("hosted-chit.demo-seeded", "false").trim());
+    /**
+     * The secret that seals receipts (HMAC-SHA256), made on first use. It stays on this installation: anyone holding
+     * a receipt can have it checked here, nobody can forge a seal without it.
+     */
+    public byte[] receiptSigningKey() {
+        return secretKey("receipt.signing-key");
     }
 
-    public synchronized void markHostedChitDemoSeeded() {
+    /** A 256-bit secret of this installation under the given name, made on first use and kept in the settings file. */
+    public synchronized byte[] secretKey(String name) {
         Properties p = read();
-        p.setProperty("hosted-chit.demo-seeded", "true");
-        write(p);
+        String key = p.getProperty(name);
+        if (key == null || key.isBlank()) {
+            byte[] bytes = new byte[32];
+            new java.security.SecureRandom().nextBytes(bytes);
+            key = java.util.HexFormat.of().formatHex(bytes);
+            p.setProperty(name, key);
+            write(p);
+        }
+        return java.util.HexFormat.of().parseHex(key.trim());
     }
 
     public static boolean valid(String path) {

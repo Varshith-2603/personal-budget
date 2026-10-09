@@ -1,53 +1,58 @@
 /**
- * Host a Chit: chits the user runs as the organiser. Every month each member pays the monthly amount and one
- * member who has not won yet takes the chit value, less the organiser's commission:
- *     chit value(m) = month-1 value + (m − 1) × monthly increase,  winner gets(m) = chit value(m) − commission
+ * Host a Chit: chits the user runs as the organiser, laid out like the Chits page: a portfolio card and figures
+ * on top, the hosted chits on the left, and for the selected chit a banner, key figures and a tabbed chit book
+ * (This month, Months, Payments, Members, History).
  *
- *   #/host-chits               the hosted chits as cards
- *   #/host-chits/new           a 3-step wizard: chit details, members, check & create
- *   #/host-chits/<id>/<tab>    one chit: This month (collect → choose winner → pay winner), All months,
- *                              Payments (members × months grid), Members, History
+ * Two kinds of chit:
+ *   FIXED    chit value(m) = month-1 value + (m − 1) × increase; the winner is picked or drawn and gets the chit
+ *            value less the commission; winners may pay an extra amount (₹ or % of the chit value) afterwards
+ *   AUCTION  Margadarsi style: the chit value is fixed; each month the members who have not won bid the discount
+ *            they give up (from the commission up to the highest bid allowed). The winner gets chit value − bid,
+ *            the organiser keeps the commission and the rest of the bid is shared as a dividend, so everyone pays
+ *            installment − dividend that month.
  *
- * The figures come from the server (HostedChitService); every change answers with the whole chit, which is
- * redrawn in place. Chits a user is a member of stay on the Chits page.
+ * Also: a send centre for payment reminders (each with the member's payment link) and signed receipts (link and
+ * PDF), by e-mail all at once or WhatsApp one after another; temporary share links (a
+ * member's status or the whole chit, optionally with the organiser's earnings) and, when the chit posts to the
+ * books, separate accounts for the collections and the commission.
  */
 import { api } from '../core/api.js';
-import { can, loadAccounts } from '../core/store.js';
-import { esc, openModal, confirmDialog, toast, emptyState, accountOptions } from '../core/ui.js';
+import { state, can, loadAccounts, categoriesOf } from '../core/store.js';
+import { panel, esc, openModal, confirmDialog, toast, emptyState, accountOptions, printElement } from '../core/ui.js';
 import { icon } from '../core/icons.js';
-import { money, moneyShort, date, isoDate, daysFromToday } from '../core/format.js';
+import { money, moneyShort, date, shortDate, shortDateYear, isoDate, daysFromToday, dateTime } from '../core/format.js';
 import { exportButton, bindExport } from '../core/export.js';
+import { setPageKeys, listNavigator } from '../core/keys.js';
+import { qrSvg } from '../core/qr.js';
+import { evidenceFieldHtml, bindEvidenceField } from '../components/evidence.js';
+import { openEntryDetail } from '../components/transaction-forms.js';
 
-const view = { tab: 'month', historyKind: 'ALL', memberQuery: '' };
+const view = { selectedId: null, tab: 'month', historyKind: 'ALL', memberQuery: '', duesFilter: 'ALL' };
 /** The chit on screen (the last answer from the server). */
 let current = null;
-/** The wizard's draft: kept while moving between steps (and away and back). */
-let wizard = null;
 
 const TABS = [
     { key: 'month', label: 'This month', iconName: 'check-circle' },
-    { key: 'months', label: 'All months', iconName: 'calendar' },
+    { key: 'dues', label: 'Dues', iconName: 'alert' },
+    { key: 'months', label: 'Months', iconName: 'calendar' },
     { key: 'payments', label: 'Payments', iconName: 'grid' },
     { key: 'members', label: 'Members', iconName: 'users' },
+    { key: 'agreements', label: 'Agreements', iconName: 'file-text' },
     { key: 'history', label: 'History', iconName: 'history' },
 ];
 const MODES = ['Cash', 'UPI', 'Bank'];
+const SHARE_DURATIONS = [[24, '1 day'], [72, '3 days'], [168, '1 week'], [720, '1 month'], [2160, '3 months']];
 const SAMPLE_NAMES = ['Ravi Kumar', 'Lakshmi Devi', 'Suresh Reddy', 'Anitha Rao', 'Venkatesh', 'Priya Sharma', 'Kiran Babu',
     'Swathi', 'Ramesh Naidu', 'Divya', 'Srinivas', 'Kavitha', 'Mahesh', 'Sandhya', 'Naresh', 'Padma', 'Arjun', 'Revathi',
     'Prakash', 'Sunitha', 'Gopal', 'Madhavi', 'Raju', 'Shobha', 'Harish', 'Vani', 'Sekhar', 'Jyothi', 'Balaji', 'Rekha'];
 
-export async function render(container, params, isCurrent) {
-    const [first, second] = params;
-    if (first === 'new') return renderWizard(container, isCurrent);
-    if (/^\d+$/.test(first || '')) return renderDetail(container, Number(first), second, isCurrent);
-    return renderList(container, isCurrent);
-}
-
 // ===================================================================== helpers
 
 const num = v => Number(v || 0);
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const manage = () => can('MANAGE_CHITS');
 const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+const isAuction = c => c.chitType === 'AUCTION';
 
 /** "2026-05-01" -> "May 2026" */
 function monthName(iso) {
@@ -71,7 +76,6 @@ function initials(name) {
     return name.split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-/** Due date of month no (1-based) for a start month "YYYY-MM" and a due day. */
 function dueDateOf(startYm, dueDay, no) {
     const [y, m] = startYm.split('-').map(Number);
     const first = new Date(y, m - 1 + no - 1, 1);
@@ -84,20 +88,80 @@ function relDays(iso) {
     return d === 0 ? 'today' : d === 1 ? 'tomorrow' : d === -1 ? 'yesterday' : d > 0 ? `in ${d} days` : `${-d} days ago`;
 }
 
-/** The chit's months worked out from its settings (the wizard, before anything is saved). */
-function scheduleOf(s) {
-    const rows = [];
-    for (let m = 1; m <= s.months; m++) {
-        const value = num(s.baseValue) + (m - 1) * num(s.monthlyIncrement);
-        rows.push({ monthNo: m, dueDate: dueDateOf(s.startMonth, s.dueDay, m), chitValue: value, payout: value - num(s.commission) });
-    }
-    return rows;
-}
-
 function randomPhone() {
     return String(6 + Math.floor(Math.random() * 4)) + String(Math.floor(Math.random() * 1e9)).padStart(9, '0');
 }
 
+/** The rupees a winner pays on top of the monthly amount after winning (s: a chit or the wizard's draft). */
+function extraOf(s) {
+    if (isAuction(s)) return 0;
+    const v = num(s.winnerExtraValue);
+    return s.winnerExtraType === 'PERCENT' ? Math.round(num(s.baseValue) * v / 100) : s.winnerExtraType === 'FIXED' ? v : 0;
+}
+
+function extraText(s) {
+    return s.winnerExtraType === 'PERCENT' ? `${num(s.winnerExtraValue)}% of the chit value (${money(extraOf(s))})` : money(extraOf(s));
+}
+
+/** What a member owes for a month: auction, the installment less the month's dividend; fixed, plus the winner extra. */
+function dueFor(d, member, month) {
+    const c = d.chit;
+    if (isAuction(c)) return num(c.installment) - num(month.dividend);
+    return num(c.installment) + (member.wonMonth && member.wonMonth < month.monthNo ? num(c.winnerExtraAmount) : 0);
+}
+
+function paidFor(d, memberId, monthNo, exceptPaymentId = null) {
+    return d.payments.filter(p => p.memberId === memberId && p.monthNo === monthNo && p.id !== exceptPaymentId)
+        .reduce((s, p) => s + num(p.amount), 0);
+}
+
+const monthOf = (d, no) => d.schedule.find(m => m.monthNo === no);
+
+/** Late interest still due on a member's month ({ due, daysLate, accrued, settled }), or null. */
+function lateFor(d, memberId, monthNo) {
+    const l = (d.lateFees || []).find(x => x.memberId === memberId && x.monthNo === monthNo);
+    return l && num(l.due) > 0 ? l : null;
+}
+
+/** A temporary link to the chit, a member's statement, a receipt or an agreement; returns { url, share }. */
+async function makeLink(d, body, hours = 720) {
+    const created = await api.post(`/hosted-chits/${d.chit.id}/shares`, { hours, showEarnings: false, ...body });
+    return { url: `${location.origin}/chit-share.html#${created.token}`, share: created.share };
+}
+
+/** wa.me link to a member (their phone when known). */
+function whatsapp(member, text) {
+    const phone = member?.phone ? member.phone.replace(/\D/g, '').slice(-10) : '';
+    return `https://wa.me/${phone ? '91' + phone : ''}?text=${encodeURIComponent(text)}`;
+}
+
+/** The link made, with copy, WhatsApp to the member and a QR code. */
+function linkResultHtml(url, text, member, until) {
+    return `<div class="ln-made cs-made">
+        <div class="ln-qr">${qrSvg(url, { size: 140 })}</div>
+        <div class="ln-made-main">
+            <p class="small muted" style="margin:0">Works until <b>${dateTime(until)}</b>. Send it now: the link is shown only once.</p>
+            <div class="ln-url"><input value="${esc(url)}" readonly data-plain><button type="button" class="btn sm primary" data-copy-url="${esc(url)}">${icon('copy')}Copy</button></div>
+            <div class="row"><a class="btn sm" target="_blank" rel="noopener" href="${whatsapp(member, text)}">${icon('phone')}Send on WhatsApp</a>
+                <a class="btn sm" target="_blank" rel="noopener" href="${esc(url)}">${icon('eye')}Preview</a></div>
+        </div></div>`;
+}
+
+document.addEventListener('click', async e => {
+    const b = e.target.closest('[data-copy-url]');
+    if (!b) return;
+    try { await navigator.clipboard.writeText(b.dataset.copyUrl); toast('Link copied', 'info'); } catch { b.previousElementSibling?.select(); }
+});
+
+/** PAID, PARTIAL, PENDING or NOTDUE for one box of the payments grid. */
+function cellStatus(d, member, month) {
+    const paid = paidFor(d, member.id, month.monthNo);
+    if (paid >= dueFor(d, member, month)) return 'PAID';
+    if (paid > 0) return 'PARTIAL';
+    return month.due ? 'PENDING' : 'NOTDUE';
+}
+
+const CELL = { PAID: ['✓', 'Paid'], PARTIAL: ['½', 'Part paid'], PENDING: ['✗', 'Not paid'], NOTDUE: ['', 'Not due yet'] };
 const STATUS = {
     ACTIVE: ['aqua', 'play', 'Running'], COMPLETED: ['good', 'check-circle', 'Finished'],
     ONGOING: ['aqua', 'clock', 'This month'], UPCOMING: ['gray', 'calendar', 'Coming up'],
@@ -106,22 +170,15 @@ function statusBadge(status) {
     const [tone, iconName, label] = STATUS[status] || ['gray', 'info', status];
     return `<span class="badge ${tone}">${icon(iconName)}${label}</span>`;
 }
+const typeBadge = c => isAuction(c) ? `<span class="badge violet">${icon('gavel')}Auction</span>` : `<span class="badge">${icon('trending')}Fixed</span>`;
 
-/** Paid so far by a member for a month (from the chit's payments). */
-function paidFor(d, memberId, monthNo, exceptPaymentId = null) {
-    return d.payments.filter(p => p.memberId === memberId && p.monthNo === monthNo && p.id !== exceptPaymentId)
-        .reduce((s, p) => s + num(p.amount), 0);
+/** Every member who owes something now: all due months not fully paid. */
+function owingList(d) {
+    return d.members.map(m => {
+        const months = d.schedule.filter(s => s.due).map(s => ({ s, rest: dueFor(d, m, s) - paidFor(d, m.id, s.monthNo) })).filter(x => x.rest > 0);
+        return { m, months, total: months.reduce((t, x) => t + x.rest, 0) };
+    }).filter(x => x.total > 0);
 }
-
-/** PAID, PARTIAL, PENDING or NOTDUE for one box of the payments grid. */
-function cellStatus(d, memberId, month) {
-    const paid = paidFor(d, memberId, month.monthNo);
-    if (paid >= num(d.chit.installment)) return 'PAID';
-    if (paid > 0) return 'PARTIAL';
-    return month.due ? 'PENDING' : 'NOTDUE';
-}
-
-const CELL = { PAID: ['✓', 'Paid'], PARTIAL: ['½', 'Part paid'], PENDING: ['✗', 'Not paid'], NOTDUE: ['', 'Not due yet'] };
 
 function modeChips(selected = 'Cash') {
     return `<div class="seg-chips hc-modes" data-chips>${MODES.map(m =>
@@ -138,185 +195,941 @@ function bindModeChips(root) {
 
 const chosenMode = root => root.querySelector('[data-chips] .active')?.dataset.mode || 'Cash';
 
-function tile(iconName, label, value, sub, tone = '') {
-    return `<div class="hc-tile ${tone}">
-        <span class="hc-tile-ico">${icon(iconName)}</span>
-        <div class="min-0"><small>${esc(label)}</small><b>${value}</b><span>${sub}</span></div>
-    </div>`;
-}
+// ===================================================================== page
 
-const bar = (pct, cls = '') => `<i class="hc-bar ${cls}"><em style="width:${Math.max(0, Math.min(100, pct))}%"></em></i>`;
-
-// ===================================================================== list
-
-async function renderList(container, isCurrent) {
+export async function render(container, params, isCurrent) {
     const chits = await api.get('/hosted-chits');
     if (!isCurrent()) return;
-    const running = chits.filter(c => c.status === 'ACTIVE');
-    const sum = key => running.reduce((s, c) => s + num(c[key]), 0);
-    const hasDemo = chits.some(c => c.demo);
+    const [first, second] = params;
+    if (/^\d+$/.test(first || '')) view.selectedId = Number(first);
+    if (second && TABS.some(t => t.key === second)) view.tab = second;
+    if (!chits.some(c => c.id === view.selectedId)) view.selectedId = chits[0]?.id ?? null;
+    const reload = () => render(container, [], isCurrent);
 
     container.innerHTML = `
-    <div class="page hc-page">
-        <header class="hc-head">
-            <span class="hc-mark">${icon('hand-coins')}</span>
-            <div class="min-0"><h2>Host a Chit</h2><small>Chits you run: members pay you every month and one of them wins the chit.</small></div>
-            <span class="spacer"></span>
-            ${manage() ? `<a class="btn primary hc-new" href="#/host-chits/new">${icon('plus')}Host a new chit</a>` : ''}
-        </header>
-        <div class="hc-scroll">
-            ${chits.length ? `
-            <div class="hc-tiles three">
-                ${tile('alert', 'Still to collect', money(sum('pendingDues')), sum('pendingCount') ? `${plural(sum('pendingCount'), 'payment')} not received yet` : 'everyone has paid', sum('pendingCount') ? 'warn' : 'good')}
-                ${tile('arrow-in', 'Collected this month', money(sum('collectedThisMonth')), `out of ${money(sum('expectedThisMonth'))}`)}
-                ${tile('crown', 'My commission so far', money(chits.reduce((s, c) => s + num(c.commissionEarned), 0)), 'what you have earned', 'gold')}
-            </div>
-            <h3 class="hc-section-title">Your chits <small>${running.length} running${chits.length > running.length ? ` · ${chits.length - running.length} finished` : ''}</small></h3>
-            <div class="hc-cards">${chits.map(chitCard).join('')}</div>`
-            : `<div class="hc-empty">
-                <span class="hc-empty-ico">${icon('hand-coins')}</span>
-                <h3>Run a chit for family or friends</h3>
-                <p>Add the members and the monthly amount. Each month you collect the money, pick a winner and pay them. This page keeps track of all of it.</p>
-                ${manage() ? `<div class="row wrap"><a class="btn primary hc-new" href="#/host-chits/new">${icon('plus')}Host a new chit</a>
-                    <button class="btn" data-act="load-demo">${icon('sparkles')}Show me an example</button></div>` : ''}
-            </div>`}
-            ${chits.length && manage() ? `<p class="hc-demo-line">${hasDemo
-                ? `${icon('info')}“Family Chit 2026” is example data. <button class="btn sm ghost" data-act="clear-demo">${icon('trash')}Remove example</button>`
-                : `<button class="btn sm ghost" data-act="load-demo">${icon('sparkles')}Add an example chit</button>`}</p>` : ''}
-        </div>
+    <div class="page chits-page hc-page">
+        <section class="cp-card" id="hc-brand"></section>
+        <div class="cs-cards" id="hc-cards"></div>
+        ${panel({
+            title: 'Chits I host', iconName: 'hand-coins', cls: 'p-chit-list', bodyClass: 'flush',
+            sub: `${chits.filter(c => c.status === 'ACTIVE').length} running`,
+            actions: manage() ? `<button class="btn sm primary" id="hc-new">${icon('plus')}Chit</button>` : '',
+            body: `<div class="chit-rows scroll" id="hc-list" tabindex="0"></div>`,
+        })}
+        <div class="chit-detail" id="hc-detail"></div>
     </div>`;
 
-    container.querySelector('.hc-page').addEventListener('click', async e => {
-        const act = e.target.closest('[data-act]')?.dataset.act;
-        try {
-            if (act === 'load-demo') {
-                await api.post('/hosted-chits/demo');
-                toast('Example chit added: Family Chit 2026');
-                renderList(container, isCurrent);
-            } else if (act === 'clear-demo') {
-                if (!await confirmDialog('Remove the example chit “Family Chit 2026” with its members and payments?', { confirmLabel: 'Remove example' })) return;
-                await api.del('/hosted-chits/demo');
-                toast('Example removed');
-                renderList(container, isCurrent);
-            }
-        } catch (err) {
-            toast(err.message, 'error');
-        }
+    drawPortfolio(container, chits);
+    container.querySelector('#hc-new')?.addEventListener('click', () => openWizard());
+    if (first === 'new') openWizard();
+
+    const listEl = container.querySelector('#hc-list');
+    listEl.addEventListener('click', async e => {
+        const row = e.target.closest('[data-id]');
+        if (row && view.wizard && wizardDirty(view.wizard)
+            && !await confirmDialog('Leave without creating the new chit? What you entered is lost.', { confirmLabel: 'Leave', danger: false })) return;
+        if (row) { view.wizard = null; container.querySelector('#hc-detail')?.classList.remove('hc-creating'); }
+        if (row) show(Number(row.dataset.id));
+    });
+
+    async function show(id) {
+        view.selectedId = id;
+        history.replaceState(null, '', `#/host-chits/${id}/${view.tab}`);
+        listEl.querySelectorAll('[data-id]').forEach(el => el.classList.toggle('selected', Number(el.dataset.id) === id));
+        const d = await api.get(`/hosted-chits/${id}`);
+        if (view.selectedId !== id) return;
+        current = d;
+        drawDetail(container, d);
+    }
+
+    let keyTimer;
+    setPageKeys(listNavigator({
+        items: () => [...listEl.querySelectorAll('[data-id]')],
+        selected: () => listEl.querySelector('.selected'),
+        select: el => {
+            listEl.querySelectorAll('.selected').forEach(x => x.classList.remove('selected'));
+            el.classList.add('selected');
+            clearTimeout(keyTimer);
+            keyTimer = setTimeout(() => show(Number(el.dataset.id)), 130);
+        },
+    }));
+
+    if (view.selectedId) await show(view.selectedId);
+    else container.querySelector('#hc-detail').innerHTML = welcomeHtml();
+    container.querySelector('#hc-detail').addEventListener('click', e => {
+        if (e.target.closest('[data-act="welcome-new"]')) openWizard();
     });
 }
 
-function chitCard(c) {
-    const done = c.status === 'COMPLETED';
-    const yetToPay = c.memberCount - c.paidThisMonth;
-    return `<a class="hc-card ${done ? 'done' : ''}" href="#/host-chits/${c.id}">
-        <div class="hc-card-top">
-            <div class="min-0"><b class="ellipsis">${esc(c.name)}</b>
-                <small>${c.memberCount} members · ${money(c.installment)} a month</small></div>
-            <span class="hc-badges">${c.demo ? '<span class="badge gray">Example</span>' : ''}${statusBadge(c.status)}</span>
-        </div>
-        ${done ? `<div class="hc-card-big"><b>All ${c.months} months done</b><small>You earned ${money(c.commissionEarned)} in commission</small></div>` : `
-        <div class="hc-card-big"><b>Month ${c.currentMonth} <span>of ${c.months}</span></b>${bar((c.completedMonths / c.months) * 100, 'gold')}</div>
-        <div class="hc-card-line"><span>This month</span><b>${money(c.collectedThisMonth)} <small>of ${money(c.expectedThisMonth)}</small></b></div>
-        ${bar(num(c.expectedThisMonth) ? (num(c.collectedThisMonth) / num(c.expectedThisMonth)) * 100 : 0)}
-        <div class="hc-card-foot">
-            ${yetToPay ? `<span class="hc-pill warn">${icon('clock')}${plural(yetToPay, 'member')} yet to pay</span>` : `<span class="hc-pill good">${icon('check')}Everyone paid</span>`}
-            <span class="hc-open">Open ${icon('chevron-right')}</span>
-        </div>`}
-    </a>`;
+/** After a change: the chit as the server returned it, and fresh figures for the list and the portfolio. */
+async function afterChange(d, message) {
+    current = d;
+    const container = document.querySelector('.hc-page')?.parentElement;
+    if (!container) return;
+    drawDetail(container, d);
+    if (message) toast(message);
+    try { drawPortfolio(container, await api.get('/hosted-chits')); } catch { /* the detail is already right */ }
 }
 
-// ===================================================================== wizard
+function welcomeHtml() {
+    return panel({ title: 'Host a chit', iconName: 'hand-coins', body: `
+        <div class="hc-welcome">
+            <span class="hc-welcome-ico">${icon('hand-coins')}</span>
+            <h3>Run a chit for family or friends</h3>
+            <p>Choose a <b>fixed</b> chit (the chit value rises each month and you pick the winner) or an <b>auction</b> chit
+                (Margadarsi style: members bid each month and the discount is shared as a dividend). Collections, winners,
+                reminders and payouts are all kept here.</p>
+            ${manage() ? `<div class="row wrap"><button class="btn primary" data-act="welcome-new">${icon('plus')}Host a new chit</button></div>` : ''}
+        </div>` });
+}
+
+// ---------------------------------------------------------------- portfolio card, figures and the list
+
+function drawPortfolio(container, chits) {
+    const running = chits.filter(c => c.status === 'ACTIVE');
+    const sum = (list, key) => list.reduce((s, c) => s + num(c[key]), 0);
+    const expected = sum(running, 'expectedThisMonth');
+    const collected = sum(running, 'collectedThisMonth');
+    const pct = expected ? (collected / expected) * 100 : 0;
+    const next = running.filter(c => c.nextDueDate).sort((a, b) => a.nextDueDate.localeCompare(b.nextDueDate))[0];
+    const auctions = chits.filter(isAuction).length;
+    container.querySelector('#hc-brand').innerHTML = `
+        <div class="cp-head"><span class="cp-mark">${icon('hand-coins')}</span>
+            <div class="min-0"><small>Chits I host</small><b>${moneyShort(sum(chits, 'commissionEarned'))} <em>earned</em></b></div>
+            <span class="cp-rate" title="Commission across the running chits each month">${moneyShort(sum(running, 'commission'))}<small>a month</small></span></div>
+        <div class="cp-progress" title="Collected this month across the running chits">
+            <i class="onc-bar"><em style="width:${Math.min(100, pct)}%"></em></i>
+            <span>${moneyShort(collected)} of ${moneyShort(expected)} collected this month</span></div>
+        <div class="cp-foot">
+            <span class="cp-pill run">${icon('play')}${running.length} running</span>
+            ${chits.length - running.length ? `<span class="cp-pill done">${icon('lock')}${chits.length - running.length} finished</span>` : ''}
+            ${auctions ? `<span class="cp-pill done">${icon('gavel')}${auctions} auction</span>` : ''}
+        </div>`;
+    const cell = (iconName, label, value, sub, cls = '', meter = null) => `<div class="ov-card cs-card ${cls}">
+        <span class="ov-ico">${icon(iconName)}</span>
+        <div class="min-0"><span class="ov-label">${label}</span><b>${value}</b><small>${sub}</small>
+            ${meter !== null ? `<i class="ov-meter"><em style="width:${Math.max(2, Math.min(100, meter))}%"></em></i>` : ''}</div></div>`;
+    const pending = sum(running, 'pendingCount');
+    const nextDays = next ? daysFromToday(next.nextDueDate) : null;
+    container.querySelector('#hc-cards').innerHTML = `
+        ${pending ? cell('alert', 'Still to collect', `<span class="down">${moneyShort(sum(running, 'pendingDues'))}</span>`, `${plural(pending, 'payment')} pending`, 'warn')
+                  : cell('check-circle', 'Still to collect', moneyShort(0), 'everyone has paid', 'good')}
+        ${cell('arrow-in', 'Collected this month', moneyShort(collected), `of ${moneyShort(expected)}`, '', pct)}
+        ${cell('wallet', 'Money with me', moneyShort(sum(running, 'held')), 'collected, not yet paid out')}
+        ${cell('crown', 'Paid to winners', moneyShort(sum(chits, 'totalPaidOut')), `${plural(chits.reduce((s, c) => s + c.completedMonths, 0), 'winner')}`)}
+        ${cell('piggy', 'My commission', `<span class="gold">${moneyShort(sum(chits, 'commissionEarned'))}</span>`, 'earned so far', 'highlight')}
+        ${cell('calendar', 'Next due', next ? shortDate(next.nextDueDate) : '—', next ? `${esc(next.name)} · ${relDays(next.nextDueDate)}` : 'nothing due', nextDays !== null && nextDays <= 3 ? 'note' : '')}`;
+
+    const listEl = container.querySelector('#hc-list');
+    const row = c => {
+        const done = c.status === 'COMPLETED';
+        const pctDone = (c.completedMonths / c.months) * 100;
+        const accent = done ? 'slate' : isAuction(c) ? 'gold' : 'aqua';
+        return `<div class="acct-item rich chit-item accent-${accent} status-${done ? 'matured' : 'active'} ${c.id === view.selectedId ? 'selected' : ''}" data-id="${c.id}">
+            <span class="chip-icon sm ${isAuction(c) ? 'violet' : 'gold'}">${icon(isAuction(c) ? 'gavel' : 'hand-coins')}</span>
+            <div class="acct-main">
+                <div class="acct-line"><span class="acct-name">${esc(c.name)}</span><b class="acct-bal" title="Chit value">${money(c.currentChitValue)}</b></div>
+                <div class="acct-line sub">
+                    <span class="acct-meta">${isAuction(c) ? 'Auction' : 'Fixed'} · ${c.memberCount} members</span>
+                    <span class="acct-facts">${c.pendingCount ? `<span class="fact bad" title="${money(c.pendingDues)} still to collect">${c.pendingCount} due</span>` : `<span class="fact good">all paid</span>`}
+                        ${c.demo ? '<span class="fact muted">example</span>' : ''}</span>
+                    <span class="acct-delta pos" title="My commission so far">+${moneyShort(c.commissionEarned)}</span>
+                </div>
+                <div class="chit-prog"><div class="acct-util good"><span style="width:${pctDone}%"></span></div>
+                    <small>${done ? `${icon('check')}finished` : `month ${c.currentMonth} of ${c.months}`}</small></div>
+            </div>
+        </div>`;
+    };
+    const running2 = chits.filter(c => c.status === 'ACTIVE');
+    const done = chits.filter(c => c.status !== 'ACTIVE');
+    listEl.innerHTML = chits.length ? running2.map(row).join('')
+        + (done.length ? `<div class="group-label"><span>Finished <i>${done.length}</i></span><b>${moneyShort(done.reduce((s, c) => s + num(c.commissionEarned), 0))}</b></div>${done.map(row).join('')}` : '')
+        : emptyState('No hosted chits yet', 'hand-coins');
+}
+
+// ---------------------------------------------------------------- the selected chit
+
+function drawDetail(container, d) {
+    const old = container.querySelector('#hc-detail');
+    const keepScroll = old.querySelector('#hc-tab')?.scrollTop || 0;
+    const target = old.cloneNode(false);   // fresh element: no handlers left from the previous chit
+    old.replaceWith(target);
+    const c = d.chit;
+    const done = c.status === 'COMPLETED';
+    const month = d.schedule.find(m => m.status === 'ONGOING');
+    const canManage = manage();
+    const pctDone = (c.completedMonths / c.months) * 100;
+    const nextAction = !canManage || !month ? '' : isAuction(c) && month.bid === null
+        ? `<button class="btn sm gold-btn" data-act="winner" data-month="${month.monthNo}">${icon('gavel')}Record auction</button>`
+        : !isAuction(c) && !month.winnerMemberId
+            ? `<button class="btn sm gold-btn" data-act="winner" data-month="${month.monthNo}">${icon('crown')}Choose winner</button>`
+            : `<button class="btn sm gold-btn" data-act="payout" data-month="${month.monthNo}">${icon('check')}Pay winner</button>`;
+
+    target.innerHTML = `
+        <section class="panel p-chit-head">
+            <div class="chit-banner">
+                <span class="hero-icon">${icon(isAuction(c) ? 'gavel' : 'hand-coins')}</span>
+                <div class="ab-id">
+                    <div class="ab-name">${esc(c.name)} ${typeBadge(c)} ${statusBadge(c.status)}${c.demo ? '<span class="badge gray">Example</span>' : ''}</div>
+                    <div class="ab-meta">${[`${c.memberCount} members`, `${money(c.installment)} a month`, `from ${monthName(c.startMonth)}`, `due on the ${ordinal(c.dueDay)}`]
+                        .map(esc).join('<i>·</i>')}</div>
+                    <div class="cb-progress"><i class="split-bar on-dark"><span class="paid" style="width:${pctDone}%"></span></i>
+                        <small>${done ? 'all months paid out' : `month ${c.currentMonth} of ${c.months} · ${c.completedMonths} paid out`}</small></div>
+                </div>
+                <div class="ab-bal">
+                    <small>${done ? 'Commission earned' : isAuction(c) ? 'Chit value' : `Month ${c.currentMonth} chit value`}</small>
+                    <b>${money(done ? c.commissionEarned : c.currentChitValue)}</b>
+                    <span class="ab-change">${month ? `${month.winnerName ? `${esc(month.winnerName)} · ` : ''}winner gets ${month.estimated ? 'up to ' : ''}${money(month.payout)}` : 'finished'}</span>
+                </div>
+                <div class="ab-actions chit-actions">
+                    ${nextAction}
+                    ${canManage ? `<button class="btn sm on-dark" data-act="remind" title="Send payment reminders or receipts, by e-mail or WhatsApp">${icon('send')}Send</button>
+                        <button class="btn sm on-dark" data-act="share" title="Share a temporary link to this chit">${icon('share')}Share</button>` : ''}
+                    ${canManage ? `<button class="btn sm on-dark icon" data-act="settings" title="Settings">${icon('settings')}</button>` : ''}
+                </div>
+            </div>
+            <div class="chit-key">
+                ${keyTile('arrow-in', 'Collected so far', money(c.totalCollected), `from ${plural(c.memberCount, 'member')}`)}
+                ${keyTile('crown', 'Paid to winners', money(c.totalPaidOut), `${plural(c.completedMonths, 'winner')} paid`)}
+                ${keyTile('piggy', 'My commission', `<span class="gold-ink">${money(c.commissionEarned)}</span>`, `${money(c.commission)} each month`, 'gold')}
+                ${keyTile(c.pendingCount || num(c.lateFeesDue) ? 'alert' : 'check-circle', 'Still to collect', c.pendingCount ? `<span class="neg">${money(c.pendingDues)}</span>` : money(0),
+                    `${c.pendingCount ? `${plural(c.pendingCount, 'payment')} pending` : 'everyone has paid'}${num(c.lateFeesDue) ? ` · +${money(c.lateFeesDue)} late interest` : ''}`, c.pendingCount ? 'alert' : '')}
+            </div>
+            <div class="chit-statline">
+                <span title="Collected minus paid out and commission">${icon('wallet')}Money with me <b class="${num(c.held) < 0 ? 'neg' : ''}">${money(c.held)}</b></span>
+                ${isAuction(c) ? `<span title="Lowest bid = your commission; highest bid allowed">${icon('gavel')}Bids <b>${moneyShort(c.minBid)}</b>–<b>${moneyShort(c.maxBid)}</b><small>${num(c.maxBidPercent)}%</small></span>`
+                    : `<span title="Chit value goes up each month by">${icon('trending')}Rises <b>${money(c.monthlyIncrement)}</b><small>/month</small></span>
+                       <span title="What a member pays on top after winning">${icon('hand-coins')}Winner extra <b>${num(c.winnerExtraAmount) ? money(c.winnerExtraAmount) : 'none'}</b></span>`}
+                <span title="Interest on late installments">${icon('clock')}Late interest <b>${num(c.lateFeePercent) ? `${num(c.lateFeePercent)}%` : 'none'}</b>${num(c.lateFeePercent) ? `<small>/month after ${c.lateGraceDays} days</small> · collected <b>${money(c.lateFeesCollected)}</b>` : ''}</span>
+                ${c.upiId ? `<span title="Payment links use this UPI ID">${icon('qr')}UPI <b>${esc(c.upiId)}</b></span>` : ''}
+                <span title="${c.postToBooks ? 'Recorded in the journal and accounts' : 'Tracked on this page only'}">${icon(c.postToBooks ? 'journal' : 'lock')}${c.postToBooks
+                    ? `Payments → <b>${esc(c.accountName || 'Cash in Hand')}</b>${c.commissionAccountName ? ` · commission → <b>${esc(c.commissionAccountName)}</b>` : ''}${c.lateFeeAccountName ? ` · late interest → <b>${esc(c.lateFeeAccountName)}</b>` : ''}${c.commissionCategoryName ? ` · income: <b>${esc(c.commissionCategoryName)}</b>` : ''}`
+                    : 'Not in my accounts'}</span>
+            </div>
+        </section>
+        ${panel({
+            title: 'Chit book', iconName: 'journal', cls: 'p-chit-tabs', bodyClass: 'flush',
+            actions: `${exportButton({ label: '' })}<div class="tabs sm" id="hc-tabs">${TABS.map(t =>
+                `<button class="tab ${view.tab === t.key ? 'active' : ''}" data-tab="${t.key}">${icon(t.iconName)}<span class="hc-tab-label">${t.label}</span></button>`).join('')}</div>`,
+            body: '<div class="scroll chit-tab-body" id="hc-tab"></div>',
+        })}`;
+
+    const body = target.querySelector('#hc-tab');
+    const drawTab = () => {
+        body.innerHTML = { month: thisMonthHtml, dues: duesHtml, months: monthsHtml, payments: paymentsHtml, members: membersHtml,
+            agreements: agreementsHtml, history: historyHtml }[view.tab](d);
+    };
+    drawTab();
+    body.scrollTop = keepScroll;
+    bindExport(target.querySelector('.p-chit-tabs'), () => exportReport(d));
+
+    target.addEventListener('click', async e => {
+        const tab = e.target.closest('[data-tab]');
+        if (tab) {
+            view.tab = tab.dataset.tab;
+            history.replaceState(null, '', `#/host-chits/${c.id}/${view.tab}`);
+            target.querySelectorAll('#hc-tabs .tab').forEach(t => t.classList.toggle('active', t === tab));
+            drawTab();
+            body.scrollTop = 0;
+            return;
+        }
+        const el = e.target.closest('[data-act]');
+        if (!el) return;
+        const act = el.dataset.act;
+        const m = el.dataset.month ? monthOf(d, Number(el.dataset.month)) : null;
+        const memberId = Number(el.dataset.member);
+        const monthNo = Number(el.dataset.no);
+        try {
+            if (act === 'settings') openSettings(d);
+            else if (act === 'remind') openSend(d, { kind: 'REMINDER', memberId: el.dataset.member ? memberId : null });
+            else if (act === 'send-receipts') openSend(d, { kind: 'RECEIPT' });
+            else if (act === 'share') openShare(d, el.dataset.member ? memberId : null);
+            else if (act === 'goto') target.querySelector(`#hc-tabs [data-tab="${el.dataset.to}"]`).click();
+            else if (act === 'quick-paid') {
+                if (isAuction(c) && monthOf(d, monthNo).bid === null) { toast('Record the auction first', 'error'); return; }
+                el.disabled = true;
+                const member = d.members.find(x => x.id === memberId);
+                const rest = Math.max(0, dueFor(d, member, monthOf(d, monthNo)) - paidFor(d, memberId, monthNo));
+                const late = num(lateFor(d, memberId, monthNo)?.due);
+                await afterChange(await api.post(`/hosted-chits/${c.id}/payments`, { memberId, monthNo, amount: rest, lateFee: late, mode: 'Cash', paidDate: isoDate() }),
+                    `${member.name} paid ${money(rest + late)} ✓`);
+            }
+            else if (act === 'receipt') openReceipt(d, d.payments.find(x => x.id === Number(el.dataset.payment)));
+            else if (act === 'statement') openStatement(d, d.members.find(x => x.id === memberId));
+            else if (act === 'agreement') openAgreement(d, Number(el.dataset.month));
+            else if (act === 'view-entry') openEntryDetail(Number(el.dataset.entry));
+            else if (act === 'pay') openPayment(d, memberId, monthNo);
+            else if (act === 'collect-all') openCollectAll(d, monthNo);
+            else if (act === 'winner') (isAuction(c) ? openAuction : openWinner)(d, m, el.dataset.random === '1');
+            else if (act === 'clear-winner') {
+                if (!await confirmDialog(`Remove ${m.winnerName} as the winner of month ${m.monthNo}?`, { confirmLabel: 'Remove' })) return;
+                await afterChange(await api.del(`/hosted-chits/${c.id}/months/${m.monthNo}/winner`), isAuction(c) ? 'Auction result removed' : 'Winner removed');
+            }
+            else if (act === 'payout') openPayout(d, m);
+            else if (act === 'undo-payout') {
+                if (!await confirmDialog(`Undo paying ${money(m.payout)} to ${m.winnerName} for month ${m.monthNo}? The month opens again.`, { confirmLabel: 'Undo' })) return;
+                await afterChange(await api.del(`/hosted-chits/${c.id}/months/${m.monthNo}/payout`), `Month ${m.monthNo} is open again`);
+            }
+            else if (act === 'edit-payment') {
+                const p = d.payments.find(x => x.id === Number(el.dataset.payment));
+                openPayment(d, p.memberId, p.monthNo, p);
+            }
+            else if (act === 'undo-payment') undoPayment(d, d.payments.find(x => x.id === Number(el.dataset.payment)));
+            else if (act === 'edit-member') openMember(d, d.members.find(x => x.id === memberId));
+            else if (act === 'history-kind') { view.historyKind = el.dataset.kind; drawTab(); }
+            else if (act === 'dues-filter') { view.duesFilter = el.dataset.kind; drawTab(); }
+            else if (act === 'delete-chit') openDelete(d);
+        } catch (err) {
+            el.disabled = false;
+            toast(err.message, 'error');
+        }
+    });
+    target.addEventListener('input', e => {
+        if (e.target.id !== 'hc-member-search') return;
+        view.memberQuery = e.target.value;
+        const q = view.memberQuery.trim().toLowerCase();
+        target.querySelectorAll('[data-member-row]').forEach(r => { r.hidden = !!q && !r.dataset.memberRow.includes(q); });
+    });
+}
+
+function keyTile(iconName, label, value, note, cls = '') {
+    return `<div class="ck-tile ${cls}"><span class="ck-icon">${icon(iconName)}</span>
+        <div class="min-0 grow"><small>${esc(label)}</small><b>${value}</b><span class="ck-note">${note}</span></div></div>`;
+}
+
+// ---------------------------------------------------------------- This month
+
+function thisMonthHtml(d) {
+    const c = d.chit;
+    const month = d.schedule.find(m => m.status === 'ONGOING');
+    const canManage = manage();
+    const older = [];
+    d.schedule.filter(m => !month || m.monthNo < month.monthNo).forEach(m => d.members.forEach(mem => {
+        const rest = dueFor(d, mem, m) - paidFor(d, mem.id, m.monthNo);
+        const late = num(lateFor(d, mem.id, m.monthNo)?.due);
+        if (rest > 0 || late > 0) older.push({ mem, m, rest: Math.max(0, rest) + late });
+    }));
+    const olderHtml = older.length ? `
+        <section class="hc-block">
+            <div class="hc-block-head">${icon('alert')}<b>Still owed from earlier months</b><span class="muted">${money(older.reduce((s, x) => s + x.rest, 0))}</span></div>
+            <div class="hc-people">${older.map(x => personRow(d, x.mem, x.m, canManage, `month ${x.m.monthNo} (${shortMonth(x.m.dueDate)})`)).join('')}</div>
+        </section>` : '';
+    if (!month) {
+        return `<div class="hc-pad">${emptyState(`All ${c.months} months are done. You earned ${money(c.commissionEarned)} in commission.`, 'check-circle')}${olderHtml}</div>`;
+    }
+    const rows = d.members.map(m => ({ m, paid: paidFor(d, m.id, month.monthNo), due: dueFor(d, m, month) }));
+    const unpaid = rows.filter(r => r.paid < r.due);
+    const paid = rows.filter(r => r.paid >= r.due);
+    const collected = rows.reduce((s, r) => s + r.paid, 0);
+    const expected = rows.reduce((s, r) => s + r.due, 0);
+    const auction = isAuction(c);
+    const decided = auction ? month.bid !== null : !!month.winnerMemberId;
+    const late = daysFromToday(month.dueDate) < 0 && unpaid.length;
+    const left = d.members.filter(m => !m.wonMonth).length;
+
+    const collectStep = (no) => `
+        <li class="hc-step ${!unpaid.length ? 'done' : auction && !decided ? 'waiting' : 'active'}">
+            <div class="hc-step-head">
+                <span class="hc-step-no">${!unpaid.length ? icon('check') : no}</span>
+                <div class="min-0"><b>Collect ${auction ? (decided ? money(num(c.installment) - num(month.dividend)) : 'the installment') : money(c.installment)} from each member${!auction && rows.some(r => r.due > num(c.installment))
+                    ? ` (${money(num(c.installment) + num(c.winnerExtraAmount))} from past winners)` : ''}</b>
+                    <small>${paid.length} of ${d.members.length} paid · ${money(collected)} of ${money(expected)}${auction && !decided ? ' · the amount drops once the auction sets the dividend' : ''}</small></div>
+                ${canManage && unpaid.length > 1 && decided ? `<button class="btn sm" data-act="collect-all" data-no="${month.monthNo}">${icon('check-circle')}Everyone has paid</button>` : ''}
+            </div>
+            <i class="ov-meter hc-meter"><em style="width:${expected ? Math.min(100, (collected / expected) * 100) : 0}%"></em></i>
+            ${unpaid.length ? `<div class="hc-people">${unpaid.map(r => personRow(d, r.m, month, canManage, !auction && r.due > num(c.installment) ? `won month ${r.m.wonMonth}` : '')).join('')}</div>`
+                : `<p class="hc-ok">${icon('check-circle')}Everyone has paid this month.</p>`}
+            ${paid.length ? `<details class="hc-paid-list" ${unpaid.length ? '' : 'open'}><summary>Paid · ${paid.length}</summary><div class="hc-people">${paid.map(r => {
+                const last = d.payments.filter(p => p.memberId === r.m.id && p.monthNo === month.monthNo).at(-1);
+                return `<div class="hc-person paid ${canManage ? 'clickable' : ''}" ${canManage ? `data-act="pay" data-member="${r.m.id}" data-no="${month.monthNo}" title="Change or undo"` : ''}>
+                    <span class="hc-avatar">${esc(initials(r.m.name))}</span>
+                    <div class="min-0"><b class="ellipsis">${esc(r.m.name)}</b><small>${last ? `${date(last.paidDate)} · ${esc(last.mode)}` : ''}</small></div>
+                    <span class="hc-paid-amt">${icon('check')}${money(r.paid)}</span></div>`;
+            }).join('')}</div></details>` : ''}
+        </li>`;
+
+    const decideStep = (no) => auction ? `
+        <li class="hc-step ${decided ? 'done' : 'active'}">
+            <div class="hc-step-head">
+                <span class="hc-step-no">${decided ? icon('check') : no}</span>
+                <div class="min-0"><b>Hold the auction</b>
+                    <small>${decided ? `Won at a bid of ${money(month.bid)} · dividend ${money(month.dividend)} a member`
+                        : left <= 1 ? 'Only one member is left: they take the chit at the lowest bid'
+                        : `${left} members can bid · bids from ${money(c.minBid)} (your commission) to ${money(c.maxBid)}`}</small></div>
+            </div>
+            ${decided ? `<div class="hc-winner-box"><span class="hc-avatar gold">${icon('gavel')}</span><div class="min-0"><b>${esc(month.winnerName)}</b>
+                    <small>bid ${money(month.bid)} → gets ${money(month.payout)}</small></div>
+                    ${canManage ? `<span class="spacer"></span><button class="btn sm ghost" data-act="clear-winner" data-month="${month.monthNo}">Remove</button>
+                    <button class="btn sm" data-act="winner" data-month="${month.monthNo}">${icon('edit')}Change</button>` : ''}</div>`
+                : canManage ? `<div class="row wrap hc-step-actions"><button class="btn primary" data-act="winner" data-month="${month.monthNo}">${icon('gavel')}Record the winning bid</button></div>` : ''}
+        </li>` : `
+        <li class="hc-step ${decided ? 'done' : 'active'}">
+            <div class="hc-step-head">
+                <span class="hc-step-no">${decided ? icon('check') : no}</span>
+                <div class="min-0"><b>Choose this month's winner</b>
+                    <small>${decided ? (month.drawMethod === 'Random draw' ? 'Picked by random draw' : 'Picked by you') : `${left} members have not won yet`}</small></div>
+            </div>
+            ${decided ? `<div class="hc-winner-box"><span class="hc-avatar gold">${icon('crown')}</span><b>${esc(month.winnerName)}</b>
+                    ${canManage ? `<span class="spacer"></span><button class="btn sm ghost" data-act="clear-winner" data-month="${month.monthNo}">Remove</button>
+                    <button class="btn sm" data-act="winner" data-month="${month.monthNo}">${icon('refresh')}Change</button>` : ''}</div>`
+                : canManage ? `<div class="row wrap hc-step-actions"><button class="btn primary" data-act="winner" data-month="${month.monthNo}">${icon('users')}Pick a member</button>
+                    <button class="btn" data-act="winner" data-random="1" data-month="${month.monthNo}">${icon('dice')}Random draw</button></div>` : ''}
+        </li>`;
+
+    const payStep = (no) => `
+        <li class="hc-step ${decided ? 'active' : 'waiting'}">
+            <div class="hc-step-head">
+                <span class="hc-step-no">${no}</span>
+                <div class="min-0"><b>Pay the winner</b>
+                    <small>${decided ? `Give ${money(month.payout)} to ${esc(month.winnerName)}, then mark it done. This closes month ${month.monthNo}.` : auction ? 'Hold the auction first' : 'Choose the winner first'}</small></div>
+            </div>
+            ${canManage && decided ? `<div class="row wrap hc-step-actions"><button class="btn primary" data-act="payout" data-month="${month.monthNo}">${icon('check')}I paid ${money(month.payout)} to ${esc(month.winnerName)}</button>
+                ${unpaid.length ? `<small class="neg">${plural(unpaid.length, 'member')} still to pay</small>` : ''}</div>` : ''}
+        </li>`;
+
+    return `
+    <div class="hc-pad">
+        <section class="hc-month-intro">
+            <div class="min-0">
+                <small>Month ${month.monthNo} of ${c.months}</small>
+                <h3>${monthName(month.dueDate)}</h3>
+                <p>Members pay by <b>${date(month.dueDate)}</b> <span class="${late ? 'neg' : 'muted'}">(${relDays(month.dueDate)})</span></p>
+            </div>
+            <div class="hc-pot">
+                <span><small>Chit value</small><b>${money(month.chitValue)}</b></span>
+                <i>−</i>
+                ${auction ? `<span><small>Winning bid</small><b>${month.bid !== null ? money(month.bid) : '?'}</b></span>`
+                    : `<span><small>My commission</small><b class="gold-ink">${money(month.commission)}</b></span>`}
+                <i>=</i>
+                <span class="win"><small>Winner gets</small><b>${month.estimated ? 'up to ' : ''}${money(month.payout)}</b></span>
+            </div>
+        </section>
+        ${auction && month.bid !== null ? `<p class="book-note">${icon('info')}<span>Of the ${money(month.bid)} bid, you keep ${money(month.commission)} as commission and
+            ${money(num(month.bid) - num(month.commission))} is shared: <b>${money(month.dividend)}</b> for each of the ${d.members.length} members, so everyone pays
+            <b>${money(num(c.installment) - num(month.dividend))}</b> instead of ${money(c.installment)} this month.</span></p>` : ''}
+        <ol class="hc-flow">${auction ? decideStep(1) + collectStep(2) + payStep(3) : collectStep(1) + decideStep(2) + payStep(3)}</ol>
+        ${olderHtml}
+    </div>`;
+}
+
+/** A member who owes money: name, a hint, the amount and the buttons to record it or remind them. */
+/** A member who owes money: what is left of the month (part payments show as a bar), late interest, and the buttons. */
+function personRow(d, m, month, canManage, note = '') {
+    const due = dueFor(d, m, month);
+    const paid = paidFor(d, m.id, month.monthNo);
+    const rest = Math.max(0, due - paid);
+    const late = lateFor(d, m.id, month.monthNo);
+    const total = rest + num(late?.due);
+    const waiting = isAuction(d.chit) && month.bid === null;   // what each pays depends on the auction's dividend
+    const hint = [note, waiting ? 'pays once the auction sets the dividend' : rest === 0 ? 'installment paid' : paid > 0 ? `paid ${money(paid)} of ${money(due)}` : m.phone || ''].filter(Boolean).join(' · ');
+    return `<div class="hc-person">
+        <span class="hc-avatar">${esc(initials(m.name))}</span>
+        <div class="min-0"><b class="ellipsis">${esc(m.name)}</b><small>${esc(hint)}</small>
+            ${late ? `<small class="hc-late">${icon('clock')}+${money(late.due)} late interest · ${late.daysLate ? `${late.daysLate} days late` : 'paid late'}</small>` : ''}
+            ${paid > 0 && rest > 0 ? `<i class="hc-part" title="Part paid"><em style="width:${Math.min(100, (paid / due) * 100)}%"></em></i>` : ''}</div>
+        <b class="hc-owe" title="${rest ? `${money(rest)} installment` : ''}${late ? ` + ${money(late.due)} late interest` : ''}">${money(total)}</b>
+        ${canManage ? `<span class="hc-person-acts">
+            <button class="btn sm ghost icon" data-act="remind" data-member="${m.id}" title="Send a reminder with a payment link">${icon('bell')}</button>
+            ${waiting ? `<span class="badge gray" title="Record the auction first: the dividend decides what each member pays">${icon('gavel')}After the auction</span>` : `
+            <button class="btn sm ghost" data-act="pay" data-member="${m.id}" data-no="${month.monthNo}" title="A part payment, or a different date, mode or reference">Part</button>
+            <button class="btn sm primary" data-act="quick-paid" data-member="${m.id}" data-no="${month.monthNo}" title="Record ${money(total)} in cash, today${late ? ' (with the late interest)' : ''}">${icon('check')}Paid</button>`}</span>` : ''}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- dues
+
+/** Every payment still pending: overdue, part paid, late interest, and this month's. */
+function duesRows(d) {
+    const today = isoDate();
+    const rows = [];
+    d.members.forEach(m => d.schedule.filter(s => s.due).forEach(s => {
+        const due = dueFor(d, m, s), paid = paidFor(d, m.id, s.monthNo);
+        const rest = Math.max(0, due - paid);
+        const late = lateFor(d, m.id, s.monthNo);
+        if (rest <= 0 && !late) return;
+        const overdue = rest > 0 && s.dueDate < today;
+        rows.push({ m, s, due, paid, rest, late: num(late?.due), days: overdue ? daysFromToday(s.dueDate) * -1 : 0,
+            overdue, partial: paid > 0 && rest > 0, thisMonth: rest > 0 && s.dueDate >= today });
+    }));
+    return rows.sort((a, b) => b.days - a.days || a.s.monthNo - b.s.monthNo || a.m.slot - b.m.slot);
+}
+
+function duesHtml(d) {
+    const all = duesRows(d);
+    const groups = {
+        ALL: ['All', all],
+        OVERDUE: ['Overdue', all.filter(r => r.overdue)],
+        PARTIAL: ['Part paid', all.filter(r => r.partial)],
+        LATE: ['Late interest', all.filter(r => r.late > 0)],
+        MONTH: ['Due this month', all.filter(r => r.thisMonth)],
+    };
+    const rows = groups[view.duesFilter]?.[1] || all;
+    const sum = (list, f) => list.reduce((s, r) => s + f(r), 0);
+    const canManage = manage();
+    const status = r => r.overdue ? `<span class="badge critical">${icon('alert-circle')}Overdue${r.partial ? ' · part paid' : ''}</span>`
+        : r.thisMonth ? `<span class="badge ${r.partial ? 'warning' : 'gray'}">${icon('clock')}${r.partial ? 'Part paid' : 'Due'}</span>`
+        : `<span class="badge warning">${icon('clock')}Late interest</span>`;
+    return `<div class="hc-dues-head">
+            <div class="seg-chips sm">${Object.entries(groups).map(([k, [label, list]]) =>
+                `<button class="seg-chip ${view.duesFilter === k ? 'active' : ''}" data-act="dues-filter" data-kind="${k}">${label}<span class="count">${list.length}</span></button>`).join('')}</div>
+            <span class="spacer"></span>
+            ${canManage && all.length ? `<button class="btn sm" data-act="remind">${icon('send')}Send all reminders</button>` : ''}
+        </div>
+        <div class="hc-dues-sum">
+            <span><small>Overdue</small><b class="neg">${money(sum(groups.OVERDUE[1], r => r.rest))}</b></span>
+            <span><small>Part paid, balance</small><b>${money(sum(groups.PARTIAL[1], r => r.rest))}</b></span>
+            <span><small>Late interest</small><b>${money(sum(all, r => r.late))}</b></span>
+            <span><small>Due this month</small><b>${money(sum(groups.MONTH[1], r => r.rest))}</b></span>
+        </div>
+        ${rows.length ? `<table class="grid compact">
+            <thead><tr><th>Member</th><th class="c">Month</th><th>Pay by</th><th class="r">Late by</th><th class="r">Due</th><th class="r">Paid</th>
+                <th class="r">Balance</th><th class="r">Late int.</th><th>Status</th>${canManage ? '<th></th>' : ''}</tr></thead>
+            <tbody>${rows.map(r => `<tr>
+                <td><span class="hc-name"><span class="hc-avatar sm">${esc(initials(r.m.name))}</span><b>${esc(r.m.name)}</b></span>${r.m.phone ? ` <small class="muted">${esc(r.m.phone)}</small>` : ''}</td>
+                <td class="c">${r.s.monthNo}</td>
+                <td>${date(r.s.dueDate)}</td>
+                <td class="r ${r.days ? 'neg' : 'muted'}">${r.days ? `${r.days} d` : '—'}</td>
+                <td class="r">${money(r.due)}</td>
+                <td class="r">${r.paid ? money(r.paid) : '—'}</td>
+                <td class="r"><b class="${r.rest ? 'neg' : ''}">${r.rest ? money(r.rest) : '—'}</b></td>
+                <td class="r">${r.late ? money(r.late) : '—'}</td>
+                <td>${status(r)}</td>
+                ${canManage ? `<td class="r hc-nowrap">
+                    <button class="btn sm ghost icon" data-act="remind" data-member="${r.m.id}" title="Send a reminder">${icon('bell')}</button>
+                    <button class="btn sm" data-act="pay" data-member="${r.m.id}" data-no="${r.s.monthNo}">${icon('check')}Collect</button></td>` : ''}
+            </tr>`).join('')}</tbody>
+            <tfoot><tr class="total"><td colspan="6">Total · ${rows.length} item${rows.length === 1 ? '' : 's'}</td>
+                <td class="r neg">${money(sum(rows, r => r.rest))}</td><td class="r">${money(sum(rows, r => r.late))}</td><td colspan="${canManage ? 2 : 1}"></td></tr></tfoot>
+        </table>` : emptyState(view.duesFilter === 'ALL' ? 'Nothing pending: everyone is up to date' : 'Nothing in this list', 'check-circle')}`;
+}
+
+// ---------------------------------------------------------------- agreements
+
+function agreementsHtml(d) {
+    const list = d.agreements || [];
+    const missing = d.schedule.filter(m => m.status === 'COMPLETED' && !list.some(a => a.monthNo === m.monthNo));
+    const accepted = list.filter(a => a.status !== 'DRAFT');
+    const canManage = manage();
+    return `<div class="hc-dues-sum">
+            <span><small>Accepted or signed</small><b class="pos">${accepted.length}</b></span>
+            <span><small>Waiting for the member</small><b>${list.length - accepted.length}</b></span>
+            <span><small>Payouts without one</small><b class="${missing.length ? 'neg' : ''}">${missing.length}</b></span>
+            <span><small>Amount covered</small><b>${money(accepted.reduce((s, a) => s + num(a.payoutAmount), 0))}</b></span>
+        </div>
+        ${list.length || missing.length ? `<table class="grid compact">
+            <thead><tr><th>Agreement</th><th class="c">Month</th><th>Member</th><th class="r">Received</th><th>Paid on</th><th>Status</th><th>Accepted by</th><th></th></tr></thead>
+            <tbody>${list.map(a => {
+                const [tone, ic, label] = AGREEMENT_STATUS[a.status] || ['gray', 'info', a.status];
+                return `<tr class="clickable" data-act="agreement" data-month="${a.monthNo}">
+                    <td><b>${esc(a.agreementNo)}</b></td><td class="c">${a.monthNo}</td><td>${esc(a.memberName)}</td>
+                    <td class="r">${money(a.payoutAmount)}</td><td>${date(a.payoutDate)}</td>
+                    <td><span class="badge ${tone}">${icon(ic)}${label}</span></td>
+                    <td>${a.acceptedAt ? `${esc(a.acceptedName)} <small class="muted">${dateTime(a.acceptedAt)}</small>
+                        ${a.phoneMatches === true ? `<span class="badge good" title="Mobile number matches the record">${icon('phone')}✓</span>` : a.phoneMatches === false ? `<span class="badge critical" title="Mobile number differs from the record">${icon('phone')}!</span>` : ''}
+                        ${a.signature ? `<span class="badge gray" title="Signature drawn">${icon('edit')}</span>` : ''}${a.acceptedLocation ? `<span class="badge gray" title="Location shared">${icon('flag')}</span>` : ''}` : '<span class="muted">—</span>'}</td>
+                    <td class="r"><button class="btn sm ghost" data-act="agreement" data-month="${a.monthNo}">${icon('eye')}Open</button></td></tr>`;
+            }).join('')}
+            ${missing.map(m => `<tr><td><span class="muted">No agreement</span></td><td class="c">${m.monthNo}</td><td>${esc(m.winnerName || '')}</td>
+                <td class="r">${money(m.payout)}</td><td>${date(m.payoutDate)}</td><td><span class="badge gray">${icon('info')}None</span></td><td></td>
+                <td class="r">${canManage ? `<button class="btn sm" data-act="agreement" data-month="${m.monthNo}">${icon('file-text')}Make</button>` : ''}</td></tr>`).join('')}</tbody>
+        </table>` : emptyState('No winner has been paid yet. An agreement is made when you pay a winner.', 'file-text')}`;
+}
+
+/**
+ * Deleting a chit. Accepted agreements are legal records, so such a chit cannot be deleted. With money recorded,
+ * deleting first reverts it (every payment and payout undone, their journal entries taken out of the books) and asks
+ * for the chit's name; without, a plain confirmation is enough.
+ */
+async function openDelete(d) {
+    const c = d.chit;
+    const signed = (d.agreements || []).filter(a => a.status !== 'DRAFT');
+    if (signed.length) {
+        openModal({
+            title: `Can't delete ${c.name}`, iconName: 'lock',
+            body: `<p style="margin-top:0">${plural(signed.length, 'winner agreement')} ${signed.length === 1 ? 'has' : 'have'} been accepted or signed
+                (${signed.map(a => esc(a.agreementNo)).join(', ')}). They are kept as legal records, so this chit stays.</p>
+                <p class="muted hc-small">A finished chit simply moves to “Finished” in the list.</p>`,
+            actions: [{ label: 'OK', kind: 'primary' }],
+        });
+        return;
+    }
+    const paid = d.payments;
+    const payouts = d.schedule.filter(m => m.payoutDate);
+    if (!paid.length && !payouts.length) {
+        if (!await confirmDialog(`Delete “${c.name}” and its ${c.memberCount} members? Nothing has been recorded in it yet.`, { confirmLabel: 'Delete chit' })) return;
+        await api.del(`/hosted-chits/${c.id}`);
+        done();
+        return;
+    }
+    const collected = paid.reduce((s, p) => s + num(p.amount) + num(p.lateFee), 0);
+    const entries = paid.filter(p => p.journalEntryId).length + payouts.filter(m => m.payoutEntryId).length * 2;
+    openModal({
+        title: `Revert and delete ${c.name}`, iconName: 'alert', size: 'lg',
+        body: `<p class="hc-note warn">${icon('alert')}<span>This chit has money recorded in it. Deleting it first <b>reverts</b> all of that:</span></p>
+            <ul class="hc-revert">
+                <li>${icon('undo')}<span><b>${plural(paid.length, 'payment')}</b> from members (${money(collected)}) are undone${paid.some(p => p.journalEntryId) ? ' and their journal entries removed from your accounts' : ''}</span></li>
+                ${payouts.length ? `<li>${icon('undo')}<span><b>${plural(payouts.length, 'payout')}</b> to winners (${money(payouts.reduce((s, m) => s + num(m.payout), 0))}) and the commission booked on them are undone</span></li>` : ''}
+                ${entries ? `<li>${icon('journal')}<span>About <b>${plural(entries, 'journal entry', 'journal entries')}</b> leave the journal, Income and the balance sheet; accounts made for this chit keep their name but no longer hold this money</span></li>` : ''}
+                ${(d.agreements || []).length ? `<li>${icon('file-text')}<span>${plural(d.agreements.length, 'agreement')} not yet accepted and every share link stop working</span></li>` : ''}
+                <li>${icon('users')}<span>${c.memberCount} members and the schedule are deleted</span></li>
+            </ul>
+            <p style="margin-bottom:4px">This cannot be undone. Download the chit first if you want a copy (Chit book → Download).</p>
+            <label class="field"><span>Type the chit's name to confirm: <b>${esc(c.name)}</b></span><input type="text" name="confirm" autocomplete="off" data-plain></label>`,
+        actions: [
+            { label: 'Cancel' },
+            { label: 'Revert everything and delete', kind: 'danger solid', iconName: 'trash', onClick: async modal => {
+                const typed = modal.el.querySelector('[name=confirm]').value.trim();
+                if (typed.toLowerCase() !== c.name.trim().toLowerCase()) throw new Error(`Type ${c.name} exactly to confirm`);
+                await api.del(`/hosted-chits/${c.id}?revert=true&confirm=${encodeURIComponent(typed)}`);
+                done();
+            } },
+        ],
+    });
+    function done() {
+        toast(`${c.name} deleted`);
+        view.selectedId = null;
+        location.hash = '#/host-chits';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }
+}
+
+// ---------------------------------------------------------------- months
+
+function monthsHtml(d) {
+    const c = d.chit;
+    const auction = isAuction(c);
+    const lastDone = c.completedMonths;
+    const sum = k => d.schedule.reduce((s, m) => s + num(m[k]), 0);
+    return `<table class="grid compact hc-months">
+        <thead><tr><th class="c">Month</th><th>Pay by</th>${auction ? '<th class="r">Winning bid</th><th class="r">Dividend</th><th class="r">Each pays</th>' : '<th class="r">Chit value</th>'}
+            <th class="r">Winner gets</th><th>Winner</th><th class="r">Collected</th><th>Status</th><th>Agreement</th><th></th></tr></thead>
+        <tbody>${d.schedule.map(m => `<tr class="${m.status === 'ONGOING' ? 'hc-now' : m.status === 'COMPLETED' ? 'hc-past' : ''}">
+            <td class="c"><b>${m.monthNo}</b></td>
+            <td>${date(m.dueDate)}</td>
+            ${auction ? `<td class="r">${m.bid !== null ? money(m.bid) : '<span class="muted">—</span>'}</td>
+                <td class="r">${m.bid !== null ? money(m.dividend) : '<span class="muted">—</span>'}</td>
+                <td class="r">${money(num(c.installment) - num(m.dividend))}</td>` : `<td class="r">${money(m.chitValue)}</td>`}
+            <td class="r"><b>${m.estimated ? '<small class="muted">up to</small> ' : ''}${money(m.payout)}</b></td>
+            <td>${m.winnerName ? `<span class="hc-winner">${icon(auction ? 'gavel' : 'crown')}${esc(m.winnerName)}</span>` : '<span class="muted">—</span>'}</td>
+            <td class="r" title="${m.paidCount} of ${d.members.length} paid in full">${m.due || num(m.collected) ? `${moneyShort(m.collected)} <small class="muted">${m.paidCount}/${d.members.length}</small>` : '<span class="muted">—</span>'}</td>
+            <td>${statusBadge(m.status)}${m.payoutDate ? `<small class="muted hc-when">paid ${shortDate(m.payoutDate)}</small>` : ''}</td>
+            <td>${m.status === 'COMPLETED' ? agreementChip(d, m) : '<span class="muted">—</span>'}</td>
+            <td class="r">${m.status === 'ONGOING' ? `<button class="btn sm" data-act="goto" data-to="month">Open${icon('chevron-right')}</button>`
+                : manage() && m.status === 'COMPLETED' && m.monthNo === lastDone ? `<button class="btn sm ghost" data-act="undo-payout" data-month="${m.monthNo}" title="Undo the payment to the winner">${icon('undo')}Undo</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+        <tfoot><tr class="total"><td colspan="2">Total</td>${auction ? `<td class="r">${money(sum('bid'))}</td><td></td><td></td>` : `<td class="r">${money(sum('chitValue'))}</td>`}
+            <td class="r">${money(sum('payout'))}</td><td></td><td class="r">${moneyShort(sum('collected'))}</td><td colspan="3"></td></tr></tfoot>
+    </table>`;
+}
+
+/** "Chrome 141 on Android 14" from a user agent. */
+function deviceName(ua = '') {
+    const os = /Android ([\d.]+)/.exec(ua)?.[0] || (/iPhone|iPad/.test(ua) ? `iOS ${(/OS ([\d_]+)/.exec(ua)?.[1] || '').replace(/_/g, '.')}` : '')
+        || (/Windows NT/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'unknown system');
+    const browser = /Edg\/(\d+)/.exec(ua) ? `Edge ${/Edg\/(\d+)/.exec(ua)[1]}` : /Chrome\/(\d+)/.exec(ua) ? `Chrome ${/Chrome\/(\d+)/.exec(ua)[1]}`
+        : /Firefox\/(\d+)/.exec(ua) ? `Firefox ${/Firefox\/(\d+)/.exec(ua)[1]}` : /Safari\//.test(ua) ? 'Safari' : 'a browser';
+    return `${browser} on ${os}`;
+}
+
+function signatureSvg(path) {
+    const safe = String(path || '').replace(/[^MLml0-9 .-]/g, '');
+    return `<svg viewBox="0 0 1000 300" class="hc-signature" role="img" aria-label="Signature"><path d="${safe}" fill="none" stroke="#0a2e4f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+/** What was recorded when the member accepted: the evidence, laid out for the organiser (and for printing). */
+function evidenceHtml(a, member) {
+    const fingerprint = `<p class="hc-rc-foot">Agreement fingerprint (SHA-256): <code class="hc-hash">${esc(a.contentHash)}</code></p>`;
+    if (!a.acceptedAt) return `<p class="hc-rc-foot">Not accepted yet.</p>${fingerprint}`;
+    if (a.status === 'SIGNED') return `<p class="hc-rc-foot">Signed on paper by <b>${esc(a.acceptedName)}</b>, recorded ${dateTime(a.acceptedAt)} · ${esc(a.acceptedFrom || '')}</p>${fingerprint}`;
+    let dev = {};
+    try { dev = JSON.parse(a.acceptedDevice || '{}'); } catch { /* old record */ }
+    const [lat, lng, acc] = (a.acceptedLocation || '').split(',');
+    const onRecord = member?.phone ? member.phone.replace(/\D/g, '').slice(-10) : null;
+    const phone = a.acceptedPhone ? `${esc(a.acceptedPhone)} ${a.phoneMatches === true ? '<span class="badge good">matches the member\'s number</span>'
+        : a.phoneMatches === false ? `<span class="badge critical">differs from ${esc(onRecord || 'the record')}</span>` : '<span class="badge gray">no number on record</span>'}` : '—';
+    const row = (label, value) => `<div class="hc-ev-row"><span>${label}</span><b>${value}</b></div>`;
+    return `<div class="hc-evidence">
+        <div class="hc-ev-title">${icon('shield')}Evidence of acceptance</div>
+        <div class="hc-ev-grid">
+            <div class="hc-ev-list">
+                ${row('Name typed', esc(a.acceptedName))}
+                ${row('Mobile number', phone)}
+                ${row('Accepted at', `${dateTime(a.acceptedAt)} <small class="muted">server time</small>`)}
+                ${dev.localTime ? row('Device clock', `${esc(dev.localTime.replace(/ \(.*\)$/, ''))}`) : ''}
+                ${row('IP address', esc(a.acceptedIp || (a.acceptedFrom || '').replace(/^IP /, '').split(' · ')[0] || '—'))}
+                ${row('Device', `${esc(deviceName(dev.userAgent || a.acceptedFrom || ''))}${dev.mobile ? ' · phone' : ''}`)}
+                ${dev.screen ? row('Screen · language · time zone', `${esc(dev.screen)} · ${esc(dev.language || '')} · ${esc(dev.timeZone || '')}`) : ''}
+                ${row('Location', lat ? `<a href="https://maps.google.com/?q=${encodeURIComponent(`${lat},${lng}`)}" target="_blank" rel="noopener">${esc(lat)}, ${esc(lng)}</a> <small class="muted">±${esc(acc || '?')} m</small>` : '<span class="muted">not shared</span>')}
+                ${a.deviceHash ? row('Device fingerprint', `<code class="hc-hash">${esc(a.deviceHash)}</code>`) : ''}
+            </div>
+            <div class="hc-ev-sign">${a.signature ? `${signatureSvg(a.signature)}<small>Signature drawn by ${esc(a.acceptedName)}</small>` : '<span class="muted">No drawn signature</span>'}</div>
+        </div>
+        ${a.acceptanceSeal ? `<p class="hc-rc-foot">Acceptance seal (SHA-256 of the agreement and all of the above): <code class="hc-hash">${esc(a.acceptanceSeal)}</code></p>` : ''}
+        ${fingerprint}
+    </div>`;
+}
+
+const AGREEMENT_STATUS = { DRAFT: ['warning', 'clock', 'Not accepted yet'], ACCEPTED: ['good', 'check-circle', 'Accepted'], SIGNED: ['good', 'edit', 'Signed'] };
+
+function agreementChip(d, m) {
+    const a = (d.agreements || []).find(x => x.monthNo === m.monthNo);
+    if (!a) return manage() ? `<button class="btn sm ghost" data-act="agreement" data-month="${m.monthNo}">${icon('file-text')}Make</button>` : '<span class="muted">—</span>';
+    const [tone, ic, label] = AGREEMENT_STATUS[a.status] || ['gray', 'info', a.status];
+    return `<button class="btn sm ghost hc-ag" data-act="agreement" data-month="${m.monthNo}" title="${esc(a.agreementNo)}"><span class="badge ${tone}">${icon(ic)}${label}</span></button>`;
+}
+
+// ---------------------------------------------------------------- payments grid
+
+function paymentsHtml(d) {
+    const c = d.chit;
+    return `<div class="hc-legend">${Object.entries(CELL).map(([k, [sym, label]]) => `<span><i class="hc-cell ${k.toLowerCase()}">${sym}</i>${label}</span>`).join('')}
+            <span><span class="hc-crown">${icon('crown')}</span>Has won</span>${manage() ? '<span class="muted">· tap a box to add or change a payment</span>' : ''}
+            ${manage() && d.payments.length ? `<span class="spacer"></span><button class="btn sm" data-act="send-receipts">${icon('receipt')}Send receipts</button>` : ''}</div>
+        <div class="hc-grid-wrap"><table class="hc-grid">
+            <thead><tr><th class="hc-name-col">Member</th>${d.schedule.map(m =>
+                `<th class="${m.status === 'ONGOING' ? 'now' : ''}" title="Month ${m.monthNo} · pay by ${date(m.dueDate)}">${m.monthNo}<small>${shortMonth(m.dueDate)}</small></th>`).join('')}
+                <th class="r">Owes</th></tr></thead>
+            <tbody>${d.members.map(mem => `<tr>
+                <th class="hc-name-col" title="${esc(mem.name)}">${mem.wonMonth ? `<span class="hc-crown" title="Won month ${mem.wonMonth}">${icon('crown')}</span>` : ''}<span class="ellipsis">${esc(mem.name)}</span></th>
+                ${d.schedule.map(m => {
+                    const st = cellStatus(d, mem, m);
+                    const open = manage() && !(isAuction(c) && m.bid === null);
+                    const paid = paidFor(d, mem.id, m.monthNo);
+                    const [sym, label] = CELL[st];
+                    return `<td class="${m.status === 'ONGOING' ? 'now' : ''}"><button type="button" class="hc-cell ${st.toLowerCase()}"
+                        ${open ? `data-act="pay" data-member="${mem.id}" data-no="${m.monthNo}"` : 'disabled'}
+                        title="${esc(mem.name)} · month ${m.monthNo}: ${isAuction(c) && m.bid === null ? 'after the auction (the dividend decides the amount)' : label}${paid ? ` (${money(paid)} of ${money(dueFor(d, mem, m))})` : ''}">${st === 'PARTIAL' ? moneyShort(paid).replace('₹', '') : sym}</button></td>`;
+                }).join('')}
+                <td class="r ${num(mem.balanceDue) ? 'neg' : 'muted'}"><b>${num(mem.balanceDue) ? money(mem.balanceDue) : '—'}</b></td>
+            </tr>`).join('')}</tbody>
+            <tfoot><tr><th class="hc-name-col">Collected</th>${d.schedule.map(m =>
+                `<td class="${m.status === 'ONGOING' ? 'now' : ''}" title="${money(m.collected)} of ${money(m.expected)}">${num(m.collected) ? moneyShort(m.collected) : ''}</td>`).join('')}
+                <td class="r neg">${num(c.pendingDues) ? money(c.pendingDues) : '—'}</td></tr></tfoot>
+        </table></div>`;
+}
+
+// ---------------------------------------------------------------- members
+
+function membersHtml(d) {
+    const q = view.memberQuery.trim().toLowerCase();
+    const canManage = manage();
+    return `<div class="hc-members-tools">
+            <label class="hc-search">${icon('search')}<input type="search" id="hc-member-search" placeholder="Find a member" value="${esc(view.memberQuery)}"></label>
+            <span class="muted">${d.members.length} members · ${d.members.filter(m => m.wonMonth).length} have won</span>
+        </div>
+        <table class="grid compact">
+        <thead><tr><th class="c">#</th><th>Name</th><th>Phone · e-mail</th><th>Won</th><th class="r">Paid</th><th class="r">Owes</th><th class="r">Late interest</th>${canManage ? '<th></th>' : ''}</tr></thead>
+        <tbody>${d.members.map(m => {
+            const key = (m.name + ' ' + (m.phone || '') + ' ' + (m.email || '')).toLowerCase();
+            const won = m.wonMonth ? monthOf(d, m.wonMonth) : null;
+            return `<tr data-member-row="${esc(key)}" ${q && !key.includes(q) ? 'hidden' : ''}>
+                <td class="c muted">${m.slot}</td>
+                <td><span class="hc-name"><span class="hc-avatar sm ${m.wonMonth ? 'gold' : ''}">${m.wonMonth ? icon('crown') : esc(initials(m.name))}</span><b>${esc(m.name)}</b></span></td>
+                <td>${m.phone ? `<a href="tel:${esc(m.phone)}">${esc(m.phone)}</a>` : '<span class="muted">no phone</span>'}${m.email ? `<small class="hc-mail"><a href="mailto:${esc(m.email)}">${esc(m.email)}</a></small>` : ''}</td>
+                <td>${won ? `<span class="hc-winner">${icon('crown')}Month ${m.wonMonth}</span> <small class="muted">${money(won.payout)}</small>` : '<span class="muted">not yet</span>'}</td>
+                <td class="r">${money(m.totalPaid)}</td>
+                <td class="r ${num(m.balanceDue) ? 'neg' : 'muted'}">${num(m.balanceDue) ? money(m.balanceDue) : 'up to date'}</td>
+                <td class="r ${num(m.lateFeeDue) ? 'neg' : 'muted'}">${num(m.lateFeeDue) ? money(m.lateFeeDue) : '—'}</td>
+                ${canManage ? `<td class="r hc-nowrap">
+                    <button class="btn sm ghost icon" data-act="remind" data-member="${m.id}" title="Send a reminder">${icon('bell')}</button>
+                    <button class="btn sm ghost icon" data-act="statement" data-member="${m.id}" title="${esc(m.name)}'s statement: print or share">${icon('file-text')}</button>
+                    <button class="btn sm ghost icon" data-act="edit-member" data-member="${m.id}" title="Edit name, phone or e-mail">${icon('edit')}</button></td>` : ''}
+            </tr>`;
+        }).join('')}</tbody>
+        <tfoot><tr class="total"><td colspan="4">Total</td><td class="r">${money(d.members.reduce((s, m) => s + num(m.totalPaid), 0))}</td>
+            <td class="r neg">${money(d.members.reduce((s, m) => s + num(m.balanceDue), 0))}</td>
+            <td class="r neg">${money(d.members.reduce((s, m) => s + num(m.lateFeeDue), 0))}</td>${canManage ? '<td></td>' : ''}</tr></tfoot>
+    </table>`;
+}
+
+// ---------------------------------------------------------------- history
+
+function historyHtml(d) {
+    const kinds = [['ALL', 'Everything'], ['IN', 'Money in'], ['OUT', 'Money out']];
+    const rows = d.ledger.filter(r => view.historyKind === 'ALL' || (view.historyKind === 'IN' ? (r.kind === 'COLLECTION' || r.kind === 'LATE_FEE') : (r.kind === 'PAYOUT' || r.kind === 'COMMISSION'))).slice().reverse();
+    const canManage = manage();
+    const what = r => r.kind === 'COLLECTION' ? `<b>${esc(r.party)}</b> paid for month ${r.monthNo}`
+        : r.kind === 'LATE_FEE' ? `Late interest from <b>${esc(r.party)}</b> (month ${r.monthNo})`
+        : r.kind === 'PAYOUT' ? `Paid winner <b>${esc(r.party)}</b> (month ${r.monthNo})` : `My commission (month ${r.monthNo})`;
+    return `<div class="hc-members-tools"><div class="seg-chips sm">${kinds.map(([k, label]) =>
+            `<button class="seg-chip ${view.historyKind === k ? 'active' : ''}" data-act="history-kind" data-kind="${k}">${label}</button>`).join('')}</div>
+            <span class="muted">newest first</span></div>
+        ${rows.length ? `<table class="grid compact">
+        <thead><tr><th>Date</th><th>What happened</th><th>How</th><th class="r">Amount</th><th class="r" title="Collected minus paid out, after this entry">Money with me</th><th>Entry</th>${canManage ? '<th></th>' : ''}</tr></thead>
+        <tbody>${rows.map(r => {
+            const late = r.kind === 'LATE_FEE';
+            const lateAmount = late ? num(d.payments.find(p => p.id === r.paymentId)?.lateFee) : 0;
+            const isIn = num(r.moneyIn) > 0 || late;
+            const tone = r.kind === 'COLLECTION' ? 'aqua' : late ? 'coral' : r.kind === 'PAYOUT' ? 'gold' : 'violet';
+            const ico = r.kind === 'COLLECTION' ? 'arrow-in' : late ? 'clock' : r.kind === 'PAYOUT' ? 'crown' : 'piggy';
+            const pay = r.paymentId ? d.payments.find(p => p.id === r.paymentId) : null;
+            return `<tr>
+                <td class="hc-nowrap">${date(r.date)}</td>
+                <td><span class="hc-kind"><span class="chip-icon sm ${tone}">${icon(ico)}</span><span>${what(r)}${r.note ? `<small class="muted hc-sub-note">${esc(r.note)}</small>` : ''}</span></span></td>
+                <td>${esc(r.mode || '—')}</td>
+                <td class="r hc-nowrap"><b class="${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(late ? lateAmount : isIn ? r.moneyIn : r.moneyOut)}</b></td>
+                <td class="r hc-nowrap muted">${money(r.held)}</td>
+                <td class="muted">${esc(r.entryNo || '—')}</td>
+                ${canManage ? `<td class="r hc-nowrap">${pay && !late ? `${pay.attachmentCount ? `<button class="btn sm ghost icon" data-act="view-entry" data-entry="${pay.journalEntryId}" title="${pay.attachmentCount} file(s) of evidence">${icon('paperclip')}</button>` : ''}
+                    <button class="btn sm ghost icon" data-act="receipt" data-payment="${r.paymentId}" title="Receipt ${esc(pay.receiptNo || '')}">${icon('receipt')}</button>
+                    <button class="btn sm ghost icon" data-act="edit-payment" data-payment="${r.paymentId}" title="Change this payment">${icon('edit')}</button>
+                    <button class="btn sm ghost icon" data-act="undo-payment" data-payment="${r.paymentId}" title="Undo this payment">${icon('undo')}</button>` : ''}</td>` : ''}
+            </tr>`;
+        }).join('')}</tbody></table>` : emptyState('Nothing recorded yet', 'history')}`;
+}
+
+// ===================================================================== new chit (wizard dialog)
 
 function newDraft() {
     const now = new Date();
     return {
-        step: 1, name: '', startMonth: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`, dueDay: 5,
+        step: 1, chitType: 'FIXED', name: '', startMonth: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`, dueDay: 5,
         memberCount: 20, installment: 25000, baseValue: 500000, monthlyIncrement: 5000, commission: 25000,
-        postToBooks: false, accountId: null, baseTouched: false, members: [],
+        winnerExtraType: 'FIXED', winnerExtraValue: 5000, baseTouched: false,
+        auctionValue: 1000000, commissionPercent: 5, maxBidPercent: 40,
+        lateFeePercent: 2, lateGraceDays: 5, upiId: '', payeeName: '',
+        postToBooks: true, collection: 'SEPARATE', accountId: null, commissionTo: 'SEPARATE', commissionAccountId: null, commissionCategoryId: null,
+        lateTo: 'SEPARATE', lateFeeAccountId: null,
+        members: [],
     };
 }
 
-async function renderWizard(container, isCurrent) {
-    if (!manage()) { location.hash = '#/host-chits'; return; }
-    wizard = wizard || newDraft();
-    const accounts = await loadAccounts().catch(() => []);
-    if (!isCurrent()) return;
-    const w = wizard;
-    const steps = ['Chit details', 'Members', 'Check & create'];
+/** The draft as the server's chit request. */
+function draftRequest(w) {
+    const n = num(w.memberCount);
+    const auction = w.chitType === 'AUCTION';
+    const value = auction ? num(w.auctionValue) : num(w.baseValue);
+    return {
+        name: w.name.trim(), chitType: w.chitType, startMonth: `${w.startMonth}-01`, dueDay: num(w.dueDay), memberCount: n, months: n,
+        installment: auction ? Math.round(value / n) : num(w.installment), baseValue: value,
+        monthlyIncrement: auction ? 0 : num(w.monthlyIncrement),
+        commission: auction ? Math.round(value * num(w.commissionPercent) / 100) : num(w.commission),
+        winnerExtraType: auction ? 'NONE' : w.winnerExtraType, winnerExtraValue: auction ? 0 : num(w.winnerExtraValue),
+        maxBidPercent: auction ? num(w.maxBidPercent) : null,
+        lateFeePercent: num(w.lateFeePercent), lateGraceDays: num(w.lateGraceDays), upiId: (w.upiId || '').trim() || null, payeeName: (w.payeeName || '').trim() || null,
+        postToBooks: true,
+        separateCollectionAccount: w.postToBooks && w.collection === 'SEPARATE', accountId: w.postToBooks && w.collection === 'EXISTING' ? w.accountId : null,
+        separateCommissionAccount: w.postToBooks && w.commissionTo === 'SEPARATE',
+        commissionAccountId: w.postToBooks && w.commissionTo === 'EXISTING' ? w.commissionAccountId : null,
+        commissionCategoryId: w.postToBooks ? w.commissionCategoryId : null,
+        separateLateFeeAccount: w.lateTo === 'SEPARATE', lateFeeAccountId: w.lateTo === 'EXISTING' ? w.lateFeeAccountId : null,
+        members: w.members.slice(0, n).map(m => ({ name: m.name.trim(), phone: m.phone.replace(/[\s-]/g, '') || null, email: (m.email || '').trim() || null })),
+    };
+}
 
-    container.innerHTML = `
-    <div class="page hc-page">
-        <header class="hc-head">
-            <a class="btn sm ghost icon" href="#/host-chits" data-act="cancel" title="Back">${icon('chevron-left')}</a>
-            <div class="min-0"><h2>Host a new chit</h2><small>Step ${w.step} of 3 · ${steps[w.step - 1]}</small></div>
-            <span class="spacer"></span>
-            <ol class="hc-steps">${steps.map((s, i) =>
-                `<li class="${w.step === i + 1 ? 'active' : w.step > i + 1 ? 'done' : ''}" data-step="${i + 1}"><i>${w.step > i + 1 ? icon('check') : i + 1}</i><span>${s}</span></li>`).join('')}</ol>
-        </header>
-        <div class="hc-scroll"><div class="hc-wizard" id="hc-step"></div></div>
-        <footer class="hc-wiz-foot">
-            <p class="form-error" id="hc-wiz-error"></p>
-            <span class="spacer"></span>
-            ${w.step > 1 ? `<button class="btn" data-act="back">${icon('chevron-left')}Back</button>` : `<button class="btn" data-act="cancel">Cancel</button>`}
-            ${w.step < 3 ? `<button class="btn primary" data-act="next">Next${icon('chevron-right')}</button>`
-                         : `<button class="btn primary" data-act="create">${icon('check')}Create the chit</button>`}
-        </footer>
-    </div>`;
+/** The months of a draft: what is collected, the chit value and what the winner gets (auction: the most). */
+function planOf(w) {
+    const r = draftRequest(w);
+    const rows = [];
+    for (let m = 1; m <= r.months; m++) {
+        const value = r.baseValue + (m - 1) * r.monthlyIncrement;
+        rows.push({
+            monthNo: m, dueDate: dueDateOf(w.startMonth, r.dueDay || 1, m), chitValue: value,
+            payout: value - r.commission,
+            collect: w.chitType === 'AUCTION' ? r.baseValue : r.memberCount * r.installment + (m - 1) * extraOf({ ...r }),
+        });
+    }
+    return { r, rows };
+}
 
-    const page = container.querySelector('.hc-page');
-    const host = page.querySelector('#hc-step');
-    const error = msg => { page.querySelector('#hc-wiz-error').textContent = msg || ''; };
-    const redraw = () => renderWizard(container, isCurrent);
-
-    if (w.step === 1) drawDetails(host, w, accounts);
-    else if (w.step === 2) drawMembers(host, w);
-    else drawReview(host, w);
-
-    page.addEventListener('click', async e => {
-        const target = e.target.closest('[data-act], [data-step]');
-        if (!target || host.contains(target)) return;
-        if (target.dataset.step) {
-            const step = Number(target.dataset.step);
-            if (step < w.step) { w.step = step; redraw(); }
-            return;
+/**
+ * Hosting a new chit takes over the right-hand pane (the list and the figures stay): three steps with room for a
+ * live explanation and the whole schedule beside the form. Cancel, or creating the chit, brings the chit view back.
+ */
+async function openWizard() {
+    if (!manage()) return;
+    const container = document.querySelector('.hc-page')?.parentElement;
+    if (!container) return;
+    const w = newDraft();
+    const [accounts, categories] = await Promise.all([loadAccounts().catch(() => []), categoriesOf('INCOME').catch(() => [])]);
+    w.commissionCategoryId = categories.find(c => c.name === 'Chit Commission Income')?.id ?? null;   // null: made for the chit
+    const steps = [['Chit details', 'the kind of chit, dates and money'], ['Members', 'who is in the chit'], ['Payments & accounts', 'UPI, accounts and a last look']];
+    const previous = view.selectedId;
+    view.wizard = w;
+    const old = container.querySelector('#hc-detail');
+    const target = old.cloneNode(false);
+    old.replaceWith(target);
+    target.classList.add('hc-creating');
+    container.querySelectorAll('#hc-list .selected').forEach(x => x.classList.remove('selected'));
+    target.innerHTML = `
+        <section class="panel hc-create">
+            <header class="hc-create-head">
+                <span class="hero-icon">${icon('hand-coins')}</span>
+                <div class="min-0 hc-create-title"><b>Host a new chit</b><small data-step-note></small></div>
+                <ol class="hc-steps on-dark" data-steps></ol>
+                <button class="btn sm on-dark icon" data-wz="cancel" title="Close (Esc)">${icon('x')}</button>
+            </header>
+            <div class="hc-create-body" data-step-body></div>
+            <footer class="hc-create-foot">
+                <p class="form-error" data-wz-error></p>
+                <span class="spacer"></span>
+                <button class="btn" data-wz="back">${icon('chevron-left')}Back</button>
+                <button class="btn" data-wz="cancel">Cancel</button>
+                <button class="btn primary" data-wz="next"></button>
+            </footer>
+        </section>`;
+    const error = msg => { target.querySelector('[data-wz-error]').textContent = msg || ''; };
+    const draw = () => {
+        target.querySelector('[data-steps]').innerHTML = steps.map(([label], i) =>
+            `<li class="${w.step === i + 1 ? 'active' : w.step > i + 1 ? 'done' : ''}" data-step="${i + 1}"><i>${w.step > i + 1 ? icon('check') : i + 1}</i><span>${label}</span></li>`).join('');
+        target.querySelector('[data-step-note]').textContent = `Step ${w.step} of 3 · ${steps[w.step - 1][1]}`;
+        // a fresh element each step, so one step's handlers never fire on the next
+        const old = target.querySelector('[data-step-body]');
+        const host = old.cloneNode(false);
+        old.replaceWith(host);
+        if (w.step === 1) drawDetails(host, w);
+        else if (w.step === 2) drawMembers(host, w);
+        else drawAccounts(host, w, accounts, categories);
+        host.scrollTop = 0;
+        target.querySelector('[data-wz="back"]').hidden = w.step === 1;
+        target.querySelector('[data-wz="next"]').innerHTML = w.step < 3 ? `Next${icon('chevron-right')}` : `${icon('check')}Create the chit`;
+        error('');
+        target.querySelector('[data-step-body] input:not([type=radio]):not([type=checkbox])')?.focus({ preventScroll: true });
+    };
+    const close = (id = previous) => {
+        view.wizard = null;
+        location.hash = id ? `#/host-chits/${id}/${view.tab}` : '#/host-chits';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+    };
+    const next = async button => {
+        const problem = w.step === 1 ? checkDetails(w) : w.step === 2 ? checkMembers(w) : checkDetails(w) || checkMembers(w) || checkAccounts(w);
+        if (problem) { error(problem); return; }
+        if (w.step < 3) { w.step++; draw(); return; }
+        button.disabled = true;
+        try {
+            const d = await api.post('/hosted-chits', draftRequest(w));
+            toast(`${d.chit.name} is ready`);
+            view.selectedId = d.chit.id;
+            view.tab = 'month';
+            close(d.chit.id);
+        } catch (err) {
+            error(err.message);
+            button.disabled = false;
         }
-        const act = target.dataset.act;
-        if (act === 'cancel') {
-            e.preventDefault();
-            const dirty = w.name || w.members.some(m => m.name);
-            if (dirty && !await confirmDialog('Leave without creating this chit? What you typed will be lost.', { confirmLabel: 'Leave' })) return;
-            wizard = null;
-            location.hash = '#/host-chits';
-        } else if (act === 'back') {
-            w.step--;
-            redraw();
-        } else if (act === 'next') {
-            const problem = w.step === 1 ? checkDetails(w) : checkMembers(w);
-            if (problem) { error(problem); return; }
-            w.step++;
-            redraw();
-        } else if (act === 'create') {
-            const problem = checkDetails(w) || checkMembers(w);
-            if (problem) { error(problem); return; }
-            target.disabled = true;
-            try {
-                const n = num(w.memberCount);
-                const d = await api.post('/hosted-chits', {
-                    name: w.name.trim(), startMonth: `${w.startMonth}-01`, dueDay: num(w.dueDay), memberCount: n, months: n,
-                    installment: num(w.installment), baseValue: num(w.baseValue), monthlyIncrement: num(w.monthlyIncrement),
-                    commission: num(w.commission), postToBooks: w.postToBooks, accountId: w.postToBooks ? w.accountId : null,
-                    members: w.members.slice(0, n).map(m => ({ name: m.name.trim(), phone: m.phone.replace(/[\s-]/g, '') || null })),
-                });
-                wizard = null;
-                view.tab = 'month';
-                toast(`${d.chit.name} is ready`);
-                location.hash = `#/host-chits/${d.chit.id}`;
-            } catch (err) {
-                error(err.message);
-                target.disabled = false;
-            }
-        }
+    };
+    const cancel = async () => {
+        if (wizardDirty(w) && !await confirmDialog('Leave without creating this chit? What you entered is lost.', { confirmLabel: 'Leave', danger: false })) return;
+        close();
+    };
+    target.addEventListener('click', e => {
+        const b = e.target.closest('[data-wz]');
+        if (b?.dataset.wz === 'next') next(b);
+        else if (b?.dataset.wz === 'back') { w.step = Math.max(1, w.step - 1); draw(); }
+        else if (b?.dataset.wz === 'cancel') cancel();
+        const step = e.target.closest('[data-step]');
+        if (step && Number(step.dataset.step) < w.step) { w.step = Number(step.dataset.step); draw(); }
     });
+    target.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { e.preventDefault(); cancel(); return; }
+        if (e.key !== 'Enter' || e.defaultPrevented || e.target.matches('textarea, button, a, select') || e.target.closest('.ac-pop, .combo-display')) return;
+        e.preventDefault();
+        next(target.querySelector('[data-wz="next"]'));
+    });
+    draw();
+}
+
+function wizardDirty(w) {
+    return !!(w.name.trim() || w.members.some(m => m.name.trim()));
 }
 
 function checkDetails(w) {
@@ -324,10 +1137,24 @@ function checkDetails(w) {
     if (!/^\d{4}-\d{2}$/.test(w.startMonth)) return 'Pick the month the chit starts';
     if (!(num(w.dueDay) >= 1 && num(w.dueDay) <= 28)) return 'The payment day must be between 1 and 28';
     if (!(num(w.memberCount) >= 2 && num(w.memberCount) <= 100)) return 'The number of members must be between 2 and 100';
+    if (w.chitType === 'AUCTION') {
+        if (!(num(w.auctionValue) > 0)) return 'Enter the chit value';
+        if (!(num(w.commissionPercent) > 0)) return 'Enter your commission (usually 5%)';
+        if (!(num(w.maxBidPercent) > num(w.commissionPercent) && num(w.maxBidPercent) <= 40)) return 'The highest bid must be above your commission and at most 40%';
+        return checkLate(w);
+    }
     if (!(num(w.installment) > 0)) return 'Enter how much each member pays a month';
     if (!(num(w.baseValue) > 0)) return 'Enter the chit value for month 1';
     if (num(w.monthlyIncrement) < 0 || num(w.commission) < 0) return 'Amounts cannot be negative';
     if (num(w.commission) >= num(w.baseValue)) return 'Your commission must be less than the chit value';
+    if (w.winnerExtraType !== 'NONE' && !(num(w.winnerExtraValue) > 0)) return 'Enter how much extra winners pay (or choose “Nothing extra”)';
+    if (w.winnerExtraType === 'PERCENT' && num(w.winnerExtraValue) > 100) return 'The winner extra can be at most 100% of the chit value';
+    return checkLate(w);
+}
+
+function checkLate(w) {
+    if (num(w.lateFeePercent) < 0 || num(w.lateFeePercent) > 10) return 'Late payment interest must be between 0% and 10% a month';
+    if (num(w.lateGraceDays) < 0 || num(w.lateGraceDays) > 60) return 'Grace days must be between 0 and 60';
     return null;
 }
 
@@ -338,6 +1165,8 @@ function checkMembers(w) {
     if (filled.length < n) return `Enter all ${n} names (${filled.length} done so far)`;
     const bad = list.find(m => m.phone.trim() && !/^\d{10}$/.test(m.phone.replace(/[\s-]/g, '')));
     if (bad) return `${bad.name}: the phone number should have 10 digits`;
+    const badMail = list.find(m => (m.email || '').trim() && !EMAIL.test(m.email.trim()));
+    if (badMail) return `${badMail.name}: the e-mail address does not look right`;
     const seen = new Set();
     for (const m of list) {
         const key = m.name.trim().toLowerCase();
@@ -347,141 +1176,302 @@ function checkMembers(w) {
     return null;
 }
 
-function drawDetails(host, w, accounts) {
-    const input = (label, key, hint = '', attrs = '', type = 'number') => `<label class="field"><span>${label}</span>
-        <input type="${type}" data-k="${key}" value="${esc(w[key] ?? '')}" ${type === 'number' ? 'step="any" min="0" class="num" inputmode="numeric"' : ''} ${attrs}>
-        ${hint ? `<small>${hint}</small>` : ''}</label>`;
-    const cashLike = a => a.accountClass === 'ASSET' && a.accountType !== 'CHIT_FUND';
+function checkAccounts(w) {
+    if (w.upiId && !/^[\w.\-]{2,}@[A-Za-z][\w.]{1,}$/.test(w.upiId.trim())) return 'The UPI ID should look like name@bank';
+    if (w.collection === 'EXISTING' && !w.accountId) return 'Pick the account the payments go to';
+    if (w.commissionTo === 'EXISTING' && !w.commissionAccountId) return 'Pick the account for your commission';
+    if (w.lateTo === 'EXISTING' && !w.lateFeeAccountId) return 'Pick the account for late payment interest';
+    return null;
+}
+
+/** A field with its label inside the box, moving up when the box has a value (units shown at the right). */
+function fl(label, key, w, { tip = '', attrs = '', type = 'number', unit = '', span = '' } = {}) {
+    return `<label class="fl ${span}" title="${esc(tip)}">
+        <input type="${type}" data-k="${key}" value="${esc(w[key] ?? '')}" placeholder=" " ${type === 'number' ? 'step="any" min="0" inputmode="decimal"' : ''} ${attrs} data-plain>
+        <span>${label}</span>${unit ? `<i class="fl-unit">${unit}</i>` : ''}</label>`;
+}
+
+/**
+ * Step 1, without scrolling: the kind of chit as two toggles and every figure as a box with its label inside;
+ * beside it a short explanation and the full chit table (every month: what members and past winners pay, what you
+ * collect, the chit value, your commission and what the winner gets), which can be shared as a PDF or a link.
+ */
+function drawDetails(host, w) {
+    const auction = w.chitType === 'AUCTION';
+    const type = w.winnerExtraType || 'NONE';
     host.innerHTML = `
-    <div class="hc-two">
+    <div class="hc-two hc-fit">
         <div class="hc-col">
-            <section class="panel hc-form">
-                <header class="panel-head"><h3><span class="ico">${icon('edit')}</span>About the chit</h3></header>
-                <div class="panel-body"><div class="form-grid two">
-                    <label class="field span-2"><span>Chit name</span><input type="text" data-k="name" value="${esc(w.name)}" placeholder="e.g. Family Chit 2026" maxlength="100"></label>
-                    ${input('Starts in', 'startMonth', '', '', 'month')}
-                    ${input('Members pay by day', 'dueDay', 'of every month (1–28)', 'min="1" max="28"')}
-                </div></div>
-            </section>
-            <section class="panel hc-form">
-                <header class="panel-head"><h3><span class="ico">${icon('coins')}</span>Money</h3></header>
-                <div class="panel-body"><div class="form-grid two">
-                    ${input('Number of members', 'memberCount', 'The chit runs this many months; each member wins once.', 'min="2" max="100"')}
-                    ${input('Each member pays a month', 'installment', '₹ per member')}
-                    ${input('Chit value in month 1', 'baseValue', `<span data-base-hint></span>`)}
-                    ${input('Chit value goes up each month by', 'monthlyIncrement', 'enter 0 if it stays the same')}
-                    ${input('Your commission each month', 'commission', 'you keep this; the winner gets the rest')}
-                </div></div>
-            </section>
-            <details class="hc-advanced" ${w.postToBooks ? 'open' : ''}>
-                <summary>${icon('settings')}More options</summary>
-                <label class="field check"><input type="checkbox" data-k="postToBooks" ${w.postToBooks ? 'checked' : ''}>
-                    <span>Also record this chit's money in my accounts (journal, income, balance sheet)</span></label>
-                <label class="field" ${w.postToBooks ? '' : 'hidden'} data-books><span>Money is kept in</span>
-                    <select data-k="accountId">${accountOptions(accounts, cashLike, w.accountId, 'Cash in Hand')}</select></label>
-                <small class="muted">Leave this off to keep track of the chit only on this page. You can change it later in the chit's settings.</small>
-            </details>
+            <div class="hc-type-toggle" role="radiogroup" aria-label="Kind of chit">
+                <button type="button" class="${!auction ? 'active' : ''}" data-type="FIXED" role="radio" aria-checked="${!auction}">${icon('trending')}<span><b>Fixed chit</b><small>value rises monthly · you pick or draw the winner</small></span></button>
+                <button type="button" class="${auction ? 'active' : ''}" data-type="AUCTION" role="radio" aria-checked="${auction}">${icon('gavel')}<span><b>Auction chit</b><small>Margadarsi style · members bid, the discount is shared</small></span></button>
+            </div>
+            <div class="hc-fit-grid">
+                ${fl('Chit name', 'name', w, { type: 'text', attrs: 'maxlength="100"', span: 'span-2', tip: auction ? 'e.g. Auction Chit 10L' : 'e.g. Family Chit 2026' })}
+                ${fl('Starts in', 'startMonth', w, { type: 'month', tip: 'The first month members pay' })}
+                ${fl('Members pay by', 'dueDay', w, { attrs: 'min="1" max="28"', unit: 'of the month', tip: 'Day of every month members pay by (1–28)' })}
+                ${fl('Members', 'memberCount', w, { attrs: 'min="2" max="100"', unit: `${num(w.memberCount) || ''} months`, tip: 'Also the number of months: each member wins once' })}
+                ${auction ? `
+                    ${fl('Chit value', 'auctionValue', w, { unit: '₹', tip: 'What the chit is worth, e.g. 10,00,000' })}
+                    <label class="fl fixed" title="Chit value ÷ members, before the dividend"><input type="text" value="${money(Math.round(num(w.auctionValue) / Math.max(1, num(w.memberCount))))}" disabled data-installment-view data-plain><span>Each pays a month</span><i class="fl-unit">before dividend</i></label>
+                    ${fl('Your commission', 'commissionPercent', w, { attrs: 'max="10"', unit: '% <b data-commission-hint></b>', tip: 'Each month, % of the chit value. Also the lowest bid.' })}
+                    ${fl('Highest bid allowed', 'maxBidPercent', w, { attrs: 'max="40"', unit: '% of value', tip: 'The most a member may bid (at most 40%)' })}`
+                : `
+                    ${fl('Each pays a month', 'installment', w, { unit: '₹', tip: '₹ per member each month' })}
+                    ${fl('Chit value, month 1', 'baseValue', w, { unit: '₹ <b data-base-hint></b>', tip: 'Usually members × the monthly amount' })}
+                    ${fl('Value rises each month by', 'monthlyIncrement', w, { unit: '₹', tip: '0 if the chit value stays the same' })}
+                    ${fl('Your commission a month', 'commission', w, { unit: '₹', tip: 'You keep this each month; the winner gets the rest' })}
+                    <label class="fl fixed" title="What a member pays on top of the installment every month after the month they win">
+                        <select data-k="winnerExtraType" data-plain>
+                            <option value="NONE" ${type === 'NONE' ? 'selected' : ''}>Nothing extra</option>
+                            <option value="FIXED" ${type === 'FIXED' ? 'selected' : ''}>Fixed ₹ extra</option>
+                            <option value="PERCENT" ${type === 'PERCENT' ? 'selected' : ''}>% of chit value</option>
+                        </select><span>Winners pay afterwards</span></label>
+                    <label class="fl" data-extra-box ${type === 'NONE' ? 'hidden' : ''}><input type="number" data-k="winnerExtraValue" value="${type === 'NONE' ? '' : num(w.winnerExtraValue)}" placeholder=" " step="any" min="0" inputmode="decimal" data-plain>
+                        <span>Extra each month</span><i class="fl-unit" data-extra-unit>${type === 'PERCENT' ? '%' : '₹'}</i></label>`}
+                ${fl('Late payment interest', 'lateFeePercent', w, { attrs: 'max="10"', unit: '% a month', tip: 'On the unpaid installment; 0 for none' })}
+                ${fl('Grace period', 'lateGraceDays', w, { attrs: 'max="60"', unit: 'days', tip: 'Days after the due date before late interest starts' })}
+            </div>
+            <div data-summary></div>
         </div>
-        <section class="panel hc-preview">
-            <header class="panel-head"><h3><span class="ico">${icon('bulb')}</span>How your chit works</h3></header>
-            <div class="panel-body" data-preview></div>
-        </section>
+        <div class="hc-col hc-explain-box hc-plan-box" data-preview></div>
     </div>`;
 
     const preview = () => {
         const n = num(w.memberCount);
         const ok = n >= 2 && n <= 100 && /^\d{4}-\d{2}$/.test(w.startMonth);
-        host.querySelector('[data-base-hint]').innerHTML = w.baseTouched
-            ? `<a href="#" data-base-auto>Use ${money(n * num(w.installment))} (members × amount)</a>`
-            : '= members × monthly amount';
-        if (!ok) { host.querySelector('[data-preview]').innerHTML = emptyState('Fill in the members and the start month to see how it works', 'calendar'); return; }
-        const rows = scheduleOf({ ...w, months: n, dueDay: num(w.dueDay) || 1 });
-        const perMonth = n * num(w.installment);
-        const net = perMonth * n - rows.reduce((s, r) => s + r.payout, 0);
-        const first = rows[0], last = rows.at(-1);
-        host.querySelector('[data-preview]').innerHTML = `
-            <ul class="hc-explain">
-                <li>${icon('users')}<span><b>${n} members</b> each pay <b>${money(w.installment)}</b> every month for <b>${n} months</b>, from ${monthName(w.startMonth + '-01')} to ${monthName(last.dueDate)}.</span></li>
-                <li>${icon('arrow-in')}<span>You collect <b>${money(perMonth)}</b> every month.</span></li>
-                <li>${icon('crown')}<span>Each month one member wins. The month-1 winner gets <b>${money(first.payout)}</b>, the last winner gets <b>${money(last.payout)}</b>.</span></li>
-                <li>${icon('piggy')}<span>You keep <b>${money(w.commission)}</b> a month: <b>${money(num(w.commission) * n)}</b> in total.</span></li>
-            </ul>
-            ${net < 0 ? `<p class="hc-note warn">${icon('alert')}<span>Careful: over the whole chit you would pay winners <b>${money(-net)}</b> more than you collect, because the chit value rises while the monthly amount stays the same. Lower the monthly increase or raise the monthly amount.</span></p>` : ''}
-            <details class="hc-sched-toggle">
-                <summary>${icon('calendar')}See all ${n} months</summary>
-                ${planTable(rows)}
-            </details>`;
+        const membersUnit = host.querySelector('[data-k="memberCount"] ~ .fl-unit');
+        if (membersUnit) membersUnit.textContent = n ? `${n} months` : '';
+        if (!auction) {
+            host.querySelector('[data-base-hint]').innerHTML = w.baseTouched && num(w.baseValue) !== n * num(w.installment)
+                ? `· <a href="#" data-base-auto title="members × monthly amount">use ${moneyShort(n * num(w.installment))}</a>` : '';
+        } else {
+            const value = num(w.auctionValue);
+            host.querySelector('[data-installment-view]').value = money(Math.round(value / Math.max(1, n)));
+            host.querySelector('[data-commission-hint]').textContent = `= ${moneyShort(Math.round(value * num(w.commissionPercent) / 100))}`;
+        }
+        const out = host.querySelector('[data-preview]');
+        const summary = host.querySelector('[data-summary]');
+        if (!ok) { out.innerHTML = emptyState('Fill in the members and the start month to see the chit table', 'calendar'); summary.innerHTML = ''; return; }
+        const plan = planOf(w);
+        const { r, rows } = plan;
+        if (auction) {
+            const maxBid = Math.round(r.baseValue * num(w.maxBidPercent) / 100);
+            const sampleBid = Math.round((r.commission + maxBid) / 2 / 1000) * 1000;
+            const dividend = Math.floor((sampleBid - r.commission) / n);
+            summary.innerHTML = `<ul class="hc-explain hc-explain-sm">
+                <li>${icon('gavel')}<span>Each month members who have not won <b>bid a discount</b> of ${money(r.commission)}–${money(maxBid)}; the highest bid wins chit value − bid.</span></li>
+                <li>${icon('piggy')}<span>You keep <b>${money(r.commission)}</b> a month; the rest of the bid is shared as a <b>dividend</b>. Example: a bid of ${money(sampleBid)} → winner gets ${money(r.baseValue - sampleBid)}, everyone pays ${money(r.installment - dividend)}.</span></li>
+                ${lateLine(w, r.installment)}</ul>`;
+        } else {
+            const net = rows.reduce((s, x) => s + x.collect - x.payout, 0);
+            const fix = r.monthlyIncrement > 0 && !(w.winnerExtraType === 'FIXED' && num(w.winnerExtraValue) === r.monthlyIncrement)
+                ? ` <a href="#" data-extra-fix>Make winners pay ${money(r.monthlyIncrement)} extra</a>.` : '';
+            summary.innerHTML = `<ul class="hc-explain hc-explain-sm">
+                <li>${icon('piggy')}<span>You keep <b>${money(r.commission)}</b> a month, <b>${money(r.commission * n)}</b> over the chit.</span></li>
+                ${lateLine(w, r.installment)}</ul>
+                ${net < 0 ? `<p class="hc-note warn">${icon('alert')}<span>You would pay winners <b>${money(-net)}</b> more than you collect.${fix || ' Lower the monthly rise or raise the amounts.'}</span></p>`
+                    : `<p class="hc-note good">${icon('check-circle')}<span>Balanced: collections cover every payout${net > 0 ? `, ${money(net)} left for you` : ''}.</span></p>`}`;
+        }
+        out.innerHTML = `<div class="hc-plan-head"><div class="section-title">${icon('calendar')}Chit table · ${n} months</div>
+                <span class="spacer"></span>
+                <button type="button" class="btn sm" data-plan="pdf" title="Print or save the chit table as a PDF">${icon('printer')}PDF</button>
+                <button type="button" class="btn sm" data-plan="link" title="A link to this chit table, to send to the members before the chit starts">${icon('link')}Share link</button></div>
+            <div class="hc-plan-wrap">${planTableHtml(w, plan)}</div>`;
     };
 
-    host.addEventListener('input', e => {
+    host.oninput = e => {
         const k = e.target.dataset.k;
         if (!k) return;
-        w[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+        w[k] = e.target.value;
         if (k === 'baseValue') w.baseTouched = true;
-        if ((k === 'memberCount' || k === 'installment') && !w.baseTouched) {
+        if (!auction && (k === 'memberCount' || k === 'installment') && !w.baseTouched) {
             w.baseValue = num(w.memberCount) * num(w.installment);
             host.querySelector('[data-k="baseValue"]').value = w.baseValue;
         }
-        if (k === 'postToBooks') host.querySelector('[data-books]').hidden = !w.postToBooks;
-        if (k === 'accountId') w.accountId = e.target.value ? Number(e.target.value) : null;
+        if (k === 'winnerExtraType') {
+            w.winnerExtraValue = defaultExtra(w.winnerExtraType, num(w.monthlyIncrement), num(w.baseValue));
+            host.querySelector('[data-k="winnerExtraValue"]').value = w.winnerExtraType === 'NONE' ? '' : w.winnerExtraValue;
+            host.querySelector('[data-extra-box]').hidden = w.winnerExtraType === 'NONE';
+            host.querySelector('[data-extra-unit]').textContent = w.winnerExtraType === 'PERCENT' ? '%' : '₹';
+        }
         preview();
-    });
-    host.addEventListener('click', e => {
-        if (!e.target.closest('[data-base-auto]')) return;
-        e.preventDefault();
-        w.baseTouched = false;
-        w.baseValue = num(w.memberCount) * num(w.installment);
-        host.querySelector('[data-k="baseValue"]').value = w.baseValue;
-        preview();
-    });
+    };
+    host.onchange = host.oninput;
+    host.onclick = e => {
+        const kind = e.target.closest('[data-type]');
+        if (kind) { w.chitType = kind.dataset.type; drawDetails(host, w); return; }
+        const share = e.target.closest('[data-plan]');
+        if (share) { (share.dataset.plan === 'pdf' ? printPlan : sharePlan)(w); return; }
+        if (e.target.closest('[data-extra-fix]')) {
+            e.preventDefault();
+            w.winnerExtraType = 'FIXED';
+            w.winnerExtraValue = num(w.monthlyIncrement);
+            host.querySelector('[data-k="winnerExtraType"]').value = 'FIXED';
+            host.querySelector('[data-k="winnerExtraValue"]').value = w.winnerExtraValue;
+            host.querySelector('[data-extra-box]').hidden = false;
+            host.querySelector('[data-extra-unit]').textContent = '₹';
+            preview();
+            return;
+        }
+        if (e.target.closest('[data-base-auto]')) {
+            e.preventDefault();
+            w.baseTouched = false;
+            w.baseValue = num(w.memberCount) * num(w.installment);
+            host.querySelector('[data-k="baseValue"]').value = w.baseValue;
+            preview();
+        }
+    };
     preview();
 }
 
-function planTable(rows) {
-    return `<div class="hc-table-wrap"><table class="grid compact">
-        <thead><tr><th class="c">Month</th><th>Pay by</th><th class="r">Chit value</th><th class="r">Winner gets</th></tr></thead>
-        <tbody>${rows.map(r => `<tr><td class="c"><b>${r.monthNo}</b></td><td>${date(r.dueDate)}</td>
-            <td class="r">${money(r.chitValue)}</td><td class="r"><b>${money(r.payout)}</b></td></tr>`).join('')}</tbody>
-    </table></div>`;
+/**
+ * The full chit table. Fixed chits: per month what members who have not won pay, what past winners pay (with the
+ * extra), what you collect, the chit value, your commission and what the winner gets. Auction chits: the range each
+ * month can land in (bids decide it), the last month at the lowest bid.
+ */
+function planTableHtml(w, { r, rows }) {
+    const auction = w.chitType === 'AUCTION';
+    if (auction) {
+        const n = r.memberCount;
+        const maxBid = Math.round(r.baseValue * num(w.maxBidPercent) / 100);
+        const minPay = r.installment - Math.floor((maxBid - r.commission) / n);
+        return `<table class="grid compact hc-plan">
+            <thead><tr><th class="c">Month</th><th>Pay by</th><th class="r">Chit value</th><th class="r">Winning bid</th><th class="r">Each member pays</th><th class="r">Commission</th><th class="r">Winner gets</th></tr></thead>
+            <tbody>${rows.map(x => {
+                const last = x.monthNo === n;
+                return `<tr><td class="c">${x.monthNo}</td><td>${shortDateYear(x.dueDate)}</td><td class="r">${money(r.baseValue)}</td>
+                    <td class="r">${last ? money(r.commission) : `${moneyShort(r.commission)} – ${moneyShort(maxBid)}`}</td>
+                    <td class="r">${last ? money(r.installment) : `${moneyShort(minPay)} – ${moneyShort(r.installment)}`}</td>
+                    <td class="r">${money(r.commission)}</td>
+                    <td class="r"><b>${last ? money(r.baseValue - r.commission) : `${moneyShort(r.baseValue - maxBid)} – ${moneyShort(r.baseValue - r.commission)}`}</b></td></tr>`;
+            }).join('')}</tbody>
+            <tfoot><tr class="total"><td colspan="5">Your commission over ${n} months</td><td class="r">${money(r.commission * n)}</td><td></td></tr></tfoot>
+        </table>`;
+    }
+    const extra = extraOf(r);
+    const total = (f) => rows.reduce((s, x) => s + f(x), 0);
+    return `<table class="grid compact hc-plan">
+        <thead><tr><th class="c">Month</th><th>Pay by</th><th class="r" title="Members who have not won yet">Members pay</th><th class="r" title="Members who won an earlier month (installment + extra)">Past winners pay</th>
+            <th class="r">You collect</th><th class="r">Chit value</th><th class="r">Commission</th><th class="r">Winner gets</th></tr></thead>
+        <tbody>${rows.map(x => `<tr><td class="c">${x.monthNo}</td><td>${shortDateYear(x.dueDate)}</td>
+            <td class="r">${money(r.installment)} <small class="muted">× ${r.memberCount - x.monthNo + 1}</small></td>
+            <td class="r">${x.monthNo > 1 ? `${money(r.installment + extra)} <small class="muted">× ${x.monthNo - 1}</small>` : '<span class="muted">—</span>'}</td>
+            <td class="r">${money(x.collect)}</td><td class="r">${money(x.chitValue)}</td><td class="r">${money(r.commission)}</td>
+            <td class="r"><b>${money(x.payout)}</b></td></tr>`).join('')}</tbody>
+        <tfoot><tr class="total"><td colspan="4">Total</td><td class="r">${money(total(x => x.collect))}</td><td></td>
+            <td class="r">${money(r.commission * rows.length)}</td><td class="r">${money(total(x => x.payout))}</td></tr></tfoot>
+    </table>`;
 }
 
+/** The chit table on a page of its own: print it or save it as a PDF. */
+function printPlan(w) {
+    const plan = planOf(w);
+    const { r, rows } = plan;
+    const auction = w.chitType === 'AUCTION';
+    const el = document.createElement('div');
+    el.className = 'hc-plan-print';
+    el.innerHTML = `<div class="hc-rc-head"><div><small>Chit table${auction ? ' · auction chit' : ''}</small><h3>${esc(w.name || 'New chit')}</h3>
+            <span class="muted">${esc(w.payeeName || state.user?.fullName || '')}</span></div>
+            <div class="hc-rc-no"><b>${r.memberCount} members · ${r.months} months</b><span>${monthName(w.startMonth + '-01')} – ${monthName(rows.at(-1).dueDate)}</span></div></div>
+        <p class="hc-plan-terms">${auction
+            ? `Chit value ${money(r.baseValue)}. Each member pays ${money(r.installment)} a month less that month's dividend, by the ${ordinal(r.dueDay)}. Bids from ${money(r.commission)} (the organiser's commission) up to ${money(Math.round(r.baseValue * num(w.maxBidPercent) / 100))}.`
+            : `Each member pays ${money(r.installment)} a month by the ${ordinal(r.dueDay)}${extraOf(r) ? `; after winning, ${money(r.installment + extraOf(r))} a month` : ''}. The organiser's commission is ${money(r.commission)} a month.`}
+            ${r.lateFeePercent ? ` Late payments carry ${r.lateFeePercent}% a month after ${r.lateGraceDays} days.` : ''}</p>
+        ${planTableHtml(w, plan)}`;
+    printElement(el, `Chit table - ${w.name || 'new chit'}`);
+}
+
+/** A link to the chit table (it is carried in the link itself, nothing is saved), to send before the chit starts. */
+function sharePlan(w) {
+    const r = draftRequest(w);
+    const data = {
+        v: 1, n: r.name || 'New chit', t: r.chitType, s: w.startMonth, d: r.dueDay, m: r.memberCount, i: r.installment, b: r.baseValue,
+        inc: r.monthlyIncrement, c: r.commission, x: w.chitType === 'AUCTION' ? 0 : extraOf(r), mb: r.maxBidPercent, l: r.lateFeePercent,
+        g: r.lateGraceDays, o: (w.payeeName || state.user?.fullName || '').trim(), h: state.user?.tenantName || '',
+    };
+    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(data)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const url = `${location.origin}/chit-share.html#plan=${encoded}`;
+    const text = `${data.n}: the chit table (${data.m} members, ${money(r.installment)} a month). ${url}`;
+    openModal({
+        title: 'Share the chit table', iconName: 'link',
+        body: `<p class="muted" style="margin-top:0">Anyone with this link sees the chit table as it is now: the figures travel inside the link, nothing is saved, and it does not change if you edit the chit later.</p>
+            <div class="ln-made cs-made"><div class="ln-qr">${qrSvg(url, { size: 140 })}</div>
+            <div class="ln-made-main">
+                <div class="ln-url"><input value="${esc(url)}" readonly data-plain><button type="button" class="btn sm primary" data-copy-url="${esc(url)}">${icon('copy')}Copy</button></div>
+                <div class="row"><a class="btn sm" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">${icon('phone')}Send on WhatsApp</a>
+                    <a class="btn sm" target="_blank" rel="noopener" href="mailto:?subject=${encodeURIComponent(`${data.n} - chit table`)}&body=${encodeURIComponent(text)}">${icon('mail')}E-mail</a>
+                    <a class="btn sm" target="_blank" rel="noopener" href="${esc(url)}">${icon('eye')}Preview</a></div>
+            </div></div>`,
+        actions: [{ label: 'Done', kind: 'primary' }],
+    });
+}
+
+/** The late-interest sentence of the explanation, e.g. 2% a month after 5 days: ₹500 for a month late on ₹25,000. */
+function lateLine(w, installment) {
+    const rate = num(w.lateFeePercent);
+    if (!rate) return `<li>${icon('clock')}<span>No interest on late payments.</span></li>`;
+    return `<li>${icon('clock')}<span>A late installment carries <b>${rate}% a month</b> after ${num(w.lateGraceDays)} days of grace: about <b>${money(Math.round(installment * rate / 100))}</b> for a month late on ${money(installment)}. It is your income.</span></li>`;
+}
+
+/** "After winning, a member pays extra": nothing, a fixed amount or a percent of the chit value. */
+function extraFields(s, attr) {
+    const type = s.winnerExtraType || 'NONE';
+    const key = name => attr === 'data-k' ? `data-k="${name}"` : `name="${name}"`;
+    return `<label class="field"><span>After winning, a member pays extra</span>
+            <select ${key('winnerExtraType')}>
+                <option value="NONE" ${type === 'NONE' ? 'selected' : ''}>Nothing extra</option>
+                <option value="FIXED" ${type === 'FIXED' ? 'selected' : ''}>A fixed amount (₹)</option>
+                <option value="PERCENT" ${type === 'PERCENT' ? 'selected' : ''}>A percent of the chit value (%)</option>
+            </select><small>every month after the month they win</small></label>
+        <label class="field" data-extra-value ${type === 'NONE' ? 'hidden' : ''}><span data-extra-label>${type === 'PERCENT' ? 'Extra (% of the chit value)' : 'Extra amount (₹)'}</span>
+            <input type="number" ${key('winnerExtraValue')} value="${type === 'NONE' ? '' : num(s.winnerExtraValue)}" step="any" min="0" class="num" data-type="number" inputmode="decimal"></label>`;
+}
+
+/** A sensible winner extra when the kind changes: the monthly increase, as rupees or as a % of the chit value. */
+function defaultExtra(type, increment, base) {
+    if (type === 'PERCENT') return increment && base ? Math.round((increment / base) * 10000) / 100 : 1;
+    if (type === 'FIXED') return increment || 5000;
+    return 0;
+}
+
+function syncExtraFields(root, type) {
+    root.querySelector('[data-extra-value]').hidden = type === 'NONE';
+    root.querySelector('[data-extra-label]').textContent = type === 'PERCENT' ? 'Extra (% of the chit value)' : 'Extra amount (₹)';
+}
+
+/** Step 2: one compact row per member (name, phone for WhatsApp, e-mail), two columns side by side. */
 function drawMembers(host, w) {
     const n = num(w.memberCount);
-    while (w.members.length < n) w.members.push({ name: '', phone: '' });
+    while (w.members.length < n) w.members.push({ name: '', phone: '', email: '' });
     w.members.length = n;
     const filled = () => w.members.filter(m => m.name.trim()).length;
-
     host.innerHTML = `
-    <section class="panel hc-members-step">
-        <header class="panel-head"><h3><span class="ico">${icon('users')}</span>Who is in the chit?</h3>
-            <span class="sub"><span class="hc-count" data-count></span></span></header>
-        <div class="panel-body">
-            <div class="hc-mem-tools">
-                <span class="muted">Type the ${n} names (phone is optional), or:</span>
-                <button class="btn sm" data-m="paste">${icon('copy')}Paste a list</button>
-                <button class="btn sm" data-m="sample">${icon('sparkles')}Fill example names</button>
-                ${filled() ? `<button class="btn sm ghost" data-m="clear">${icon('x')}Clear all</button>` : ''}
-            </div>
-            <div class="hc-mem-list">${w.members.map((m, i) => `
-                <div class="hc-mem-row" data-i="${i}">
-                    <span class="hc-slot">${i + 1}</span>
-                    <input type="text" data-f="name" value="${esc(m.name)}" placeholder="Name" maxlength="100" autocomplete="off">
-                    <input type="tel" data-f="phone" value="${esc(m.phone)}" placeholder="Phone (optional)" inputmode="numeric" maxlength="14" autocomplete="off">
-                    <button type="button" class="btn sm ghost icon" data-del title="Remove this name">${icon('x')}</button>
-                </div>`).join('')}
-            </div>
+        <div class="hc-mem-tools">
+            <span class="hc-count" data-count></span>
+            <small class="muted">Phone for WhatsApp reminders, e-mail for e-mailed reminders and receipts: both optional.</small>
+            <span class="spacer"></span>
+            <button type="button" class="btn sm" data-m="paste">${icon('copy')}Paste a list</button>
+            <button type="button" class="btn sm" data-m="sample">${icon('sparkles')}Fill example names</button>
+            ${filled() ? `<button type="button" class="btn sm ghost" data-m="clear">${icon('x')}Clear all</button>` : ''}
         </div>
-    </section>`;
-
+        <div class="hc-mem-list ${n > 24 ? 'many' : ''}">${w.members.map((m, i) => `
+            <div class="hc-mem-row" data-i="${i}">
+                <span class="hc-slot">${i + 1}</span>
+                <input type="text" data-f="name" value="${esc(m.name)}" placeholder="Name" maxlength="100" autocomplete="off" data-plain>
+                <input type="tel" data-f="phone" value="${esc(m.phone)}" placeholder="Phone" inputmode="numeric" maxlength="14" autocomplete="off" data-plain>
+                <input type="email" data-f="email" value="${esc(m.email || '')}" placeholder="E-mail" maxlength="120" autocomplete="off" data-plain>
+                <button type="button" class="btn sm ghost icon" data-del title="Remove this name">${icon('x')}</button>
+            </div>`).join('')}
+        </div>`;
     const count = () => {
         const f = filled();
         const el = host.querySelector('[data-count]');
-        el.textContent = f === n ? `All ${n} members added ✓` : `${f} of ${n} added`;
+        el.textContent = f === n ? `All ${n} members added ✓` : `${f} of ${n} members added`;
         el.classList.toggle('ok', f === n);
     };
     const redraw = () => drawMembers(host, w);
     count();
-
     host.oninput = e => {
         const row = e.target.closest('[data-i]');
         if (!row) return;
@@ -489,16 +1479,16 @@ function drawMembers(host, w) {
         count();
     };
     host.onkeydown = e => {
-        // Enter in a name box moves to the next name
         if (e.key !== 'Enter' || e.target.dataset.f !== 'name') return;
         e.preventDefault();
+        e.stopPropagation();
         host.querySelector(`[data-i="${Number(e.target.closest('[data-i]').dataset.i) + 1}"] [data-f="name"]`)?.focus();
     };
     host.onclick = e => {
         const del = e.target.closest('[data-del]');
         if (del) {
             w.members.splice(Number(del.closest('[data-i]').dataset.i), 1);
-            w.members.push({ name: '', phone: '' });
+            w.members.push({ name: '', phone: '', email: '' });
             redraw();
             return;
         }
@@ -521,21 +1511,23 @@ function drawMembers(host, w) {
     };
 }
 
-/** "Ravi Kumar 9876543210", "Ravi Kumar, 98765 43210" or just "Ravi Kumar", one per line. */
+/** "Ravi Kumar 9876543210 ravi@mail.com", "Ravi Kumar, 98765 43210" or just "Ravi Kumar", one per line. */
 function parseMemberLines(text) {
     return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+        const email = (line.match(/[^\s,;<>]+@[^\s,;<>]+\.[^\s,;<>]{2,}/) || [''])[0];
+        if (email) line = line.replace(email, ' ').replace(/[<>]/g, ' ').replace(/[\s,;:\t-]+$/, '').trim();
         const match = line.match(/^(.*?)[\s,;:\t-]*((?:\+?91[\s-]?)?\d[\d\s-]{8,}\d)\s*$/);
-        if (!match) return { name: line.replace(/^\d+[.)]\s*/, ''), phone: '' };
-        return { name: match[1].replace(/^\d+[.)]\s*/, '').trim(), phone: match[2].replace(/\D/g, '').slice(-10) };
+        if (!match) return { name: line.replace(/^\d+[.)]\s*/, '').replace(/[\s,;:-]+$/, ''), phone: '', email };
+        return { name: match[1].replace(/^\d+[.)]\s*/, '').trim(), phone: match[2].replace(/\D/g, '').slice(-10), email };
     }).filter(m => m.name);
 }
 
 function openPasteList(w, done) {
     openModal({
         title: 'Paste a list of members', iconName: 'copy', size: 'lg',
-        body: `<p class="muted" style="margin-top:0">One person per line. If a phone number is at the end of the line, it is picked up too.</p>
-            <textarea class="hc-paste" name="list" rows="12" placeholder="Ravi Kumar 9876543210&#10;Lakshmi Devi&#10;Suresh Reddy, 9123456780"></textarea>
-            <label class="field check"><input type="checkbox" name="replace"><span>Replace the names already entered</span></label>`,
+        body: `<p class="muted" style="margin-top:0">One person per line. A phone number and an e-mail address on the line are picked up too.</p>
+            <textarea class="hc-paste" name="list" rows="12" placeholder="Ravi Kumar 9876543210 ravi@gmail.com&#10;Lakshmi Devi&#10;Suresh Reddy, 9123456780"></textarea>
+            <label class="check-line"><input type="checkbox" name="replace"> Replace the names already entered</label>`,
         actions: [
             { label: 'Cancel' },
             { label: 'Add these names', kind: 'primary', iconName: 'check', onClick: modal => {
@@ -546,465 +1538,236 @@ function openPasteList(w, done) {
                 const all = [...w.members.filter(m => m.name.trim()), ...list];
                 w.members = all.slice(0, n);
                 const extra = all.length - n;
-                toast(extra > 0 ? `Added ${list.length - extra}. ${plural(extra, 'name')} did not fit (the chit has ${n} members).`
-                    : `Added ${plural(list.length, 'name')}`, extra > 0 ? 'info' : 'success');
+                toast(extra > 0 ? `Added ${list.length - extra}. ${plural(extra, 'name')} did not fit (the chit has ${n} members).` : `Added ${plural(list.length, 'name')}`,
+                    extra > 0 ? 'info' : 'success');
                 done();
             } },
         ],
     });
 }
 
-function drawReview(host, w) {
-    const n = num(w.memberCount);
-    const rows = scheduleOf({ ...w, months: n, dueDay: num(w.dueDay) });
+/** Step 3: how members pay (UPI for payment links), where the money is recorded, and a last look, side by side. */
+function drawAccounts(host, w, accounts, categories) {
+    const { r, rows } = planOf(w);
     const row = (label, value) => `<div class="hc-review-row"><span>${label}</span><b>${value}</b></div>`;
+    const withMail = w.members.filter(m => (m.email || '').trim()).length;
+    const withPhone = w.members.filter(m => m.phone.trim()).length;
     host.innerHTML = `
-    <div class="hc-two">
-        <section class="panel">
-            <header class="panel-head"><h3><span class="ico">${icon('check-circle')}</span>${esc(w.name)}</h3></header>
-            <div class="panel-body">
-                ${row('Runs', `${monthName(w.startMonth + '-01')} – ${monthName(rows.at(-1).dueDate)} (${n} months)`)}
-                ${row('Members pay', `${money(w.installment)} each, by the ${ordinal(num(w.dueDay))} of every month`)}
-                ${row('You collect', `${money(n * num(w.installment))} a month`)}
-                ${row('Winner gets', `${money(rows[0].payout)} in month 1 → ${money(rows.at(-1).payout)} in month ${n}`)}
-                ${row('Your commission', `${money(w.commission)} a month · ${money(num(w.commission) * n)} in total`)}
-                ${row('In my accounts', w.postToBooks ? 'Yes, recorded in the journal' : 'No, tracked on this page only')}
-                <p class="hc-note">${icon('info')}<span>You can change the amounts later in the chit's settings.</span></p>
+    <div class="hc-two hc-fit">
+        <div class="hc-col">
+            <div class="section-title">${icon('qr')}Collecting payments</div>
+            <div class="hc-fit-grid two">
+                ${fl('My UPI ID (for “Pay now” links)', 'upiId', w, { type: 'text', unit: 'e.g. name@okhdfcbank', tip: 'Members get a “Pay now” button (GPay, PhonePe, BHIM …) and a QR code with their reminders and statements' })}
+                ${fl('Name shown to members and on receipts', 'payeeName', w, { type: 'text', attrs: 'maxlength="100"' })}
             </div>
-        </section>
-        <section class="panel">
-            <header class="panel-head"><h3><span class="ico">${icon('users')}</span>${n} members</h3></header>
-            <div class="panel-body"><ol class="hc-review-members">${w.members.slice(0, n).map(m =>
-                `<li><span class="hc-avatar sm">${esc(initials(m.name))}</span><b>${esc(m.name)}</b>${m.phone ? `<small>${esc(m.phone)}</small>` : ''}</li>`).join('')}</ol></div>
-        </section>
-    </div>`;
-}
-
-// ===================================================================== one chit
-
-async function renderDetail(container, id, tab, isCurrent) {
-    const d = await api.get(`/hosted-chits/${id}`);
-    if (!isCurrent()) return;
-    if (tab && TABS.some(t => t.key === tab)) view.tab = tab;
-    else if (current?.chit.id !== id) view.tab = 'month';
-    current = d;
-    drawDetail(container, d);
-}
-
-/** Saves through the server, then shows the chit as it now is. */
-async function apply(container, request, message) {
-    const d = await request;
-    current = d;
-    drawDetail(container, d);
-    if (message) toast(message);
-    return d;
-}
-
-function drawDetail(container, d) {
-    const c = d.chit;
-    const keepScroll = container.querySelector('#hc-tab')?.scrollTop || 0;
-    const done = c.status === 'COMPLETED';
-    container.innerHTML = `
-    <div class="page hc-page hc-detail">
-        <header class="hc-banner">
-            <a class="btn sm icon hc-back" href="#/host-chits" title="All my hosted chits">${icon('chevron-left')}</a>
-            <div class="min-0 hc-banner-id">
-                <div class="hc-title"><b class="ellipsis">${esc(c.name)}</b>${c.demo ? '<span class="badge gray">Example</span>' : ''}</div>
-                <div class="hc-meta">${c.memberCount} members · ${money(c.installment)} a month · ${done ? 'finished' : `month ${c.currentMonth} of ${c.months}`}</div>
-            </div>
-            <div class="hc-banner-actions">
-                ${exportButton({ cls: 'sm on-dark', label: 'Download' })}
-                ${manage() ? `<button class="btn sm on-dark" data-act="settings">${icon('settings')}Settings</button>` : ''}
-            </div>
-        </header>
-        <div class="hc-tiles four">
-            ${tile('arrow-in', 'Collected so far', money(c.totalCollected), `from ${plural(c.memberCount, 'member')}`)}
-            ${tile('crown', 'Paid to winners', money(c.totalPaidOut), `${plural(c.completedMonths, 'winner')} paid`)}
-            ${tile('piggy', 'My commission', money(c.commissionEarned), `${money(c.commission)} each month`, 'gold')}
-            ${tile('alert', 'Still to collect', money(c.pendingDues), c.pendingCount ? `${plural(c.pendingCount, 'payment')} pending` : 'nothing pending', c.pendingCount ? 'warn' : 'good')}
+            <div class="section-title">${icon('journal')}My accounts</div>
+            ${booksFields(w, accounts, categories, 'data-k', true)}
         </div>
-        <nav class="tabs hc-tabs" role="tablist">${TABS.map(t =>
-            `<button class="tab ${view.tab === t.key ? 'active' : ''}" data-tab="${t.key}" role="tab">${icon(t.iconName)}<span>${t.label}</span></button>`).join('')}</nav>
-        <div class="hc-scroll" id="hc-tab"></div>
+        <div class="hc-col">
+            <div class="section-title">${icon('check-circle')}${esc(w.name)}</div>
+            <div class="hc-review">
+                ${row('Type', w.chitType === 'AUCTION' ? 'Auction (Margadarsi style)' : 'Fixed')}
+                ${row('Runs', `${monthName(w.startMonth + '-01')} – ${monthName(rows.at(-1).dueDate)} (${r.months} months)`)}
+                ${row('Members pay', `${money(r.installment)} each, by the ${ordinal(r.dueDay)}${w.chitType === 'AUCTION' ? ' (less the dividend)' : ''}`)}
+                ${w.chitType === 'AUCTION' ? row('Bids', `${money(r.commission)} – ${money(Math.round(r.baseValue * r.maxBidPercent / 100))}`)
+                    : row('After winning', extraOf(r) ? `pays ${money(r.installment + extraOf(r))} a month` : 'the same amount')}
+                ${row('Winner gets', w.chitType === 'AUCTION' ? 'chit value − winning bid' : `${money(rows[0].payout)} → ${money(rows.at(-1).payout)}`)}
+                ${row('Your commission', `${money(r.commission)} a month · ${money(r.commission * r.months)} in all`)}
+                ${row('Late payments', r.lateFeePercent ? `${r.lateFeePercent}% a month after ${r.lateGraceDays} days` : 'no interest')}
+                ${row('Members', `${r.memberCount}: ${esc(w.members.slice(0, 3).map(m => m.name).join(', '))}${r.memberCount > 3 ? '…' : ''}`)}
+                ${row('Reminders & receipts', `${withPhone} on WhatsApp · ${withMail} by e-mail`)}
+            </div>
+            <p class="book-note">${icon('signature')}<span>After creating, add your signature for receipts under <b>Settings → Receipt signature</b> (or from the first receipt).</span></p>
+        </div>
     </div>`;
+    host.addEventListener('input', e => { if (e.target.dataset.k === 'upiId' || e.target.dataset.k === 'payeeName') w[e.target.dataset.k] = e.target.value; });
+    bindBooksFields(host, w, 'data-k');
+}
 
-    const page = container.querySelector('.hc-page');
-    const body = page.querySelector('#hc-tab');
-    const drawTab = () => {
-        const draw = { month: drawThisMonth, months: drawAllMonths, payments: drawPayments, members: drawMembersTab, history: drawHistory }[view.tab];
-        body.innerHTML = draw(d);
+/**
+ * Where the members' payments, the commission and late interest go, and the income category, as rows of choice
+ * chips (a drop-down appears only for "an account I have"). New chits are always recorded in the accounts; an older
+ * chit that is not shows a switch to start (once on, it stays on).
+ */
+function booksFields(s, accounts, categories, attr, always = false) {
+    const cashLike = a => a.accountClass === 'ASSET' && a.accountType !== 'CHIT_FUND';
+    const key = name => attr === 'data-k' ? `data-k="${name}"` : `name="${name}"`;
+    // a radio group needs one shared name, or every option stays ticked
+    const chip = (name, value, checked, label, tip = '') => `<label class="hc-chip-radio" title="${esc(tip)}"><input type="radio" ${attr === 'data-k' ? `data-k="${name}" name="hc-${name}"` : `name="${name}"`}
+        value="${value}" ${checked ? 'checked' : ''}><span>${label}</span></label>`;
+    const pick = (name, value) => `<span class="hc-pick" data-pick="${name}"><select ${key(name)}>${accountOptions(accounts, cashLike, value, 'Pick an account')}</select></span>`;
+    const dedicated = categories.find(c => c.name === 'Chit Commission Income');
+    return `<div class="hc-books">
+        ${always || s.locked ? `<p class="book-note">${icon('check-circle')}<span>Recorded in my accounts: journal, income and balance sheet. Money is held under <b>Hosted Chit Funds</b> until paid out; only commission and late interest are income.</span></p>`
+            : `<label class="check-line"><input type="checkbox" ${key('postToBooks')} ${s.postToBooks ? 'checked' : ''}> Start recording this chit's money in my accounts (journal, income, balance sheet)</label>`}
+        <div data-books ${s.postToBooks ? '' : 'hidden'}>
+            <div class="hc-book-row"><span class="hc-book-label">Members' payments</span>
+                <span class="hc-chips">${chip('collection', 'SEPARATE', s.collection === 'SEPARATE', 'New account', 'A new account “<name> - collections”')}
+                ${chip('collection', 'EXISTING', s.collection === 'EXISTING', 'An account I have')}</span>
+                ${pick('accountId', s.accountId)}<small class="hc-book-new" data-new="collection">“<i data-name-preview></i> - collections”</small></div>
+            <div class="hc-book-row"><span class="hc-book-label">My commission</span>
+                <span class="hc-chips">${chip('commissionTo', 'SEPARATE', s.commissionTo === 'SEPARATE', 'New account', 'A new account “<name> - commission”')}
+                ${chip('commissionTo', 'SAME', s.commissionTo === 'SAME', 'Same as payments')}
+                ${chip('commissionTo', 'EXISTING', s.commissionTo === 'EXISTING', 'An account I have')}</span>
+                ${pick('commissionAccountId', s.commissionAccountId)}<small class="hc-book-new" data-new="commissionTo">“<i data-name-preview></i> - commission”</small></div>
+            <div class="hc-book-row"><span class="hc-book-label">Late interest</span>
+                <span class="hc-chips">${chip('lateTo', 'SEPARATE', s.lateTo === 'SEPARATE', 'New account', 'A new account “<name> - late interest”, income “Chit Late Payment Interest”')}
+                ${chip('lateTo', 'SAME', s.lateTo === 'SAME', 'Same as commission')}
+                ${chip('lateTo', 'EXISTING', s.lateTo === 'EXISTING', 'An account I have')}</span>
+                ${pick('lateFeeAccountId', s.lateFeeAccountId)}<small class="hc-book-new" data-new="lateTo">“<i data-name-preview></i> - late interest”</small></div>
+            <div class="hc-book-row"><span class="hc-book-label">Commission income</span>
+                <span class="hc-pick wide"><select ${key('commissionCategoryId')} title="A separate income category keeps chit earnings apart in Income and Reports">
+                    ${dedicated ? '' : `<option value="" ${!s.commissionCategoryId ? 'selected' : ''}>Chit Commission Income (new, recommended)</option>`}
+                    ${categories.map(c => `<option value="${c.id}" ${c.id === Number(s.commissionCategoryId) ? 'selected' : ''}>${esc(c.name)}${c.name === 'Chit Commission Income' ? ' (recommended)' : ''}</option>`).join('')}</select></span></div>
+        </div>
+    </div>`;
+}
+
+function bindBooksFields(host, s, attr) {
+    const sync = () => {
+        host.querySelector('[data-books]').hidden = !s.postToBooks;
+        // hide the wrapper: the app's searchable drop-down sits beside the real select
+        host.querySelector('[data-pick="accountId"]').hidden = s.collection !== 'EXISTING';
+        host.querySelector('[data-pick="commissionAccountId"]').hidden = s.commissionTo !== 'EXISTING';
+        host.querySelector('[data-pick="lateFeeAccountId"]').hidden = s.lateTo !== 'EXISTING';
+        host.querySelectorAll('[data-new]').forEach(x => { x.hidden = s[x.dataset.new] !== 'SEPARATE'; });
+        host.querySelectorAll('[data-name-preview]').forEach(i => { i.textContent = s.name || 'Chit'; });
     };
-    drawTab();
-    body.scrollTop = keepScroll;
-    bindExport(page, () => exportReport(d));
-
-    page.addEventListener('click', async e => {
-        const tabBtn = e.target.closest('[data-tab]');
-        if (tabBtn) {
-            view.tab = tabBtn.dataset.tab;
-            history.replaceState(null, '', `#/host-chits/${c.id}/${view.tab}`);
-            page.querySelectorAll('[data-tab]').forEach(t => t.classList.toggle('active', t === tabBtn));
-            drawTab();
-            body.scrollTop = 0;
-            return;
-        }
-        const el = e.target.closest('[data-act]');
-        if (!el) return;
-        const act = el.dataset.act;
-        const month = el.dataset.month ? d.schedule.find(m => m.monthNo === Number(el.dataset.month)) : null;
-        const memberId = Number(el.dataset.member);
-        const monthNo = Number(el.dataset.no);
-        try {
-            if (act === 'settings') openSettings(container, d);
-            else if (act === 'goto') page.querySelector(`[data-tab="${el.dataset.to}"]`).click();
-            else if (act === 'quick-paid') {
-                el.disabled = true;
-                const member = d.members.find(m => m.id === memberId);
-                const rest = num(c.installment) - paidFor(d, memberId, monthNo);
-                await apply(container, api.post(`/hosted-chits/${c.id}/payments`, { memberId, monthNo, amount: rest, mode: 'Cash', paidDate: isoDate() }),
-                    `${member.name} paid ${money(rest)} ✓`);
-            }
-            else if (act === 'pay') openPayment(container, d, memberId, monthNo);
-            else if (act === 'collect-all') openCollectAll(container, d, monthNo);
-            else if (act === 'winner') openWinner(container, d, month, el.dataset.random === '1');
-            else if (act === 'clear-winner') {
-                if (!await confirmDialog(`Remove ${month.winnerName} as the winner of month ${month.monthNo}?`, { confirmLabel: 'Remove winner' })) return;
-                await apply(container, api.del(`/hosted-chits/${c.id}/months/${month.monthNo}/winner`), 'Winner removed');
-            }
-            else if (act === 'payout') openPayout(container, d, month);
-            else if (act === 'undo-payout') {
-                if (!await confirmDialog(`Undo paying ${money(month.payout)} to ${month.winnerName} for month ${month.monthNo}? The month opens again.`, { confirmLabel: 'Undo' })) return;
-                await apply(container, api.del(`/hosted-chits/${c.id}/months/${month.monthNo}/payout`), `Month ${month.monthNo} is open again`);
-            }
-            else if (act === 'edit-payment') {
-                const p = d.payments.find(x => x.id === Number(el.dataset.payment));
-                openPayment(container, d, p.memberId, p.monthNo, p);
-            }
-            else if (act === 'undo-payment') undoPayment(container, d, d.payments.find(x => x.id === Number(el.dataset.payment)));
-            else if (act === 'edit-member') openMember(container, d, d.members.find(m => m.id === memberId));
-            else if (act === 'history-kind') { view.historyKind = el.dataset.kind; drawTab(); }
-        } catch (err) {
-            el.disabled = false;
-            toast(err.message, 'error');
-        }
+    host.addEventListener('change', e => {
+        const k = attr === 'data-k' ? e.target.dataset.k : e.target.name;
+        if (!k) return;
+        if (k === 'postToBooks') s.postToBooks = e.target.checked;
+        else if (k === 'collection' || k === 'commissionTo' || k === 'lateTo') s[k] = e.target.value;
+        else if (k === 'accountId' || k === 'commissionAccountId' || k === 'commissionCategoryId' || k === 'lateFeeAccountId') s[k] = e.target.value ? Number(e.target.value) : null;
+        sync();
     });
-    page.addEventListener('input', e => {
-        if (e.target.id !== 'hc-member-search') return;
-        view.memberQuery = e.target.value;
-        const q = view.memberQuery.trim().toLowerCase();
-        page.querySelectorAll('[data-member-row]').forEach(r => { r.hidden = !!q && !r.dataset.memberRow.includes(q); });
-    });
+    sync();
 }
 
-// ---------------------------------------------------------------- This month: collect → choose winner → pay winner
-
-function drawThisMonth(d) {
-    const c = d.chit;
-    const month = d.schedule.find(m => m.status === 'ONGOING');
-    const canManage = manage();
-    const inst = num(c.installment);
-    const olderDues = [];
-    d.schedule.filter(m => !month || m.monthNo < month.monthNo).forEach(m => d.members.forEach(mem => {
-        const rest = inst - paidFor(d, mem.id, m.monthNo);
-        if (rest > 0) olderDues.push({ mem, m, rest });
-    }));
-    const olderHtml = olderDues.length ? `
-        <section class="panel hc-older">
-            <header class="panel-head"><h3><span class="ico">${icon('alert')}</span>Still owed from earlier months</h3>
-                <span class="sub">${money(olderDues.reduce((s, x) => s + x.rest, 0))}</span></header>
-            <div class="panel-body flush"><div class="hc-people">${olderDues.map(x => personRow(x.mem, `for month ${x.m.monthNo} (${shortMonth(x.m.dueDate)})`, x.rest, x.m.monthNo, canManage)).join('')}</div></div>
-        </section>` : '';
-
-    if (!month) {
-        return `<div class="hc-finished">${icon('check-circle')}<h3>This chit is finished</h3>
-            <p>All ${c.months} months are done and every member has won once. You earned <b>${money(c.commissionEarned)}</b> in commission.</p></div>${olderHtml}`;
-    }
-
-    const rows = d.members.map(m => ({ m, paid: paidFor(d, m.id, month.monthNo) }));
-    const unpaid = rows.filter(r => r.paid < inst);
-    const paid = rows.filter(r => r.paid >= inst);
-    const collected = rows.reduce((s, r) => s + r.paid, 0);
-    const expected = inst * d.members.length;
-    const step1Done = !unpaid.length;
-    const step2Done = !!month.winnerMemberId;
-    const late = daysFromToday(month.dueDate) < 0 && !step1Done;
-
-    return `
-    <section class="hc-month-intro">
-        <div class="min-0">
-            <small>Month ${month.monthNo} of ${c.months}</small>
-            <h3>${monthName(month.dueDate)}</h3>
-            <p>Members pay by <b>${date(month.dueDate)}</b> <span class="${late ? 'neg' : 'muted'}">(${relDays(month.dueDate)})</span></p>
-        </div>
-        <div class="hc-pot">
-            <span><small>Chit value</small><b>${money(month.chitValue)}</b></span>
-            <i>−</i>
-            <span><small>My commission</small><b class="gold-ink">${money(month.commission)}</b></span>
-            <i>=</i>
-            <span class="win"><small>Winner gets</small><b>${money(month.payout)}</b></span>
-        </div>
-    </section>
-
-    <ol class="hc-flow">
-        <li class="hc-step ${step1Done ? 'done' : 'active'}">
-            <div class="hc-step-head">
-                <span class="hc-step-no">${step1Done ? icon('check') : '1'}</span>
-                <div class="min-0"><b>Collect ${money(inst)} from each member</b>
-                    <small>${paid.length} of ${d.members.length} paid · ${money(collected)} of ${money(expected)}</small></div>
-                ${canManage && unpaid.length > 1 ? `<button class="btn sm" data-act="collect-all" data-no="${month.monthNo}">${icon('check-circle')}Everyone has paid</button>` : ''}
-            </div>
-            ${bar((collected / expected) * 100)}
-            ${unpaid.length ? `<h4 class="hc-list-title">Yet to pay · ${unpaid.length}</h4>
-                <div class="hc-people">${unpaid.map(r => personRow(r.m, r.paid ? `paid ${money(r.paid)} so far` : (r.m.phone || ''), inst - r.paid, month.monthNo, canManage)).join('')}</div>`
-                : `<p class="hc-ok">${icon('check-circle')}Everyone has paid this month.</p>`}
-            ${paid.length ? `<details class="hc-paid-list" ${unpaid.length ? '' : 'open'}><summary>Paid · ${paid.length}</summary>
-                <div class="hc-people">${paid.map(r => {
-                    const last = d.payments.filter(p => p.memberId === r.m.id && p.monthNo === month.monthNo).at(-1);
-                    return `<div class="hc-person paid ${canManage ? 'clickable' : ''}" ${canManage ? `data-act="pay" data-member="${r.m.id}" data-no="${month.monthNo}" title="Change or undo"` : ''}>
-                        <span class="hc-avatar">${esc(initials(r.m.name))}</span>
-                        <div class="min-0"><b class="ellipsis">${esc(r.m.name)}</b><small>${last ? `${date(last.paidDate)} · ${esc(last.mode)}` : ''}</small></div>
-                        <span class="hc-paid-amt">${icon('check')}${money(r.paid)}</span>
-                    </div>`;
-                }).join('')}</div></details>` : ''}
-        </li>
-
-        <li class="hc-step ${step2Done ? 'done' : 'active'}">
-            <div class="hc-step-head">
-                <span class="hc-step-no">${step2Done ? icon('check') : '2'}</span>
-                <div class="min-0"><b>Choose this month's winner</b>
-                    <small>${step2Done ? (month.drawMethod === 'Random draw' ? 'Picked by random draw' : 'Picked by you') : `${d.members.filter(m => !m.wonMonth).length} members have not won yet`}</small></div>
-            </div>
-            ${step2Done ? `<div class="hc-winner-box"><span class="hc-avatar gold">${icon('crown')}</span><b>${esc(month.winnerName)}</b>
-                    ${canManage ? `<span class="spacer"></span><button class="btn sm ghost" data-act="clear-winner" data-month="${month.monthNo}">Remove</button>
-                    <button class="btn sm" data-act="winner" data-month="${month.monthNo}">${icon('refresh')}Change</button>` : ''}</div>`
-                : canManage ? `<div class="row wrap hc-step-actions">
-                    <button class="btn primary" data-act="winner" data-month="${month.monthNo}">${icon('users')}Pick a member</button>
-                    <button class="btn" data-act="winner" data-random="1" data-month="${month.monthNo}">${icon('dice')}Random draw</button></div>` : ''}
-        </li>
-
-        <li class="hc-step ${step2Done ? 'active' : 'waiting'}">
-            <div class="hc-step-head">
-                <span class="hc-step-no">3</span>
-                <div class="min-0"><b>Pay the winner</b>
-                    <small>${step2Done ? `Give ${money(month.payout)} to ${esc(month.winnerName)}, then mark it done. This closes month ${month.monthNo}.` : 'Choose the winner first'}</small></div>
-            </div>
-            ${canManage && step2Done ? `<div class="row wrap hc-step-actions"><button class="btn primary" data-act="payout" data-month="${month.monthNo}">${icon('check')}I paid ${money(month.payout)} to ${esc(month.winnerName)}</button>
-                ${!step1Done ? `<small class="neg">${plural(unpaid.length, 'member')} still to pay</small>` : ''}</div>` : ''}
-        </li>
-    </ol>
-    ${olderHtml}`;
-}
-
-/** A member who owes money: name, a hint, the amount and the buttons to record it. */
-function personRow(m, hint, rest, monthNo, canManage) {
-    return `<div class="hc-person">
-        <span class="hc-avatar">${esc(initials(m.name))}</span>
-        <div class="min-0"><b class="ellipsis">${esc(m.name)}</b><small>${esc(hint || '')}</small></div>
-        <b class="hc-owe">${money(rest)}</b>
-        ${canManage ? `<span class="hc-person-acts"><button class="btn sm ghost" data-act="pay" data-member="${m.id}" data-no="${monthNo}" title="Record a different amount, date or mode">${icon('edit')}<span class="hc-lbl">Other amount</span></button>
-            <button class="btn sm primary" data-act="quick-paid" data-member="${m.id}" data-no="${monthNo}" title="Record ${money(rest)} in cash, today">${icon('check')}Paid</button></span>` : ''}
-    </div>`;
-}
-
-// ---------------------------------------------------------------- all months
-
-function drawAllMonths(d) {
-    const c = d.chit;
-    const lastDone = c.completedMonths;
-    return `<section class="panel">
-        <header class="panel-head"><h3><span class="ico">${icon('calendar')}</span>All ${c.months} months</h3>
-            <span class="sub">every member pays ${money(c.installment)} a month · you keep ${money(c.commission)} a month</span></header>
-        <div class="panel-body flush"><div class="hc-table-wrap"><table class="grid hc-months">
-            <thead><tr><th class="c">Month</th><th>Pay by</th><th class="r">Chit value</th><th class="r">Winner gets</th><th>Winner</th><th>Status</th><th></th></tr></thead>
-            <tbody>${d.schedule.map(m => `<tr class="${m.status === 'ONGOING' ? 'hc-now' : m.status === 'COMPLETED' ? 'hc-past' : ''}">
-                <td class="c"><b>${m.monthNo}</b></td>
-                <td>${date(m.dueDate)}</td>
-                <td class="r">${money(m.chitValue)}</td>
-                <td class="r"><b>${money(m.payout)}</b></td>
-                <td>${m.winnerName ? `<span class="hc-winner">${icon('crown')}${esc(m.winnerName)}</span>` : '<span class="muted">—</span>'}</td>
-                <td>${statusBadge(m.status)}${m.payoutDate ? `<small class="muted hc-when">paid ${date(m.payoutDate)}</small>` : ''}</td>
-                <td class="r">${m.status === 'ONGOING' ? `<button class="btn sm" data-act="goto" data-to="month">Open${icon('chevron-right')}</button>`
-                    : manage() && m.status === 'COMPLETED' && m.monthNo === lastDone
-                        ? `<button class="btn sm ghost" data-act="undo-payout" data-month="${m.monthNo}" title="Undo the payment to the winner">${icon('undo')}Undo</button>` : ''}</td>
-            </tr>`).join('')}</tbody>
-        </table></div></div>
-    </section>`;
-}
-
-// ---------------------------------------------------------------- payments grid
-
-function drawPayments(d) {
-    const c = d.chit;
-    const inst = num(c.installment);
-    return `<section class="panel">
-        <header class="panel-head"><h3><span class="ico">${icon('grid')}</span>Who paid which month</h3>
-            <span class="sub">${manage() ? 'tap a box to add or change a payment' : ''}</span></header>
-        <div class="hc-legend">${Object.entries(CELL).map(([k, [sym, label]]) => `<span><i class="hc-cell ${k.toLowerCase()}">${sym}</i>${label}</span>`).join('')}
-            <span><span class="hc-crown">${icon('crown')}</span>Has won</span></div>
-        <div class="panel-body flush"><div class="hc-grid-wrap"><table class="hc-grid">
-            <thead><tr><th class="hc-name-col">Member</th>${d.schedule.map(m =>
-                `<th class="${m.status === 'ONGOING' ? 'now' : ''}" title="Month ${m.monthNo} · pay by ${date(m.dueDate)}">${m.monthNo}<small>${shortMonth(m.dueDate)}</small></th>`).join('')}
-                <th class="r">Owes</th></tr></thead>
-            <tbody>${d.members.map(mem => `<tr>
-                <th class="hc-name-col" title="${esc(mem.name)}${mem.phone ? ' · ' + esc(mem.phone) : ''}">${mem.wonMonth ? `<span class="hc-crown" title="Won month ${mem.wonMonth}">${icon('crown')}</span>` : ''}<span class="ellipsis">${esc(mem.name)}</span></th>
-                ${d.schedule.map(m => {
-                    const st = cellStatus(d, mem.id, m);
-                    const paid = paidFor(d, mem.id, m.monthNo);
-                    const [sym, label] = CELL[st];
-                    return `<td class="${m.status === 'ONGOING' ? 'now' : ''}"><button type="button" class="hc-cell ${st.toLowerCase()}"
-                        ${manage() ? `data-act="pay" data-member="${mem.id}" data-no="${m.monthNo}"` : 'disabled'}
-                        title="${esc(mem.name)} · month ${m.monthNo}: ${label}${paid ? ` (${money(paid)} of ${money(inst)})` : ''}">${st === 'PARTIAL' ? moneyShort(paid).replace('₹', '') : sym}</button></td>`;
-                }).join('')}
-                <td class="r ${num(mem.balanceDue) ? 'neg' : 'muted'}"><b>${num(mem.balanceDue) ? money(mem.balanceDue) : '—'}</b></td>
-            </tr>`).join('')}</tbody>
-            <tfoot><tr><th class="hc-name-col">Collected</th>${d.schedule.map(m =>
-                `<td class="${m.status === 'ONGOING' ? 'now' : ''}" title="${money(m.collected)} of ${money(m.expected)}">${num(m.collected) ? moneyShort(m.collected) : ''}</td>`).join('')}
-                <td class="r neg">${num(c.pendingDues) ? money(c.pendingDues) : '—'}</td></tr></tfoot>
-        </table></div></div>
-    </section>`;
-}
-
-// ---------------------------------------------------------------- members
-
-function drawMembersTab(d) {
-    const q = view.memberQuery.trim().toLowerCase();
-    return `<section class="panel">
-        <header class="panel-head"><h3><span class="ico">${icon('users')}</span>${d.members.length} members</h3>
-            <span class="sub">${d.members.filter(m => m.wonMonth).length} have won</span>
-            <div class="actions"><label class="hc-search">${icon('search')}<input type="search" id="hc-member-search" placeholder="Find a member" value="${esc(view.memberQuery)}"></label></div></header>
-        <div class="panel-body flush"><div class="hc-member-cards">${d.members.map(m => {
-            const key = (m.name + ' ' + (m.phone || '')).toLowerCase();
-            return `<div class="hc-member" data-member-row="${esc(key)}" ${q && !key.includes(q) ? 'hidden' : ''}>
-                <span class="hc-avatar ${m.wonMonth ? 'gold' : ''}">${m.wonMonth ? icon('crown') : esc(initials(m.name))}</span>
-                <div class="min-0">
-                    <b class="ellipsis">${esc(m.name)}</b>
-                    <small>${m.phone ? `<a href="tel:${esc(m.phone)}">${esc(m.phone)}</a>` : 'no phone'} · ${m.wonMonth ? `won month ${m.wonMonth}` : 'not won yet'}</small>
-                </div>
-                <div class="hc-member-money"><small>Paid ${money(m.totalPaid)}</small>
-                    ${num(m.balanceDue) ? `<b class="neg">Owes ${money(m.balanceDue)}</b>` : `<b class="pos">Up to date</b>`}</div>
-                ${manage() ? `<button class="btn sm ghost icon" data-act="edit-member" data-member="${m.id}" title="Edit name or phone">${icon('edit')}</button>` : ''}
-            </div>`;
-        }).join('')}</div></div>
-    </section>`;
-}
-
-// ---------------------------------------------------------------- history
-
-function drawHistory(d) {
-    const kinds = [['ALL', 'Everything'], ['IN', 'Money in'], ['OUT', 'Money out']];
-    const rows = d.ledger.filter(r => view.historyKind === 'ALL' || (view.historyKind === 'IN' ? r.kind === 'COLLECTION' : r.kind !== 'COLLECTION'))
-        .slice().reverse();
-    const canManage = manage();
-    const what = r => r.kind === 'COLLECTION' ? `<b>${esc(r.party)}</b> paid for month ${r.monthNo}`
-        : r.kind === 'PAYOUT' ? `Paid winner <b>${esc(r.party)}</b> (month ${r.monthNo})` : `My commission (month ${r.monthNo})`;
-    return `<section class="panel">
-        <header class="panel-head"><h3><span class="ico">${icon('history')}</span>History</h3><span class="sub">newest first</span>
-            <div class="actions"><div class="seg-chips sm">${kinds.map(([k, label]) =>
-                `<button class="seg-chip ${view.historyKind === k ? 'active' : ''}" data-act="history-kind" data-kind="${k}">${label}</button>`).join('')}</div></div></header>
-        <div class="panel-body flush">${rows.length ? `<div class="hc-table-wrap"><table class="grid hc-history">
-            <thead><tr><th>Date</th><th>What happened</th><th>How</th><th class="r">Amount</th><th class="r" title="Collected minus paid out, after this entry">Money with you</th>${canManage ? '<th></th>' : ''}</tr></thead>
-            <tbody>${rows.map(r => {
-                const isIn = num(r.moneyIn) > 0;
-                const tone = r.kind === 'COLLECTION' ? 'aqua' : r.kind === 'PAYOUT' ? 'gold' : 'violet';
-                const ico = r.kind === 'COLLECTION' ? 'arrow-in' : r.kind === 'PAYOUT' ? 'crown' : 'piggy';
-                return `<tr>
-                    <td class="hc-nowrap">${date(r.date)}</td>
-                    <td><span class="hc-kind"><span class="chip-icon sm ${tone}">${icon(ico)}</span><span>${what(r)}${r.note ? `<small class="muted hc-sub-note">${esc(r.note)}</small>` : ''}</span></span></td>
-                    <td>${esc(r.mode || '—')}</td>
-                    <td class="r hc-nowrap"><b class="${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(isIn ? r.moneyIn : r.moneyOut)}</b></td>
-                    <td class="r hc-nowrap muted">${money(r.held)}</td>
-                    ${canManage ? `<td class="r hc-nowrap">${r.paymentId ? `<button class="btn sm ghost icon" data-act="edit-payment" data-payment="${r.paymentId}" title="Change this payment">${icon('edit')}</button>
-                        <button class="btn sm ghost icon" data-act="undo-payment" data-payment="${r.paymentId}" title="Undo this payment">${icon('undo')}</button>` : ''}</td>` : ''}
-                </tr>`;
-            }).join('')}</tbody>
-        </table></div>` : emptyState('Nothing recorded yet', 'history')}</div>
-    </section>`;
-}
 
 // ===================================================================== dialogs
 
-/** A member's payment for one month: what is paid so far (change / undo) and a new or changed payment. */
-function openPayment(container, d, memberId, monthNo, editing = null) {
+/**
+ * Record (or change) a member's payment for a month: full or part of the installment, late interest collected or
+ * let off, date, mode, transaction reference, a note and evidence (photo or PDF, kept on the journal entry). After
+ * saving, the receipt opens, ready to print or send.
+ */
+function openPayment(d, memberId, monthNo, editing = null) {
     const c = d.chit;
     const member = d.members.find(m => m.id === memberId);
-    const month = d.schedule.find(m => m.monthNo === monthNo);
-    const inst = num(c.installment);
+    const month = monthOf(d, monthNo);
+    if (!editing && isAuction(c) && month.bid === null) {
+        toast(`Record the auction for month ${monthNo} first: the dividend decides what each member pays`, 'error');
+        return;
+    }
+    const due = dueFor(d, member, month);
     const list = d.payments.filter(p => p.memberId === memberId && p.monthNo === monthNo);
-    const paid = list.reduce((s, p) => s + num(p.amount), 0);
-    const balance = Math.max(0, inst - paid);
-    const amount = editing ? num(editing.amount) : balance || inst;
+    const paid = list.reduce((s, p) => s + num(p.amount), 0) - (editing ? num(editing.amount) : 0);
+    const balance = Math.max(0, due - paid);
+    const late = (d.lateFees || []).find(x => x.memberId === memberId && x.monthNo === monthNo);
+    const lateOpen = Math.max(0, num(late?.due) + (editing ? num(editing.lateFee) + num(editing.lateFeeWaived) : 0));
+    const amount = editing ? num(editing.amount) : balance;
+    const why = isAuction(c) && num(month.dividend) ? `${money(c.installment)} less ${money(month.dividend)} dividend`
+        : due > num(c.installment) ? `includes ${money(c.winnerExtraAmount)} winner extra` : '';
+    const chip = (label, value) => `<button type="button" class="date-chip" data-amount="${value}">${label}</button>`;
+    let evidence = null;
     openModal({
-        title: `${member.name} · month ${monthNo}`, iconName: 'hand-coins',
+        title: `${member.name} · month ${monthNo}`, iconName: 'hand-coins', size: 'lg',
         body: `
         <div class="hc-pay-sum">
-            <span><small>Should pay</small><b>${money(inst)}</b></span>
-            <span><small>Paid</small><b class="pos">${money(paid)}</b></span>
+            <span><small>Installment</small><b>${money(due)}</b></span>
+            <span><small>Paid${editing ? ' (other payments)' : ''}</small><b class="pos">${money(paid)}</b></span>
             <span><small>Still owes</small><b class="${balance ? 'neg' : 'pos'}">${balance ? money(balance) : 'Nothing'}</b></span>
+            ${late || lateOpen ? `<span><small>Late interest</small><b class="neg">${money(lateOpen)}</b></span>` : ''}
         </div>
-        <p class="muted hc-small" style="margin:0 0 8px">Pay by ${date(month.dueDate)}</p>
-        ${list.length ? `<h4 class="hc-sub">Payments received</h4><div class="hc-pay-list">${list.map(p => `<div class="hc-pay-row ${editing?.id === p.id ? 'editing' : ''}">
-            <span class="chip-icon sm aqua">${icon('check')}</span>
-            <div class="min-0"><b>${money(p.amount)}</b><small>${date(p.paidDate)} · ${esc(p.mode)}${p.note ? ' · ' + esc(p.note) : ''}</small></div>
-            <button type="button" class="btn sm ghost" data-pay-edit="${p.id}">${icon('edit')}Change</button>
-            <button type="button" class="btn sm ghost" data-pay-undo="${p.id}">${icon('undo')}Undo</button>
+        <p class="muted hc-small">Pay by ${date(month.dueDate)}${why ? ` · ${why}` : ''}${late ? ` · ${late.daysLate || 0} days late, ${num(c.lateFeePercent)}% a month after ${c.lateGraceDays} days` : ''}</p>
+        ${list.length ? `<div class="section-title">${icon('check')}Payments received</div><div class="cs-list">${list.map(p => `<div class="cs-row ${editing?.id === p.id ? 'active' : ''}">
+            <span class="grow min-0"><b>${money(num(p.amount) + num(p.lateFee))}</b> <small class="muted">${esc(p.receiptNo || '')} · ${date(p.paidDate)} · ${esc(p.mode)}${p.reference ? ' · ref ' + esc(p.reference) : ''}${num(p.lateFee) ? ` · incl. ${money(p.lateFee)} late interest` : ''}${p.note ? ' · ' + esc(p.note) : ''}</small></span>
+            ${p.attachmentCount ? `<button type="button" class="btn sm ghost icon" data-entry="${p.journalEntryId}" title="${p.attachmentCount} file(s) of evidence">${icon('paperclip')}</button>` : ''}
+            <button type="button" class="btn sm ghost" data-pay-receipt="${p.id}">${icon('receipt')}Receipt</button>
+            <button type="button" class="btn sm ghost icon" data-pay-edit="${p.id}" title="Change">${icon('edit')}</button>
+            <button type="button" class="btn sm ghost icon" data-pay-undo="${p.id}" title="Undo">${icon('undo')}</button>
         </div>`).join('')}</div>` : ''}
-        <form class="form-grid two hc-pay-form">
-            <h4 class="hc-sub span-2">${editing ? `Change the payment of ${date(editing.paidDate)}` : balance ? 'Record a payment' : 'Record an extra payment'}</h4>
-            <label class="field"><span>Amount (₹)</span><input type="number" name="amount" step="any" min="0" class="num" data-type="number" inputmode="numeric" value="${amount}" required></label>
+        <form class="form-grid two">
+            <div class="section-title span-2">${icon(editing ? 'edit' : 'plus')}${editing ? `Change ${esc(editing.receiptNo || 'the payment')} of ${date(editing.paidDate)}` : 'Record a payment'}</div>
+            <label class="field"><span>Towards the installment (₹)</span><input type="number" name="amount" step="any" min="0" class="num" data-type="number" inputmode="decimal" value="${amount}">
+                <span class="ln-chips hc-amount-chips">${balance ? chip(`Full ${moneyShort(balance)}`, balance) : ''}${balance > 1 ? chip(`Half ${moneyShort(Math.round(balance / 2))}`, Math.round(balance / 2)) : ''}${chip('Nothing', 0)}</span></label>
             <label class="field"><span>Date</span><input type="date" name="paidDate" value="${editing ? editing.paidDate : isoDate()}"></label>
-            <label class="field span-2"><span>Paid by</span>${modeChips(editing?.mode || 'Cash')}</label>
-            <label class="field span-2"><span>Note (optional)</span><input type="text" name="note" maxlength="255" value="${esc(editing?.note || '')}" placeholder="e.g. UPI reference"></label>
+            ${lateOpen || num(c.lateFeePercent) ? `
+            <label class="field"><span>Late interest collected (₹)</span><input type="number" name="lateFee" step="any" min="0" class="num" data-type="number" inputmode="decimal"
+                value="${editing ? num(editing.lateFee) : lateOpen}"></label>
+            <label class="field"><span>Let off (waive) late interest (₹)</span><input type="number" name="lateFeeWaived" step="any" min="0" class="num" data-type="number" inputmode="decimal"
+                value="${editing ? num(editing.lateFeeWaived) : 0}"><small>${lateOpen ? `${money(lateOpen)} is due` : 'nothing due now'}</small></label>` : ''}
+            <div class="field span-2"><span>Paid by</span>${modeChips(editing?.mode || 'Cash')}</div>
+            <label class="field"><span>Transaction reference</span><input type="text" name="reference" maxlength="60" value="${esc(editing?.reference || '')}" placeholder="UPI ref, cheque or transfer no." data-plain></label>
+            <label class="field"><span>Note <small class="muted">optional</small></span><input type="text" name="note" maxlength="255" value="${esc(editing?.note || '')}" data-plain></label>
+            ${c.postToBooks ? `<div class="span-2">${evidenceFieldHtml({ label: 'Evidence', hint: 'UPI screenshot, cash receipt or cheque photo' })}</div>`
+                : `<p class="muted hc-small span-2">${icon('info')}Turn on “record in my accounts” in Settings to keep evidence with payments.</p>`}
+            ${editing ? '' : `<label class="check-line span-2"><input type="checkbox" name="showReceipt" checked> Show the receipt after saving (print or send it)</label>`}
         </form>`,
         actions: [
             { label: 'Cancel' },
             { label: editing ? 'Save change' : 'Save payment', kind: 'primary', iconName: 'check', onClick: async modal => {
                 const form = modal.el.querySelector('form');
-                const value = Number(form.amount.value);
-                if (!(value > 0)) throw new Error('Enter the amount received');
-                const others = paidFor(d, memberId, monthNo, editing?.id ?? null);
+                const value = Number(form.amount.value || 0);
+                const lateFee = Number(form.lateFee?.value || 0);
+                const waived = Number(form.lateFeeWaived?.value || 0);
+                if (value < 0 || lateFee < 0 || waived < 0) throw new Error('Amounts cannot be negative');
+                if (value + lateFee + waived <= 0) throw new Error('Enter the amount received');
                 let allowExcess = false;
-                if (others + value > inst) {
-                    allowExcess = await confirmDialog(`With this, ${member.name} will have paid ${money(others + value)} for month ${monthNo}, which is more than ${money(inst)}. Save anyway?`,
-                        { title: 'More than the monthly amount', confirmLabel: 'Save anyway', danger: false });
+                if (paid + value > due || lateFee + waived > lateOpen) {
+                    allowExcess = await confirmDialog(paid + value > due
+                        ? `With this, ${member.name} will have paid ${money(paid + value)} for month ${monthNo}, more than the ${money(due)} due. Save anyway?`
+                        : `That settles ${money(lateFee + waived)} of late interest, but only ${money(lateOpen)} is due. Save anyway?`,
+                        { title: 'More than is due', confirmLabel: 'Save anyway', danger: false });
                     if (!allowExcess) return true;
                 }
-                const body = { memberId, monthNo, amount: value, paidDate: form.paidDate.value || null, mode: chosenMode(modal.el),
-                    note: form.note.value.trim() || null, allowExcess, version: editing?.version };
-                await apply(container, editing ? api.put(`/hosted-chits/${c.id}/payments/${editing.id}`, body) : api.post(`/hosted-chits/${c.id}/payments`, body),
-                    editing ? 'Payment changed' : `${member.name} paid ${money(value)} ✓`);
+                const body = { memberId, monthNo, amount: value, lateFee, lateFeeWaived: waived, reference: form.reference.value.trim() || null,
+                    paidDate: form.paidDate.value || null, mode: chosenMode(modal.el), note: form.note.value.trim() || null, allowExcess, version: editing?.version };
+                const fresh = await (editing ? api.put(`/hosted-chits/${c.id}/payments/${editing.id}`, body) : api.post(`/hosted-chits/${c.id}/payments`, body));
+                const saved = editing ? fresh.payments.find(p => p.id === editing.id)
+                    : fresh.payments.filter(p => p.memberId === memberId && p.monthNo === monthNo).sort((a, b) => b.id - a.id)[0];
+                let withFiles = fresh;
+                if (evidence?.count && saved?.journalEntryId) {
+                    await evidence.uploadTo(saved.journalEntryId);
+                    withFiles = await api.get(`/hosted-chits/${c.id}`);
+                }
+                await afterChange(withFiles, editing ? 'Payment changed' : `${member.name} paid ${money(value + lateFee)} ✓ · ${saved?.receiptNo || ''}`);
+                if (!editing && form.showReceipt?.checked && saved) openReceipt(withFiles, withFiles.payments.find(p => p.id === saved.id));
             } },
         ],
         onOpen: modal => {
             bindModeChips(modal.el);
+            evidence = c.postToBooks ? bindEvidenceField(modal.el) : null;
             modal.el.addEventListener('click', e => {
+                const amountChip = e.target.closest('[data-amount]');
+                if (amountChip) { modal.el.querySelector('[name=amount]').value = amountChip.dataset.amount; return; }
                 const edit = e.target.closest('[data-pay-edit]');
                 const undo = e.target.closest('[data-pay-undo]');
-                if (edit) {
-                    modal.close();
-                    openPayment(container, current, memberId, monthNo, current.payments.find(p => p.id === Number(edit.dataset.payEdit)));
-                } else if (undo) {
-                    modal.close();
-                    undoPayment(container, current, current.payments.find(p => p.id === Number(undo.dataset.payUndo)));
-                }
+                const receipt = e.target.closest('[data-pay-receipt]');
+                const entry = e.target.closest('[data-entry]');
+                if (edit) { modal.close(); openPayment(current, memberId, monthNo, current.payments.find(p => p.id === Number(edit.dataset.payEdit))); }
+                else if (undo) { modal.close(); undoPayment(current, current.payments.find(p => p.id === Number(undo.dataset.payUndo))); }
+                else if (receipt) openReceipt(current, current.payments.find(p => p.id === Number(receipt.dataset.payReceipt)));
+                else if (entry) openEntryDetail(Number(entry.dataset.entry));
             });
         },
     });
 }
 
-async function undoPayment(container, d, p) {
+async function undoPayment(d, p) {
     if (!p) return;
     if (!await confirmDialog(`Undo the ${money(p.amount)} that ${p.memberName} paid on ${date(p.paidDate)} for month ${p.monthNo}?`, { confirmLabel: 'Undo payment' })) return;
     try {
-        await apply(container, api.del(`/hosted-chits/${d.chit.id}/payments/${p.id}`), 'Payment undone');
+        await afterChange(await api.del(`/hosted-chits/${d.chit.id}/payments/${p.id}`), 'Payment undone');
     } catch (err) {
         toast(err.message, 'error');
     }
 }
 
-function openCollectAll(container, d, monthNo) {
-    const c = d.chit;
-    const inst = num(c.installment);
-    const owing = d.members.map(m => ({ m, rest: inst - paidFor(d, m.id, monthNo) })).filter(x => x.rest > 0);
+function openCollectAll(d, monthNo) {
+    const month = monthOf(d, monthNo);
+    const owing = d.members.map(m => ({ m, rest: dueFor(d, m, month) - paidFor(d, m.id, monthNo) })).filter(x => x.rest > 0);
     if (!owing.length) { toast(`Everyone has paid month ${monthNo}`, 'info'); return; }
     const total = owing.reduce((s, x) => s + x.rest, 0);
     openModal({
@@ -1013,26 +1776,27 @@ function openCollectAll(container, d, monthNo) {
             <p class="muted hc-owing">${owing.map(x => esc(x.m.name)).join(', ')}</p>
             <form class="form-grid two">
                 <label class="field"><span>Date</span><input type="date" name="paidDate" value="${isoDate()}"></label>
-                <label class="field"><span>Paid by</span>${modeChips()}</label>
+                <div class="field"><span>Paid by</span>${modeChips()}</div>
             </form>`,
         actions: [
             { label: 'Cancel' },
-            { label: `Mark ${owing.length} as paid`, kind: 'primary', iconName: 'check', onClick: modal =>
-                apply(container, api.post(`/hosted-chits/${c.id}/months/${monthNo}/collect-all`,
-                    { paidDate: modal.el.querySelector('[name=paidDate]').value || null, mode: chosenMode(modal.el) }),
-                    `${plural(owing.length, 'payment')} recorded`).then(() => {}) },
+            { label: `Mark ${owing.length} as paid`, kind: 'primary', iconName: 'check', onClick: async modal => {
+                await afterChange(await api.post(`/hosted-chits/${d.chit.id}/months/${monthNo}/collect-all`,
+                    { paidDate: modal.el.querySelector('[name=paidDate]').value || null, mode: chosenMode(modal.el) }), `${plural(owing.length, 'payment')} recorded`);
+            } },
         ],
         onOpen: modal => bindModeChips(modal.el),
     });
 }
 
-function openWinner(container, d, month, autoDraw = false) {
+/** Fixed chits: pick the winner, or draw one at random. */
+function openWinner(d, month, autoDraw = false) {
     const eligible = d.members.filter(m => !m.wonMonth || m.wonMonth === month.monthNo);
     let random = false;
     openModal({
         title: `Winner of month ${month.monthNo}`, iconName: 'crown',
         body: `
-        <div class="hc-draw" data-draw>${month.winnerName ? `${icon('crown')}<b>${esc(month.winnerName)}</b>` : `<span>Who wins <b>${money(month.payout)}</b> this month?</span>`}</div>
+        <div class="hc-draw" data-draw>${month.winnerName ? `${icon('crown')}<b>${esc(month.winnerName)}</b>` : `<span>Who gets <b>${money(month.payout)}</b> this month?</span>`}</div>
         <div class="form-grid one">
             <label class="field"><span>Choose a member (only those who have not won yet)</span>
                 <select name="memberId"><option value="">Select…</option>${eligible.map(m =>
@@ -1045,8 +1809,7 @@ function openWinner(container, d, month, autoDraw = false) {
                 const id = Number(modal.el.querySelector('[name=memberId]').value);
                 if (!id) throw new Error('Choose the winner first');
                 const name = eligible.find(m => m.id === id).name;
-                await apply(container, api.post(`/hosted-chits/${d.chit.id}/months/${month.monthNo}/winner`, { memberId: id, random }),
-                    `${name} wins month ${month.monthNo}`);
+                await afterChange(await api.post(`/hosted-chits/${d.chit.id}/months/${month.monthNo}/winner`, { memberId: id, random }), `${name} wins month ${month.monthNo}`);
             } },
         ],
         onOpen: modal => {
@@ -1081,133 +1844,877 @@ function openWinner(container, d, month, autoDraw = false) {
     });
 }
 
-function openPayout(container, d, month) {
+/** Auction chits: the highest bidder and their bid, with what it means for everyone. */
+function openAuction(d, month) {
     const c = d.chit;
-    const inst = num(c.installment);
-    const owing = d.members.map(m => ({ m, rest: inst - paidFor(d, m.id, month.monthNo) })).filter(x => x.rest > 0);
-    const dues = owing.reduce((s, x) => s + x.rest, 0);
+    const eligible = d.members.filter(m => !m.wonMonth || m.wonMonth === month.monthNo);
+    const n = d.members.length;
+    const value = num(month.chitValue), min = num(c.minBid), max = num(c.maxBid);
+    const last = eligible.length <= 1;
+    const startBid = month.bid !== null ? num(month.bid) : last ? min : Math.round((min + max) / 2 / 1000) * 1000;
     openModal({
-        title: `Pay the winner of month ${month.monthNo}`, iconName: 'crown',
+        title: `Auction · month ${month.monthNo}`, iconName: 'gavel',
         body: `
-        <div class="hc-draw">${icon('crown')}<b>${esc(month.winnerName)}</b><small>gets ${money(month.payout)}</small></div>
+        <p class="book-note">${icon('info')}<span>${last ? `Only <b>${esc(eligible[0]?.name || '')}</b> is left: they take the chit at the lowest bid (your commission).`
+            : `Members who have not won bid the discount they will give up. The highest bid wins. Bids run from <b>${money(min)}</b> (your commission) to <b>${money(max)}</b> (${num(c.maxBidPercent)}%).`}</span></p>
+        <form class="form-grid two">
+            <label class="field"><span>Highest bidder</span>
+                <select name="memberId">${last ? '' : '<option value="">Select…</option>'}${eligible.map(m =>
+                    `<option value="${m.id}" ${m.id === month.winnerMemberId || last ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>
+            <label class="field"><span>Winning bid (₹)</span><input type="number" name="bid" step="1000" min="${min}" max="${max}" class="num" data-type="number" value="${startBid}" ${last ? 'disabled' : ''}>
+                <small data-bid-pct></small></label>
+            ${last ? '' : `<div class="span-2"><input type="range" name="bidRange" min="${min}" max="${max}" step="1000" value="${startBid}" class="hc-range"></div>`}
+        </form>
+        <div class="hc-pay-sum" data-auction-sum></div>`,
+        actions: [
+            { label: 'Cancel' },
+            { label: 'Save auction result', kind: 'primary', iconName: 'check', onClick: async modal => {
+                const id = Number(modal.el.querySelector('[name=memberId]').value);
+                const bid = last ? min : Number(modal.el.querySelector('[name=bid]').value);
+                if (!id) throw new Error('Choose the highest bidder');
+                if (!(bid >= min && bid <= max)) throw new Error(`The bid must be between ${money(min)} and ${money(max)}`);
+                const name = eligible.find(m => m.id === id).name;
+                await afterChange(await api.post(`/hosted-chits/${c.id}/months/${month.monthNo}/winner`, { memberId: id, bid }),
+                    `${name} won month ${month.monthNo} at ${money(bid)}`);
+            } },
+        ],
+        onOpen: modal => {
+            const bidInput = modal.el.querySelector('[name=bid]');
+            const range = modal.el.querySelector('[name=bidRange]');
+            const update = () => {
+                const bid = last ? min : Math.max(0, Number(bidInput.value || 0));
+                const dividend = Math.max(0, Math.floor((bid - min) / n));
+                modal.el.querySelector('[data-bid-pct]').textContent = `${((bid / value) * 100).toFixed(1).replace(/\.0$/, '')}% of the chit value`;
+                modal.el.querySelector('[data-auction-sum]').innerHTML = `
+                    <span><small>Winner gets</small><b class="pos">${money(value - bid)}</b></span>
+                    <span><small>Dividend a member</small><b>${money(dividend)}</b></span>
+                    <span><small>Everyone pays</small><b>${money(num(c.installment) - dividend)}</b></span>`;
+            };
+            bidInput.addEventListener('input', () => { if (range) range.value = bidInput.value; update(); });
+            range?.addEventListener('input', () => { bidInput.value = range.value; update(); });
+            update();
+        },
+    });
+}
+
+function openPayout(d, month) {
+    const c = d.chit;
+    const owing = d.members.map(m => ({ m, rest: dueFor(d, m, month) - paidFor(d, m.id, month.monthNo) })).filter(x => x.rest > 0);
+    const dues = owing.reduce((s, x) => s + x.rest, 0);
+    let evidence = null;
+    openModal({
+        title: `Pay the winner of month ${month.monthNo}`, iconName: 'crown', size: 'lg',
+        body: `
+        <div class="hc-draw">${icon(isAuction(c) ? 'gavel' : 'crown')}<b>${esc(month.winnerName)}</b><small>gets ${money(month.payout)}</small></div>
         <div class="hc-pay-sum">
             <span><small>Chit value</small><b>${money(month.chitValue)}</b></span>
+            ${isAuction(c) ? `<span><small>Winning bid</small><b>${money(month.bid)}</b></span>` : ''}
             <span><small>My commission</small><b class="gold-ink">${money(month.commission)}</b></span>
             <span><small>Winner gets</small><b class="pos">${money(month.payout)}</b></span>
         </div>
-        ${dues ? `<p class="hc-note warn">${icon('alert')}<span>${plural(owing.length, 'member')} still ${owing.length === 1 ? 'owes' : 'owe'} <b>${money(dues)}</b> for this month (${owing.map(x => esc(x.m.name)).join(', ')}). You can still collect it later.</span></p>` : ''}
+        ${dues ? `<p class="hc-note warn">${icon('alert')}<span>${plural(owing.length, 'member')} still ${owing.length === 1 ? 'owes' : 'owe'} <b>${money(dues)}</b> for this month (${owing.map(x => esc(x.m.name)).join(', ')}). You can collect it later.</span></p>` : ''}
         <form class="form-grid two">
             <label class="field"><span>Paid on</span><input type="date" name="payoutDate" value="${isoDate()}"></label>
-            <label class="field"><span>Paid by</span>${modeChips()}</label>
+            <div class="field"><span>Paid by</span>${modeChips('Bank')}</div>
+            <label class="field span-2"><span>Transaction reference</span><input type="text" name="reference" maxlength="60" placeholder="UPI ref, cheque or transfer no." data-plain></label>
+            ${c.postToBooks ? `<div class="span-2">${evidenceFieldHtml({ label: 'Evidence', hint: 'Bank credit, cheque copy or a signed voucher' })}</div>` : ''}
+            <div class="span-2 hc-ag-box">
+                <label class="check-line"><input type="checkbox" name="createAgreement" checked> Make a digital agreement for ${esc(month.winnerName)} to accept</label>
+                <small class="muted">It records that the full amount was received and that the remaining installments will be paid. You send it as a link; the member accepts by typing their name.</small>
+                <div class="form-grid two" data-guarantor>
+                    <label class="field"><span>Guarantor <small class="muted">optional</small></span><input type="text" name="guarantorName" maxlength="100" data-plain></label>
+                    <label class="field"><span>Guarantor's phone</span><input type="tel" name="guarantorPhone" maxlength="14" inputmode="numeric" data-plain></label>
+                </div>
+            </div>
         </form>
-        <p class="muted hc-small">${icon('lock')}After this, month ${month.monthNo} is closed and the winner can't be changed. You can undo it from “All months” if needed.</p>`,
+        <p class="muted hc-small">${icon('lock')}After this, month ${month.monthNo} is closed. ${c.postToBooks
+            ? `Posts “Chit payout – ${esc(month.winnerName)}” from ${esc(c.accountName || 'Cash in Hand')} and your commission as income${c.commissionAccountName ? ` into ${esc(c.commissionAccountName)}` : ''}.`
+            : 'You can undo it from Months while the agreement is not accepted.'}</p>`,
         actions: [
             { label: 'Cancel' },
             { label: 'Yes, winner is paid', kind: 'primary', iconName: 'check', onClick: async modal => {
+                const form = modal.el.querySelector('form');
                 let allowDues = false;
                 if (dues) {
                     allowDues = await confirmDialog(`${money(dues)} is still owed for month ${month.monthNo}. Close the month anyway? You can collect it later.`,
                         { title: 'Some members have not paid', confirmLabel: 'Close the month' });
                     if (!allowDues) return true;
                 }
-                await apply(container, api.post(`/hosted-chits/${c.id}/months/${month.monthNo}/payout`,
-                    { payoutDate: modal.el.querySelector('[name=payoutDate]').value || null, mode: chosenMode(modal.el), allowDues }),
-                    `Month ${month.monthNo} done: ${month.winnerName} paid`);
+                const agreement = form.createAgreement.checked;
+                let fresh = await api.post(`/hosted-chits/${c.id}/months/${month.monthNo}/payout`, {
+                    payoutDate: form.payoutDate.value || null, mode: chosenMode(modal.el), reference: form.reference.value.trim() || null, allowDues,
+                    createAgreement: agreement, guarantorName: form.guarantorName.value.trim() || null, guarantorPhone: form.guarantorPhone.value.trim() || null,
+                });
+                const entryId = monthOf(fresh, month.monthNo)?.payoutEntryId;
+                if (evidence?.count && entryId) {
+                    await evidence.uploadTo(entryId);
+                    fresh = await api.get(`/hosted-chits/${c.id}`);
+                }
+                await afterChange(fresh, `Month ${month.monthNo} done: ${month.winnerName} paid`);
+                if (agreement) openAgreement(fresh, month.monthNo);
             } },
         ],
-        onOpen: modal => bindModeChips(modal.el),
+        onOpen: modal => {
+            bindModeChips(modal.el);
+            evidence = c.postToBooks ? bindEvidenceField(modal.el) : null;
+            const box = modal.el.querySelector('[name=createAgreement]');
+            box.addEventListener('change', () => { modal.el.querySelector('[data-guarantor]').hidden = !box.checked; });
+        },
     });
 }
 
-function openMember(container, d, m) {
+function openMember(d, m) {
     openModal({
         title: 'Edit member', iconName: 'user',
         body: `<form class="form-grid one">
             <label class="field"><span>Name</span><input type="text" name="name" value="${esc(m.name)}" maxlength="100" required></label>
-            <label class="field"><span>Phone</span><input type="tel" name="phone" value="${esc(m.phone || '')}" inputmode="numeric" maxlength="14" placeholder="10 digits"></label>
+            <label class="field"><span>Phone</span><input type="tel" name="phone" value="${esc(m.phone || '')}" inputmode="numeric" maxlength="14" placeholder="10 digits, for WhatsApp reminders"></label>
+            <label class="field"><span>E-mail</span><input type="email" name="email" value="${esc(m.email || '')}" maxlength="120" placeholder="for e-mailed reminders and receipts" data-plain></label>
         </form>`,
         actions: [
             { label: 'Cancel' },
             { label: 'Save', kind: 'primary', iconName: 'check', onClick: async modal => {
                 const name = modal.el.querySelector('[name=name]').value.trim();
                 const phone = modal.el.querySelector('[name=phone]').value.replace(/[\s-]/g, '');
+                const email = modal.el.querySelector('[name=email]').value.trim();
                 if (!name) throw new Error('Enter the name');
                 if (phone && !/^\d{10}$/.test(phone)) throw new Error('The phone number should have 10 digits');
+                if (email && !EMAIL.test(email)) throw new Error('The e-mail address does not look right');
                 if (d.members.some(x => x.id !== m.id && x.name.trim().toLowerCase() === name.toLowerCase())) throw new Error(`Another member is already called ${name}`);
-                await apply(container, api.put(`/hosted-chits/${d.chit.id}/members/${m.id}`, { name, phone: phone || null }), 'Saved');
+                await afterChange(await api.put(`/hosted-chits/${d.chit.id}/members/${m.id}`, { name, phone: phone || null, email: email || null }), 'Saved');
             } },
         ],
     });
 }
 
-async function openSettings(container, d) {
+async function openSettings(d) {
     const c = d.chit;
-    const accounts = await loadAccounts().catch(() => []);
-    const cashLike = a => a.accountClass === 'ASSET' && a.accountType !== 'CHIT_FUND';
-    const locked = c.structureLocked;
+    const [accounts, categories] = await Promise.all([loadAccounts().catch(() => []), categoriesOf('INCOME', c.commissionCategoryId).catch(() => [])]);
+    const auction = isAuction(c);
+    const s = {
+        name: c.name, postToBooks: c.postToBooks, collection: 'EXISTING', accountId: c.accountId,
+        commissionTo: c.commissionAccountId ? 'EXISTING' : 'SAME', commissionAccountId: c.commissionAccountId,
+        commissionCategoryId: c.commissionCategoryId || categories.find(x => x.name === 'Chit Commission Income')?.id || null,
+        winnerExtraType: c.winnerExtraType, winnerExtraValue: c.winnerExtraValue, locked: c.postToBooks,
+        lateTo: c.lateFeeAccountId ? 'EXISTING' : 'SAME', lateFeeAccountId: c.lateFeeAccountId,
+    };
     const f = (label, name, value, hint = '', attrs = '') => `<label class="field"><span>${label}</span>
         <input type="number" name="${name}" value="${value}" step="any" min="0" class="num" data-type="number" ${attrs}>${hint ? `<small>${hint}</small>` : ''}</label>`;
     openModal({
-        title: 'Chit settings', iconName: 'settings', size: 'lg',
-        body: `<form class="form-grid two">
-            <label class="field span-2"><span>Chit name</span><input type="text" name="name" value="${esc(c.name)}" maxlength="100" required></label>
-            <label class="field"><span>Starts in</span><input type="month" name="startMonth" value="${c.startMonth.slice(0, 7)}" ${locked ? 'disabled' : ''}>
-                ${locked ? '<small>can’t change after payments are recorded</small>' : ''}</label>
-            ${f('Members pay by day', 'dueDay', c.dueDay, 'of every month', 'min="1" max="28"')}
-            ${f('Each member pays a month', 'installment', num(c.installment))}
-            ${f('Chit value in month 1', 'baseValue', num(c.baseValue))}
-            ${f('Chit value goes up each month by', 'monthlyIncrement', num(c.monthlyIncrement))}
-            ${f('Your commission each month', 'commission', num(c.commission), 'finished months keep their amounts')}
-            <label class="field span-2"><span>Notes</span><input type="text" name="notes" value="${esc(c.notes || '')}" maxlength="255"></label>
-            <div class="span-2 hc-advanced-box">
-                <label class="field check"><input type="checkbox" name="postToBooks" ${c.postToBooks ? 'checked' : ''}><span>Also record this chit's money in my accounts (journal, income, balance sheet)</span></label>
-                <label class="field" data-books ${c.postToBooks ? '' : 'hidden'}><span>Money is kept in</span>
-                    <select name="accountId">${accountOptions(accounts, cashLike, c.accountId, 'Cash in Hand')}</select></label>
-                <small class="muted">This applies to payments recorded from now on.</small>
+        title: 'Chit settings', iconName: 'settings', size: 'xl',
+        body: `<form class="hc-two" onsubmit="return false">
+            <div class="hc-col">
+                <div class="section-title">${icon('edit')}${auction ? 'Auction chit' : 'Fixed chit'}</div>
+                <div class="form-grid two">
+                    <label class="field span-2"><span>Chit name</span><input type="text" name="name" value="${esc(c.name)}" maxlength="100" required></label>
+                    <label class="field"><span>Starts in</span><input type="month" name="startMonth" value="${c.startMonth.slice(0, 7)}" ${c.structureLocked ? 'disabled' : ''}>
+                        ${c.structureLocked ? '<small>fixed once payments are recorded</small>' : ''}</label>
+                    ${f('Members pay by day', 'dueDay', c.dueDay, 'of every month', 'min="1" max="28"')}
+                    ${auction ? `
+                        ${f('Chit value', 'baseValue', num(c.baseValue), `each member pays chit value ÷ ${c.memberCount}`)}
+                        ${f('Your commission each month (₹)', 'commission', num(c.commission), 'also the lowest bid')}
+                        ${f('Highest bid allowed (%)', 'maxBidPercent', num(c.maxBidPercent), 'at most 40%', 'max="40"')}`
+                    : `
+                        ${f('Each member pays a month', 'installment', num(c.installment))}
+                        ${f('Chit value in month 1', 'baseValue', num(c.baseValue))}
+                        ${f('Chit value goes up each month by', 'monthlyIncrement', num(c.monthlyIncrement))}
+                        ${f('Your commission each month', 'commission', num(c.commission), 'finished months keep their amounts')}
+                        ${extraFields(s, 'name')}`}
+                    ${f('Late payment interest (% a month)', 'lateFeePercent', num(c.lateFeePercent), '0 for none', 'max="10"')}
+                    ${f('Grace days', 'lateGraceDays', c.lateGraceDays || 0, 'before late interest starts', 'max="60"')}
+                    <label class="field"><span>My UPI ID</span><input type="text" name="upiId" value="${esc(c.upiId || '')}" placeholder="name@okhdfcbank" data-plain><small>for payment links</small></label>
+                    <label class="field"><span>Name shown to members</span><input type="text" name="payeeName" value="${esc(c.payeeName || '')}" maxlength="100" data-plain></label>
+                    <label class="field span-2"><span>Notes</span><input type="text" name="notes" value="${esc(c.notes || '')}" maxlength="255"></label>
+                </div>
+                <p class="muted hc-small">${c.memberCount} members can’t be changed. To change it, delete this chit and host a new one.</p>
             </div>
-            <p class="muted hc-small span-2">The number of members (${c.memberCount}) can’t be changed. To change it, delete this chit and host a new one.</p>
+            <div class="hc-col">
+                <div class="section-title">${icon('journal')}My accounts</div>
+                ${booksFields(s, accounts, categories, 'name')}
+            </div>
         </form>`,
         actions: [
-            { label: 'Delete chit', kind: 'danger', left: true, iconName: 'trash', onClick: async () => {
-                if (!await confirmDialog(`Delete “${c.name}” with all its members and payments? This can't be undone.`, { confirmLabel: 'Delete chit' })) return true;
-                await api.del(`/hosted-chits/${c.id}`);
-                toast(`${c.name} deleted`);
-                location.hash = '#/host-chits';
-            } },
+            { label: 'Delete chit…', kind: 'danger', left: true, iconName: 'trash', onClick: () => { setTimeout(() => openDelete(d), 0); } },
+            { label: c.receiptSignature ? 'Receipt signature ✓' : 'Receipt signature…', iconName: 'signature', onClick: () => { setTimeout(() => openSignature(d), 0); } },
             { label: 'Cancel' },
             { label: 'Save', kind: 'primary', iconName: 'check', onClick: async modal => {
                 const form = modal.el.querySelector('form');
-                const v = name => form[name].value;
+                const v = name => form[name]?.value;
                 if (!v('name').trim()) throw new Error('Give the chit a name');
-                await apply(container, api.put(`/hosted-chits/${c.id}`, {
-                    name: v('name').trim(), startMonth: `${locked ? c.startMonth.slice(0, 7) : v('startMonth')}-01`, dueDay: Number(v('dueDay')),
-                    memberCount: c.memberCount, months: c.months, installment: Number(v('installment')), baseValue: Number(v('baseValue')),
-                    monthlyIncrement: Number(v('monthlyIncrement')), commission: Number(v('commission')), notes: v('notes').trim() || null,
-                    postToBooks: form.postToBooks.checked, accountId: form.accountId.value ? Number(form.accountId.value) : null, version: c.version,
+                await afterChange(await api.put(`/hosted-chits/${c.id}`, {
+                    name: v('name').trim(), chitType: c.chitType, startMonth: `${c.structureLocked ? c.startMonth.slice(0, 7) : v('startMonth')}-01`, dueDay: Number(v('dueDay')),
+                    memberCount: c.memberCount, months: c.months,
+                    installment: auction ? num(c.installment) : Number(v('installment')), baseValue: Number(v('baseValue')),
+                    monthlyIncrement: auction ? 0 : Number(v('monthlyIncrement')), commission: Number(v('commission')),
+                    maxBidPercent: auction ? Number(v('maxBidPercent')) : null,
+                    winnerExtraType: auction ? 'NONE' : v('winnerExtraType'), winnerExtraValue: auction ? 0 : Number(v('winnerExtraValue') || 0),
+                    lateFeePercent: Number(v('lateFeePercent') || 0), lateGraceDays: Number(v('lateGraceDays') || 0),
+                    upiId: v('upiId').trim() || null, payeeName: v('payeeName').trim() || null,
+                    notes: v('notes').trim() || null, postToBooks: s.postToBooks,
+                    separateCollectionAccount: s.postToBooks && s.collection === 'SEPARATE', accountId: s.collection === 'EXISTING' ? s.accountId : c.accountId,
+                    separateCommissionAccount: s.postToBooks && s.commissionTo === 'SEPARATE',
+                    commissionAccountId: s.commissionTo === 'EXISTING' ? s.commissionAccountId : null,
+                    commissionCategoryId: s.commissionCategoryId || null,
+                    separateLateFeeAccount: s.postToBooks && s.lateTo === 'SEPARATE', lateFeeAccountId: s.lateTo === 'EXISTING' ? s.lateFeeAccountId : null,
+                    version: c.version,
                 }), 'Settings saved');
             } },
         ],
         onOpen: modal => {
             const form = modal.el.querySelector('form');
-            form.postToBooks.addEventListener('change', () => { form.querySelector('[data-books]').hidden = !form.postToBooks.checked; });
+            form.winnerExtraType?.addEventListener('change', () => {
+                form.winnerExtraValue.value = form.winnerExtraType.value === 'NONE' ? ''
+                    : defaultExtra(form.winnerExtraType.value, Number(form.monthlyIncrement.value || 0), Number(form.baseValue.value || 0));
+                syncExtraFields(form, form.winnerExtraType.value);
+            });
+            bindBooksFields(form, s, 'name');
         },
+    });
+}
+
+// ---------------------------------------------------------------- sending reminders and receipts
+
+/** Whether e-mail is set up (the household's account in Settings, or the installation's), asked each time. */
+const mailReady = () => api.get('/hosted-chits/mail-status').catch(() => ({ configured: false }));
+const phoneOf = m => (m?.phone ? m.phone.replace(/\D/g, '').slice(-10) : '');
+const waLink = (m, text) => `https://wa.me/${phoneOf(m) ? '91' + phoneOf(m) : ''}?text=${encodeURIComponent(text)}`;
+const shareUrl = token => `${location.origin}/chit-share.html#${token}`;
+
+const REMINDER_TEXT = {
+    OWING: 'Hi {name}, a reminder for {chit}: {amount} is due ({months}). Please pay by {date}.{link} Thank you! – {me}',
+    UPCOMING: 'Hi {name}, {chit}: your installment for {months} is {amount}, due on {date}.{link} Thank you! – {me}',
+};
+const RECEIPT_TEXT = 'Hi {name}, thank you! We received {amount} for {chit}, month {month}, on {date}. Your signed receipt {receipt}: {link} – {me}';
+
+/** The signed receipt PDF of a payment, saved by the browser. */
+async function downloadReceiptPdf(d, p) {
+    const blob = await api.blob(`/hosted-chits/${d.chit.id}/payments/${p.id}/receipt.pdf`);
+    const url = URL.createObjectURL(blob);
+    const a = Object.assign(document.createElement('a'), { href: url, download: `Receipt ${p.receiptNo || p.id}.pdf` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+/**
+ * The send centre: payment reminders (each with the member's own payment link) or receipts (signed, as a link, and
+ * as a PDF by e-mail) to many members at once. E-mail goes out from the server in one go when e-mail is set up;
+ * WhatsApp opens one chat after another with the message ready, because WhatsApp lets only the person press send.
+ */
+async function openSend(d, { kind = 'REMINDER', memberId = null, paymentIds = null } = {}) {
+    const c = d.chit;
+    const mail = await mailReady();
+    const month = d.schedule.find(m => m.status === 'ONGOING');
+    const st = { kind, scope: kind === 'REMINDER' ? 'OWING' : paymentIds ? 'PICKED' : month ? 'MONTH' : 'ALL', selected: null, done: {}, queue: null };
+    const links = { REMINDER: {}, RECEIPT: {} };   // member id / payment id → link
+    const me = c.receiptSigner || c.payeeName || state.user?.fullName || 'the organiser';
+    const scopes = () => st.kind === 'REMINDER'
+        ? [['OWING', 'Who owes now'], ...(month ? [['UPCOMING', `Month ${month.monthNo} installment`]] : [])]
+        : [...(paymentIds ? [['PICKED', 'This receipt']] : []), ...(month ? [['MONTH', `Month ${month.monthNo} payments`]] : []), ['WEEK', 'Last 7 days'], ['ALL', 'All payments']];
+    const defaultText = () => (st.kind === 'REMINDER' ? REMINDER_TEXT[st.scope] : RECEIPT_TEXT);
+
+    const rows = () => {
+        if (st.kind === 'REMINDER') {
+            if (st.scope === 'OWING') {
+                return owingList(d).filter(x => !memberId || x.m.id === memberId).map(x => {
+                    const late = d.lateFees.filter(l => l.memberId === x.m.id).reduce((s, l) => s + num(l.due), 0);
+                    const months = x.months.map(y => shortMonth(y.s.dueDate)).join(', ');
+                    return { key: `m${x.m.id}`, m: x.m, amount: x.total + late, detail: months + (late ? ` · ${money(late)} late interest` : ''),
+                        vars: { months: months + (late ? ` + ${money(late)} late interest` : ''), date: date(x.months.at(-1).s.dueDate) } };
+                });
+            }
+            if (!month) return [];
+            return d.members.filter(m => !memberId || m.id === memberId).map(m => ({ m, amount: Math.max(0, dueFor(d, m, month) - paidFor(d, m.id, month.monthNo)) }))
+                .filter(x => x.amount > 0)
+                .map(x => ({ key: `m${x.m.id}`, m: x.m, amount: x.amount, detail: `month ${month.monthNo} · due ${date(month.dueDate)}`,
+                    vars: { months: monthName(month.dueDate), date: date(month.dueDate) } }));
+        }
+        const weekAgo = isoDate(new Date(Date.now() - 7 * 86400000));
+        return d.payments
+            .filter(p => !memberId || p.memberId === memberId)
+            .filter(p => st.scope === 'PICKED' ? paymentIds.includes(p.id) : st.scope === 'MONTH' ? p.monthNo === month?.monthNo
+                : st.scope === 'WEEK' ? p.paidDate >= weekAgo : true)
+            .sort((a, b) => b.paidDate.localeCompare(a.paidDate) || b.id - a.id)
+            .map(p => ({ key: `p${p.id}`, p, m: d.members.find(x => x.id === p.memberId), amount: num(p.amount) + num(p.lateFee),
+                detail: `${p.receiptNo || ''} · month ${p.monthNo} · ${date(p.paidDate)}`, vars: { date: date(p.paidDate), month: p.monthNo, receipt: p.receiptNo || '' } }));
+    };
+    const linkOf = r => (st.kind === 'REMINDER' ? links.REMINDER[r.m.id] : links.RECEIPT[r.p.id]);
+    const fill = (text, r) => {
+        const link = linkOf(r);
+        const linkText = st.kind === 'REMINDER'
+            ? (link ? ` ${c.upiId ? 'Pay or see your statement here' : 'Your statement'}: ${link}` : ' [payment link]')
+            : (link || '[receipt link]');
+        return text.replaceAll('{name}', r.m.name.split(' ')[0]).replaceAll('{amount}', money(r.amount)).replaceAll('{months}', r.vars.months || '')
+            .replaceAll('{date}', r.vars.date || '').replaceAll('{month}', String(r.vars.month ?? '')).replaceAll('{receipt}', r.vars.receipt || '')
+            .replaceAll('{chit}', c.name).replaceAll('{me}', me).replaceAll('{link}', linkText);
+    };
+    /** Makes the links still missing for these rows, in one call. */
+    const ensureLinks = async list => {
+        const need = list.filter(r => !linkOf(r));
+        if (!need.length) return;
+        const body = st.kind === 'REMINDER' ? { memberIds: [...new Set(need.map(r => r.m.id))], hours: 24 * 30 } : { paymentIds: need.map(r => r.p.id), hours: 24 * 90 };
+        const made = await api.post(`/hosted-chits/${c.id}/shares/batch`, body);
+        made.forEach(l => { if (l.paymentId) links.RECEIPT[l.paymentId] = shareUrl(l.token); else links.REMINDER[l.memberId] = shareUrl(l.token); });
+    };
+
+    openModal({
+        title: memberId ? `Send to ${d.members.find(m => m.id === memberId)?.name}` : 'Send reminders & receipts', iconName: 'send', size: 'xl',
+        body: `<div class="hc-send">
+            <div class="hc-send-top">
+                <div class="seg-chips" data-kinds>
+                    <button type="button" class="seg-chip" data-kind-v="REMINDER">${icon('bell')}Payment reminders</button>
+                    <button type="button" class="seg-chip" data-kind-v="RECEIPT">${icon('receipt')}Receipts</button>
+                </div>
+                <div class="seg-chips sm" data-scopes></div>
+            </div>
+            <label class="field hc-send-msg"><span>Message <small class="muted" data-vars></small></span>
+                <textarea name="template" rows="2" data-plain></textarea></label>
+            <div class="hc-send-bar">
+                <label class="check-line"><input type="checkbox" data-all> <b data-count></b></label>
+                <span class="muted hc-small" data-reach></span>
+            </div>
+            <div class="hc-send-list" data-list></div>
+            <div class="hc-queue" data-queue hidden></div>
+            ${mail.configured ? `<p class="muted hc-small" style="margin:0">${icon('mail')} E-mails go out from <b>${esc(mail.from)}</b>${mail.source === 'SERVER' ? ' (the installation’s account)' : ''}.</p>`
+                : `<p class="hc-note warn hc-small">${icon('mail')}<span>E-mail is not set up yet, so only WhatsApp and copy work. ${can('MANAGE_USERS')
+                    ? 'Add your e-mail account in <a href="#/settings/email">Settings → E-mail</a> (for Gmail: an app password).' : 'Ask an admin to add an e-mail account in Settings → E-mail.'}</span></p>`}
+        </div>`,
+        actions: [
+            { label: 'Copy all', left: true, iconName: 'copy', onClick: async modal => {
+                const list = chosen();
+                if (!list.length) throw new Error('Choose at least one member');
+                await ensureLinks(list);
+                draw(modal);
+                const all = list.map(r => `${r.m.name}${r.m.phone ? ` (${r.m.phone})` : ''}: ${fill(text(modal), r)}`).join('\n\n');
+                try { await navigator.clipboard.writeText(all); toast(`${plural(list.length, 'message')} copied`, 'info'); } catch { toast('Could not copy', 'error'); }
+                return true;
+            } },
+            { label: 'E-mail', iconName: 'mail', onClick: async modal => { await sendMail(modal); return true; } },
+            { label: 'WhatsApp one by one', kind: 'primary', iconName: 'phone', onClick: async modal => { await startQueue(modal); return true; } },
+        ],
+        onOpen: modal => {
+            const area = modal.el.querySelector('[name=template]');
+            area.value = defaultText();
+            area.addEventListener('input', () => draw(modal));
+            modal.el.querySelector('[data-kinds]').addEventListener('click', e => {
+                const chip = e.target.closest('[data-kind-v]');
+                if (!chip || chip.dataset.kindV === st.kind) return;
+                st.kind = chip.dataset.kindV;
+                st.scope = scopes()[0][0];
+                st.selected = null;
+                st.queue = null;
+                area.value = defaultText();   // reminders and receipts say different things
+                draw(modal);
+            });
+            modal.el.querySelector('[data-scopes]').addEventListener('click', e => {
+                const chip = e.target.closest('[data-scope-v]');
+                if (!chip) return;
+                const wasDefault = area.value === defaultText();
+                st.scope = chip.dataset.scopeV;
+                st.selected = null;
+                if (wasDefault) area.value = defaultText();
+                draw(modal);
+            });
+            modal.el.querySelector('[data-all]').addEventListener('change', e => {
+                st.selected = e.target.checked ? null : new Set();
+                draw(modal);
+            });
+            modal.el.querySelector('[data-list]').addEventListener('change', e => {
+                const box = e.target.closest('[data-pick]');
+                if (!box) return;
+                const key = box.closest('[data-key]').dataset.key;
+                if (!st.selected) st.selected = new Set(rows().map(r => r.key));
+                if (box.checked) st.selected.add(key); else st.selected.delete(key);
+                draw(modal);
+            });
+            modal.el.querySelector('[data-list]').addEventListener('click', async e => {
+                const rowEl = e.target.closest('[data-key]');
+                if (!rowEl) return;
+                const r = rows().find(x => x.key === rowEl.dataset.key);
+                if (!r) return;
+                if (e.target.closest('[data-wa]')) {
+                    const win = window.open('', '_blank');   // opened during the click, then pointed at WhatsApp
+                    try {
+                        await ensureLinks([r]);
+                        const href = waLink(r.m, fill(text(modal), r));
+                        if (win) { win.opener = null; win.location.href = href; } else location.href = href;
+                        mark(r.key, 'wa');
+                        draw(modal);
+                    } catch (err) { win?.close(); toast(err.message, 'error'); }
+                } else if (e.target.closest('[data-copy]')) {
+                    try { await ensureLinks([r]); await navigator.clipboard.writeText(fill(text(modal), r)); toast('Message copied', 'info'); draw(modal); } catch (err) { toast(err.message, 'error'); }
+                } else if (e.target.closest('[data-pdf]')) {
+                    try { await downloadReceiptPdf(d, r.p); } catch (err) { toast(err.message, 'error'); }
+                }
+            });
+            modal.el.querySelector('[data-queue]').addEventListener('click', e => {
+                if (e.target.closest('[data-q-open]')) {
+                    const r = st.queue.list[st.queue.i];
+                    mark(r.key, 'wa');
+                    setTimeout(() => { st.queue.i++; drawQueue(modal); }, 0);   // after the link has opened
+                } else if (e.target.closest('[data-q-skip]')) {
+                    st.queue.i++;
+                    drawQueue(modal);
+                } else if (e.target.closest('[data-q-stop]')) {
+                    st.queue = null;
+                    draw(modal);
+                }
+            });
+            draw(modal);
+        },
+    });
+
+    function text(modal) { return modal.el.querySelector('[name=template]').value; }
+    function chosen() { return rows().filter(r => !st.selected || st.selected.has(r.key)); }
+    function mark(key, how, value = true) { st.done[`${st.kind}:${key}`] = { ...st.done[`${st.kind}:${key}`], [how]: value }; }
+
+    function draw(modal) {
+        const el = modal.el;
+        el.querySelectorAll('[data-kind-v]').forEach(x => x.classList.toggle('active', x.dataset.kindV === st.kind));
+        el.querySelector('[data-scopes]').innerHTML = scopes().map(([k, label]) => `<button type="button" class="seg-chip ${st.scope === k ? 'active' : ''}" data-scope-v="${k}">${label}</button>`).join('');
+        el.querySelector('[data-vars]').textContent = st.kind === 'REMINDER' ? '{name} {amount} {months} {date} {chit} {link} {me} are filled in'
+            : '{name} {amount} {month} {date} {receipt} {chit} {link} {me} are filled in · e-mails carry the signed PDF';
+        const list = rows();
+        const picked = chosen();
+        const box = el.querySelector('[data-all]');
+        box.checked = picked.length === list.length && list.length > 0;
+        box.indeterminate = picked.length > 0 && picked.length < list.length;
+        el.querySelector('[data-count]').textContent = list.length ? `${picked.length} of ${plural(list.length, st.kind === 'REMINDER' ? 'member' : 'receipt')} chosen` : 'Nobody to send to';
+        const withPhone = picked.filter(r => phoneOf(r.m)).length;
+        const withMail = picked.filter(r => r.m.email).length;
+        el.querySelector('[data-reach]').innerHTML = `${icon('phone')}${withPhone} on WhatsApp · ${icon('mail')}${mail.configured ? `${withMail} by e-mail` : 'e-mail not set up'}`
+            + (picked.some(r => !phoneOf(r.m) && !r.m.email) ? ` · ${picked.filter(r => !phoneOf(r.m) && !r.m.email).length} without a phone or e-mail` : '');
+        const t = text(modal);
+        el.querySelector('[data-list]').innerHTML = list.length ? list.map(r => {
+            const done = st.done[`${st.kind}:${r.key}`] || {};
+            const on = !st.selected || st.selected.has(r.key);
+            const msg = fill(t, r);
+            return `<div class="hc-send-row ${on ? '' : 'off'} ${done.wa || done.mail === true ? 'sent' : ''}" data-key="${r.key}">
+                <input type="checkbox" data-pick ${on ? 'checked' : ''} aria-label="Send to ${esc(r.m.name)}">
+                <span class="hc-avatar sm">${esc(initials(r.m.name))}</span>
+                <span class="grow min-0 hc-send-who"><span><b>${esc(r.m.name)}</b> <b class="${st.kind === 'REMINDER' ? 'neg' : 'pos'}">${money(r.amount)}</b> <small class="muted">${esc(r.detail)}</small></span>
+                    <small class="muted ellipsis" title="${esc(msg)}">${esc(msg)}</small></span>
+                <span class="hc-send-ch"><i class="${phoneOf(r.m) ? 'on' : ''}" title="${esc(r.m.phone || 'No phone number')}">${icon('phone')}</i><i class="${r.m.email ? 'on' : ''}" title="${esc(r.m.email || 'No e-mail: add it with Members → edit')}">${icon('mail')}</i></span>
+                <span class="hc-send-status">${done.mail === true ? `<span class="badge good">${icon('mail')}e-mailed</span>` : done.mail ? `<span class="badge critical" title="${esc(done.mail)}">not e-mailed</span>` : ''}
+                    ${done.wa ? `<span class="badge good">${icon('check')}WhatsApp</span>` : ''}</span>
+                <span class="hc-send-acts">
+                    ${phoneOf(r.m) ? `<button type="button" class="btn sm ghost" data-wa title="Open WhatsApp with this message">${icon('phone')}WhatsApp</button>` : ''}
+                    ${st.kind === 'RECEIPT' ? `<button type="button" class="btn sm ghost icon" data-pdf title="Download the signed PDF">${icon('download')}</button>` : ''}
+                    <button type="button" class="btn sm ghost icon" data-copy title="Copy the message">${icon('copy')}</button>
+                </span>
+            </div>`;
+        }).join('') : emptyState(st.kind === 'REMINDER' ? (st.scope === 'OWING' ? 'Nobody owes anything right now' : 'Everyone has paid this month') : 'No payments in this list', 'check-circle');
+        el.querySelector('[data-list]').hidden = !!st.queue;
+        el.querySelector('[data-queue]').hidden = !st.queue;
+        const [, mailBtn, waBtn] = el.querySelectorAll('.modal-foot [data-action-index]');
+        mailBtn.innerHTML = `${icon('mail')}E-mail ${mail.configured ? withMail : ''}`;
+        mailBtn.title = mail.configured ? `E-mail ${plural(withMail, 'member')} now, all at once${st.kind === 'RECEIPT' ? ', with the signed PDF' : ''}` : 'E-mail is not set up: Settings → E-mail';
+        waBtn.innerHTML = `${icon('phone')}WhatsApp ${withPhone} one by one`;
+        if (st.queue) drawQueue(modal);
+    }
+
+    async function sendMail(modal) {
+        if (!mail.configured) throw new Error('E-mail is not set up yet: add your e-mail account in Settings → E-mail');
+        const list = chosen().filter(r => r.m.email);
+        if (!list.length) throw new Error('None of the chosen members has an e-mail address. Add it with Members → edit.');
+        await ensureLinks(list);
+        const t = text(modal);
+        let sent = 0;
+        const failed = [];
+        for (let i = 0; i < list.length; i += 100) {
+            const part = list.slice(i, i + 100);
+            const result = await api.post(`/hosted-chits/${c.id}/send-email`, {
+                kind: st.kind,
+                items: part.map(r => ({
+                    memberId: r.m.id, paymentId: st.kind === 'RECEIPT' ? r.p.id : null,
+                    subject: st.kind === 'REMINDER' ? `${c.name}: installment reminder` : `${c.name}: receipt ${r.p.receiptNo || ''}`,
+                    body: fill(t, r) + (st.kind === 'RECEIPT' ? '\n\nThe signed receipt is attached as a PDF.' : ''),
+                })),
+            });
+            sent += result.sent;
+            const bad = new Map(result.failed.map(f => [f.memberId, f.reason]));
+            part.forEach(r => mark(r.key, 'mail', bad.has(r.m.id) ? bad.get(r.m.id) : true));
+            failed.push(...result.failed);
+        }
+        draw(modal);
+        toast(failed.length ? `E-mailed ${sent}; ${failed.length} not sent (${failed[0].name}: ${failed[0].reason})` : `E-mailed ${plural(sent, st.kind === 'REMINDER' ? 'reminder' : 'receipt')} ✓`,
+            failed.length ? 'error' : 'success');
+    }
+
+    async function startQueue(modal) {
+        const picked = chosen();
+        const list = picked.filter(r => phoneOf(r.m));
+        if (!list.length) throw new Error(picked.length ? 'None of the chosen members has a phone number' : 'Choose at least one member');
+        await ensureLinks(list);
+        st.queue = { list, i: 0, skipped: picked.length - list.length };
+        draw(modal);
+    }
+
+    function drawQueue(modal) {
+        const q = st.queue;
+        const el = modal.el.querySelector('[data-queue]');
+        const n = q.list.length;
+        if (q.i >= n) {
+            el.innerHTML = `<div class="hc-queue-done">${icon('check-circle')}<b>All ${plural(n, 'WhatsApp message')} opened</b>
+                <small class="muted">${q.skipped ? `${plural(q.skipped, 'member')} without a phone number ${q.skipped === 1 ? 'was' : 'were'} left out · ` : ''}press send in each chat if you have not yet</small>
+                <button type="button" class="btn sm" data-q-stop>${icon('chevron-left')}Back to the list</button></div>`;
+            return;
+        }
+        const r = q.list[q.i];
+        const msg = fill(text(modal), r);
+        el.innerHTML = `<div class="hc-queue-head"><b>WhatsApp · ${q.i + 1} of ${n}</b>
+                <i class="split-bar"><span class="paid" style="width:${(q.i / n) * 100}%"></span></i>
+                <button type="button" class="btn sm ghost" data-q-stop>Stop</button></div>
+            <div class="hc-queue-card">
+                <span class="hc-avatar">${esc(initials(r.m.name))}</span>
+                <div class="min-0 grow"><b>${esc(r.m.name)}</b> <small class="muted">${esc(r.m.phone || '')} · ${money(r.amount)}</small>
+                    <p class="hc-queue-msg">${esc(msg)}</p></div>
+            </div>
+            <div class="row hc-queue-acts">
+                <a class="btn primary" target="_blank" rel="noopener" href="${esc(waLink(r.m, msg))}" data-q-open>${icon('phone')}Open WhatsApp for ${esc(r.m.name.split(' ')[0])}</a>
+                <button type="button" class="btn" data-q-skip>Skip${icon('chevron-right')}</button>
+                <small class="muted">WhatsApp opens with the message and link ready: press send there, come back, and the next member is waiting.</small>
+            </div>`;
+    }
+}
+
+// ---------------------------------------------------------------- receipts, statements and agreements
+
+/**
+ * A payment's receipt, signed by the organiser (their drawn signature) and sealed (HMAC-SHA256 over every figure,
+ * made by the server): printable, as a PDF, or sent to the member by e-mail or WhatsApp.
+ */
+async function openReceipt(d, p) {
+    if (!p) return;
+    const c = d.chit;
+    const member = d.members.find(m => m.id === p.memberId);
+    const r = await api.get(`/hosted-chits/${c.id}/payments/${p.id}/receipt`);
+    const line = (label, value) => `<div class="hc-rc-line"><span>${label}</span><b>${value}</b></div>`;
+    const receipt = `<div class="hc-receipt" data-receipt>
+        <div class="hc-rc-head"><div><small>Payment receipt</small><h3>${esc(c.name)}</h3><span class="muted">${esc(r.signer || '')}</span></div>
+            <div class="hc-rc-no"><b>${esc(r.receiptNo || '')}</b><span>${date(r.paidDate)}</span></div></div>
+        <div class="hc-rc-amount"><small>Received from ${esc(r.memberName)}</small><b>${money(r.total)}</b></div>
+        ${line('Towards', `month ${r.monthNo} installment (due ${date(r.monthDueDate)})`)}
+        ${line('Installment paid', money(r.amount))}
+        ${num(r.lateFee) ? line('Late payment interest', money(r.lateFee)) : ''}
+        ${num(r.lateFeeWaived) ? line('Late interest let off', money(r.lateFeeWaived)) : ''}
+        ${line('Paid by', `${esc(r.mode)}${r.reference ? ` · ref ${esc(r.reference)}` : ''}`)}
+        ${line(`Month ${r.monthNo} so far`, `${money(r.paidForMonth)} of ${money(r.dueForMonth)}${num(r.balanceForMonth) ? ` · ${money(r.balanceForMonth)} still due` : ' · fully paid'}`)}
+        ${p.note ? line('Note', esc(p.note)) : ''}
+        <div class="hc-rc-sign">
+            <div class="hc-rc-seal">${icon('shield')}<span><b>Digitally sealed</b><small>HMAC-SHA256 over every figure on this receipt</small><code class="hc-hash">${esc(r.seal)}</code></span></div>
+            <div class="hc-rc-signer">${r.signature ? signatureSvg(r.signature)
+                : manage() ? `<button type="button" class="btn sm" data-add-sign>${icon('signature')}Add my signature</button>` : ''}
+                <b>${esc(r.signer || 'Organiser')}</b><small>${r.signature ? 'Digitally signed · organiser' : 'Organiser'}</small></div>
+        </div>
+        <p class="hc-rc-foot">Recorded by ${esc(p.createdBy || '')} on ${dateTime(p.createdAt)}. Any change to the figures changes the seal.</p>
+    </div>`;
+    openModal({
+        title: `Receipt ${p.receiptNo || ''}`, iconName: 'receipt',
+        body: receipt,
+        actions: [
+            { label: 'PDF', left: true, iconName: 'download', onClick: async () => { await downloadReceiptPdf(d, p); return true; } },
+            { label: 'Print', iconName: 'printer', onClick: modal => { printElement(modal.el.querySelector('[data-receipt]'), `Receipt ${p.receiptNo}`); return true; } },
+            ...(manage() ? [{ label: `Send to ${member.name.split(' ')[0]}`, kind: 'primary', iconName: 'send', onClick: () => {
+                setTimeout(() => openSend(d, { kind: 'RECEIPT', paymentIds: [p.id] }), 0);
+            } }] : []),
+        ],
+        onOpen: modal => modal.el.querySelector('[data-add-sign]')?.addEventListener('click', () => openSignature(d, fresh => {
+            modal.close();
+            openReceipt(fresh, fresh.payments.find(x => x.id === p.id));
+        })),
+    });
+}
+
+/** The organiser draws their signature once; it goes on every receipt of the chit (screen, PDF and links). */
+function openSignature(d, done) {
+    const c = d.chit;
+    let pad;
+    openModal({
+        title: 'Signature for receipts', iconName: 'signature', size: 'lg',
+        body: `<p class="muted" style="margin-top:0">Sign once: it is printed on every receipt of <b>${esc(c.name)}</b> (on screen, in the PDF and on receipt links), next to the digital seal.</p>
+            ${c.receiptSignature ? `<div class="hc-sign-now">${signatureSvg(c.receiptSignature)}<small>Your signature now${c.receiptSigner ? ` · ${esc(c.receiptSigner)}` : ''}</small></div>` : ''}
+            <div class="hc-sign-pad"><div class="hc-sign-head"><span>${c.receiptSignature ? 'Sign again to change it' : 'Sign here with your mouse or finger'}</span>
+                <button type="button" class="btn sm ghost" data-sign-clear>${icon('x')}Clear</button></div>
+                <canvas width="1000" height="300" data-sign-pad></canvas></div>
+            <label class="field"><span>Name under the signature</span><input type="text" name="signer" maxlength="100" value="${esc(c.receiptSigner || c.payeeName || state.user?.fullName || '')}"></label>`,
+        actions: [
+            ...(c.receiptSignature ? [{ label: 'Remove', left: true, iconName: 'trash', onClick: async () => {
+                const fresh = await api.put(`/hosted-chits/${c.id}/receipt-signature`, { signature: '' });
+                await afterChange(fresh, 'Signature removed');
+                done?.(fresh);
+            } }] : []),
+            { label: 'Cancel' },
+            { label: 'Save signature', kind: 'primary', iconName: 'check', onClick: async modal => {
+                if (pad.empty()) throw new Error('Sign in the box first');
+                const fresh = await api.put(`/hosted-chits/${c.id}/receipt-signature`,
+                    { signature: pad.path(), signer: modal.el.querySelector('[name=signer]').value.trim() || null });
+                await afterChange(fresh, 'Signature saved: it is on every receipt now');
+                done?.(fresh);
+            } },
+        ],
+        onOpen: modal => {
+            pad = signaturePad(modal.el.querySelector('[data-sign-pad]'));
+            modal.el.querySelector('[data-sign-clear]').addEventListener('click', () => pad.clear());
+        },
+    });
+}
+
+/** A signature pad on a canvas; the strokes come back as an SVG path in a 1000 x 300 box. */
+function signaturePad(canvas) {
+    const ctx = canvas.getContext('2d');
+    const strokes = [];
+    let current = null;
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#0a2e4f';
+    const point = e => {
+        const box = canvas.getBoundingClientRect();
+        return [Math.round(((e.clientX - box.left) / box.width) * 1000), Math.round(((e.clientY - box.top) / box.height) * 300)];
+    };
+    canvas.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        canvas.setPointerCapture(e.pointerId);
+        current = [point(e)];
+        strokes.push(current);
+    });
+    canvas.addEventListener('pointermove', e => {
+        if (!current) return;
+        const [x, y] = point(e);
+        const [px, py] = current[current.length - 1];
+        if (Math.abs(x - px) + Math.abs(y - py) < 4) return;
+        current.push([x, y]);
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    });
+    const end = () => { current = null; };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+    return {
+        empty: () => strokes.reduce((n, s) => n + s.length, 0) < 6,
+        clear: () => { strokes.length = 0; ctx.clearRect(0, 0, canvas.width, canvas.height); },
+        path: () => strokes.filter(s => s.length > 1).map(s => 'M' + s.map(([x, y]) => `${x} ${y}`).join(' L')).join(' ').slice(0, 20000),
+    };
+}
+
+/** A member's statement: every month, every payment, what is due; printable or sent as a link (with “Pay now”). */
+function openStatement(d, m) {
+    const c = d.chit;
+    const rows = d.schedule.map(s => {
+        const due = dueFor(d, m, s), paid = paidFor(d, m.id, s.monthNo), late = lateFor(d, m.id, s.monthNo);
+        const st = paid >= due ? 'Paid' : paid > 0 ? 'Part paid' : s.due ? 'Due' : '—';
+        return `<tr><td class="c">${s.monthNo}${m.wonMonth === s.monthNo ? ' 👑' : ''}</td><td>${date(s.dueDate)}</td><td class="r">${money(due)}</td>
+            <td class="r">${paid ? money(paid) : '—'}</td><td class="r ${late ? 'neg' : 'muted'}">${late ? money(late.due) : '—'}</td><td>${st}</td></tr>`;
+    }).join('');
+    const pays = d.payments.filter(p => p.memberId === m.id).sort((a, b) => a.paidDate.localeCompare(b.paidDate) || a.id - b.id);
+    const won = m.wonMonth ? monthOf(d, m.wonMonth) : null;
+    const owe = num(m.balanceDue) + num(m.lateFeeDue);
+    const html = `<div class="hc-statement" data-statement>
+        <div class="hc-rc-head"><div><small>Member statement</small><h3>${esc(m.name)}</h3><span class="muted">${esc(c.name)} · as of ${date(isoDate())}</span></div>
+            <div class="hc-rc-no"><b>${money(m.totalPaid)}</b><span>paid so far</span></div></div>
+        <div class="hc-pay-sum">
+            <span><small>Owes now</small><b class="${owe ? 'neg' : 'pos'}">${owe ? money(owe) : 'Nothing'}</b></span>
+            <span><small>Late interest</small><b>${money(m.lateFeeDue)}</b></span>
+            <span><small>Won</small><b>${won ? `month ${m.wonMonth} · ${money(won.payout)}` : 'not yet'}</b></span>
+        </div>
+        <table class="grid compact"><thead><tr><th class="c">Month</th><th>Pay by</th><th class="r">Due</th><th class="r">Paid</th><th class="r">Late int.</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
+        ${pays.length ? `<div class="section-title">${icon('receipt')}Payments</div><table class="grid compact"><thead><tr><th>Receipt</th><th>Date</th><th class="c">Month</th><th class="r">Amount</th><th>How</th></tr></thead>
+            <tbody>${pays.map(p => `<tr><td>${esc(p.receiptNo || '')}</td><td>${date(p.paidDate)}</td><td class="c">${p.monthNo}</td>
+                <td class="r">${money(num(p.amount) + num(p.lateFee))}</td><td>${esc(p.mode)}${p.reference ? ` · ${esc(p.reference)}` : ''}</td></tr>`).join('')}</tbody></table>` : ''}
+    </div>`;
+    openModal({
+        title: `Statement · ${m.name}`, iconName: 'file-text', size: 'lg',
+        body: `${html}<div data-link-result></div>`,
+        actions: [
+            { label: 'Print / PDF', left: true, iconName: 'printer', onClick: modal => { printElement(modal.el.querySelector('[data-statement]'), `${m.name} · ${c.name}`); return true; } },
+            { label: 'Close' },
+            { label: c.upiId && owe ? 'Send statement with payment link' : 'Send statement', kind: 'primary', iconName: 'share', onClick: async modal => {
+                const { url, share } = await makeLink(d, { memberId: m.id }, 24 * 30);
+                const text = `Hi ${m.name.split(' ')[0]}, your statement for ${c.name}${owe ? `: ${money(owe)} is due` : ''}.${c.upiId && owe ? ' You can pay from the link.' : ''} ${url}`;
+                modal.el.querySelector('[data-link-result]').innerHTML = linkResultHtml(url, text, m, share.expiresAt);
+                return true;
+            } },
+        ],
+    });
+}
+
+/** The winner's digital agreement for a month: make it, send it to accept, print it, or record a paper signature. */
+function openAgreement(d, monthNo) {
+    const c = d.chit;
+    const month = monthOf(d, monthNo);
+    const a = (d.agreements || []).find(x => x.monthNo === monthNo);
+    const member = d.members.find(x => x.id === (a?.memberId ?? month.winnerMemberId));
+    if (!a) {
+        openModal({
+            title: `Agreement · month ${monthNo}`, iconName: 'file-text',
+            body: `<p style="margin-top:0">A digital agreement records that <b>${esc(month.winnerName)}</b> received <b>${money(month.payout)}</b> and will pay the remaining installments.
+                You send it as a link; they accept it by typing their name. The time, the device and a fingerprint (hash) of the text are kept.</p>
+                <form class="form-grid two">
+                    <label class="field"><span>Guarantor <small class="muted">optional</small></span><input type="text" name="guarantorName" maxlength="100" data-plain></label>
+                    <label class="field"><span>Guarantor's phone</span><input type="tel" name="guarantorPhone" maxlength="14" inputmode="numeric" data-plain></label>
+                </form>`,
+            actions: [
+                { label: 'Cancel' },
+                { label: 'Make agreement', kind: 'primary', iconName: 'check', onClick: async modal => {
+                    const form = modal.el.querySelector('form');
+                    const fresh = await api.post(`/hosted-chits/${c.id}/months/${monthNo}/agreement`,
+                        { guarantorName: form.guarantorName.value.trim() || null, guarantorPhone: form.guarantorPhone.value.trim() || null });
+                    await afterChange(fresh, 'Agreement made');
+                    openAgreement(fresh, monthNo);
+                } },
+            ],
+        });
+        return;
+    }
+    const [tone, ic, label] = AGREEMENT_STATUS[a.status] || ['gray', 'info', a.status];
+    const draft = a.status === 'DRAFT';
+    const doc = `<div class="hc-agreement" data-agreement>
+        <div class="hc-rc-head"><div><small>Chit prize agreement</small><h3>${esc(c.name)} · month ${a.monthNo}</h3><span class="muted">${esc(a.memberName)} · ${esc(a.agreementNo)}</span></div>
+            <div class="hc-rc-no"><span class="badge ${tone}">${icon(ic)}${label}</span></div></div>
+        <div class="hc-pay-sum">
+            <span><small>Chit value</small><b>${money(a.chitValue)}</b></span>
+            <span><small>${isAuction(c) ? 'Winning bid' : 'Commission'}</small><b>${money(a.deduction)}</b></span>
+            <span><small>Received</small><b class="pos">${money(a.payoutAmount)}</b></span>
+            <span><small>Still to pay</small><b>${a.remainingInstallments} months · ${moneyShort(a.remainingAmount)}</b></span>
+        </div>
+        <div class="hc-terms">${esc(a.terms)}</div>
+        ${evidenceHtml(a, member)}
+    </div>`;
+    openModal({
+        title: `Agreement ${a.agreementNo}`, iconName: 'file-text', size: 'lg',
+        body: `${doc}<div data-link-result></div>`,
+        actions: [
+            { label: 'Print / PDF', left: true, iconName: 'printer', onClick: modal => { printElement(modal.el.querySelector('[data-agreement]'), `Agreement ${a.agreementNo}`); return true; } },
+            ...(draft && manage() ? [
+                { label: 'Delete', iconName: 'trash', onClick: async () => {
+                    if (!await confirmDialog(`Delete agreement ${a.agreementNo}? Links already sent stop working.`, { confirmLabel: 'Delete' })) return true;
+                    await afterChange(await api.del(`/hosted-chits/${c.id}/agreements/${a.id}`), 'Agreement deleted');
+                } },
+                { label: 'Signed on paper', iconName: 'edit', onClick: async () => {
+                    if (!await confirmDialog(`Record that ${a.memberName} signed a printed copy of ${a.agreementNo}?`, { title: 'Signed on paper', confirmLabel: 'Record signature', danger: false })) return true;
+                    await afterChange(await api.post(`/hosted-chits/${c.id}/agreements/${a.id}/signed`, { name: a.memberName }), 'Signature recorded');
+                } },
+                { label: 'Send to accept', kind: 'primary', iconName: 'share', onClick: async modal => {
+                    const { url, share } = await makeLink(d, { agreementId: a.id }, 24 * 30);
+                    const text = `Hi ${a.memberName.split(' ')[0]}, please read and accept the agreement for the ${money(a.payoutAmount)} you received from ${c.name} (month ${a.monthNo}): ${url}`;
+                    modal.el.querySelector('[data-link-result]').innerHTML = linkResultHtml(url, text, member, share.expiresAt);
+                    return true;
+                } },
+            ] : [
+                { label: 'Send a copy', kind: 'primary', iconName: 'share', onClick: async modal => {
+                    const { url, share } = await makeLink(d, { agreementId: a.id }, 24 * 90);
+                    modal.el.querySelector('[data-link-result]').innerHTML = linkResultHtml(url, `Your agreement ${a.agreementNo} for ${c.name}: ${url}`, member, share.expiresAt);
+                    return true;
+                } },
+            ]),
+        ],
+    });
+}
+
+// ---------------------------------------------------------------- share links
+
+/** A temporary link to the chit (or one member's status) that opens without an account. */
+async function openShare(d, memberId = null) {
+    const c = d.chit;
+    const listHtml = shares => !shares.length ? '' : `
+        <div class="section-title">${icon('link')} Links made</div>
+        <div class="cs-list">${shares.map(s => {
+            const tone = s.status === 'ACTIVE' ? ['good', `until ${dateTime(s.expiresAt)}`] : s.status === 'EXPIRED' ? ['gray', 'expired'] : ['critical', 'revoked'];
+            return `<div class="cs-row ${s.status.toLowerCase()}">
+                <span class="badge ${tone[0]}">${tone[1]}</span>
+                <span class="grow min-0"><b>${esc(({ RECEIPT: `Receipt · ${s.memberName}`, AGREEMENT: `Agreement · ${s.memberName}`, MEMBER: `${s.memberName}'s statement` })[s.kind] || 'Whole chit')}${s.sharedWith && s.sharedWith !== s.memberName ? ` · ${esc(s.sharedWith)}` : ''}</b>
+                    <small class="muted">made ${dateTime(s.createdAt)} · opened ${s.views}×${s.lastViewedAt ? `, last ${dateTime(s.lastViewedAt)}` : ''}${s.showEarnings ? ' · with my earnings' : ''}</small></span>
+                ${s.status === 'ACTIVE' ? `<button type="button" class="btn sm ghost" data-revoke-share="${s.id}" title="Stop this link now">${icon('lock')}Revoke</button>` : ''}
+            </div>`; }).join('')}</div>`;
+    const shares = await api.get(`/hosted-chits/${c.id}/shares`);
+    openModal({
+        title: `Share · ${c.name}`, iconName: 'share', size: 'lg',
+        body: `<div class="cs-dialog">
+            <p class="hint" style="margin:0">The link opens on any phone, no sign-in, and is always up to date. It stops when it expires or you revoke it.
+                Phone numbers and your accounts are never shown.</p>
+            <form class="form-grid two" data-share-form onsubmit="return false">
+                <label class="field"><span>What to share</span><select name="memberId">
+                    <option value="">The whole chit (every month, collections)</option>
+                    ${d.members.map(m => `<option value="${m.id}" ${m.id === memberId ? 'selected' : ''}>${esc(m.name)}'s status (their payments, dues, win)</option>`).join('')}</select></label>
+                <div class="field"><span>Valid for</span><div class="ln-chips" data-share-hours>${SHARE_DURATIONS.map(([h, l]) =>
+                    `<button type="button" class="date-chip ${h === 168 ? 'selected' : ''}" data-value="${h}">${l}</button>`).join('')}</div></div>
+                <label class="field"><span>For <small class="muted">optional</small></span><input name="sharedWith" maxlength="80" data-plain placeholder="who you send it to"></label>
+                <label class="field"><span>Message on top <small class="muted">optional</small></span><input name="message" maxlength="300" data-plain placeholder="e.g. Please pay by the 5th"></label>
+                <label class="check-line span-2" data-earnings><input type="checkbox" name="showEarnings"> Include my earnings (commission and money with me)</label>
+            </form>
+            <div data-share-result></div>
+            <div data-share-list>${listHtml(shares)}</div>
+        </div>`,
+        onOpen: m => {
+            const form = m.el.querySelector('[data-share-form]');
+            const sync = () => { m.el.querySelector('[data-earnings]').hidden = !!form.memberId.value; };
+            form.memberId.addEventListener('change', sync);
+            sync();
+            m.el.querySelector('[data-share-hours]').addEventListener('click', e => {
+                const chip = e.target.closest('[data-value]');
+                if (chip) m.el.querySelectorAll('[data-share-hours] [data-value]').forEach(x => x.classList.toggle('selected', x === chip));
+            });
+            m.el.querySelector('[data-share-list]').addEventListener('click', async e => {
+                const b = e.target.closest('[data-revoke-share]');
+                if (!b) return;
+                try {
+                    await api.post(`/hosted-chits/${c.id}/shares/${b.dataset.revokeShare}/revoke`);
+                    toast('Link stopped');
+                    m.el.querySelector('[data-share-list]').innerHTML = listHtml(await api.get(`/hosted-chits/${c.id}/shares`));
+                } catch (error) { toast(error.message, 'error'); }
+            });
+        },
+        actions: [
+            { label: 'Close' },
+            { label: 'Make link', kind: 'primary', iconName: 'link', onClick: async m => {
+                const form = m.el.querySelector('[data-share-form]');
+                const hours = Number(m.el.querySelector('[data-share-hours] .selected')?.dataset.value || 168);
+                const member = d.members.find(x => x.id === Number(form.memberId.value));
+                const created = await api.post(`/hosted-chits/${c.id}/shares`, {
+                    memberId: member?.id ?? null, sharedWith: form.sharedWith.value, hours, message: form.message.value, showEarnings: !!form.showEarnings.checked,
+                });
+                const url = `${location.origin}/chit-share.html#${created.token}`;
+                const text = member
+                    ? `Hi ${member.name.split(' ')[0]}, here is your status in ${c.name}: your payments, what is due and the winners so far, up to date whenever you open it. ${url}`
+                    : `Here is the status of ${c.name}: every month, the winners and the collections, up to date whenever you open it. ${url}`;
+                const phone = member?.phone ? member.phone.replace(/\D/g, '').slice(-10) : '';
+                const result = m.el.querySelector('[data-share-result]');
+                result.innerHTML = `<div class="ln-made cs-made">
+                    <div class="ln-qr">${qrSvg(url, { size: 150 })}</div>
+                    <div class="ln-made-main">
+                        <p class="small muted" style="margin:0">Copy or send it now: the link is shown only once. It works until <b>${dateTime(created.share.expiresAt)}</b>.</p>
+                        <div class="ln-url"><input value="${esc(url)}" readonly data-plain><button type="button" class="btn sm primary" data-copy>${icon('copy')}Copy</button></div>
+                        <div class="row"><a class="btn sm" target="_blank" rel="noopener" href="https://wa.me/${phone ? '91' + phone : ''}?text=${encodeURIComponent(text)}">${icon('phone')}Send on WhatsApp</a>
+                            <a class="btn sm" target="_blank" rel="noopener" href="${esc(url)}">${icon('eye')}Preview</a></div>
+                    </div></div>`;
+                result.querySelector('[data-copy]').addEventListener('click', async () => {
+                    try { await navigator.clipboard.writeText(url); toast('Link copied', 'info'); } catch { result.querySelector('input').select(); }
+                });
+                m.el.querySelector('[data-share-list]').innerHTML = listHtml(await api.get(`/hosted-chits/${c.id}/shares`));
+                return true;   // stay open to copy / send
+            } },
+        ],
     });
 }
 
 // ===================================================================== download
 
-/** All months, the payments grid, members and history; the tab on screen comes first (CSV takes the first). */
+/** Months, the payments grid, members and history; the tab on screen comes first (CSV takes the first). */
 function exportReport(d) {
     const c = d.chit;
+    const auction = isAuction(c);
     const months = {
-        name: 'All months',
-        columns: [{ label: 'Month', type: 'number' }, { label: 'Pay by', type: 'date' }, { label: 'Monthly amount', type: 'money' },
-            { label: 'Chit value', type: 'money' }, { label: 'Winner gets', type: 'money' }, { label: 'My commission', type: 'money' },
-            { label: 'Collected', type: 'money' }, { label: 'Winner' }, { label: 'Status' }, { label: 'Winner paid on', type: 'date' }],
-        rows: d.schedule.map(m => [m.monthNo, m.dueDate, num(m.installment), num(m.chitValue), num(m.payout), num(m.commission),
-            num(m.collected), m.winnerName || '', STATUS[m.status]?.[2] || m.status, m.payoutDate || '']),
-        totals: ['Total', '', '', d.schedule.reduce((s, m) => s + num(m.chitValue), 0), d.schedule.reduce((s, m) => s + num(m.payout), 0),
-            d.schedule.reduce((s, m) => s + num(m.commission), 0), d.schedule.reduce((s, m) => s + num(m.collected), 0), '', '', ''],
+        name: 'Months',
+        columns: [{ label: 'Month', type: 'number' }, { label: 'Pay by', type: 'date' }, { label: 'Chit value', type: 'money' },
+            ...(auction ? [{ label: 'Winning bid', type: 'money' }, { label: 'Dividend', type: 'money' }] : []),
+            { label: 'Winner gets', type: 'money' }, { label: 'My commission', type: 'money' }, { label: 'Collected', type: 'money' },
+            { label: 'Winner' }, { label: 'Status' }, { label: 'Winner paid on', type: 'date' }],
+        rows: d.schedule.map(m => [m.monthNo, m.dueDate, num(m.chitValue), ...(auction ? [m.bid !== null ? num(m.bid) : '', num(m.dividend)] : []),
+            num(m.payout), num(m.commission), num(m.collected), m.winnerName || '', STATUS[m.status]?.[2] || m.status, m.payoutDate || '']),
     };
     const grid = {
         name: 'Payments',
@@ -1222,22 +2729,29 @@ function exportReport(d) {
             { label: 'Owes', type: 'money' }],
         rows: d.members.map(m => [m.slot, m.name, m.phone || '', m.wonMonth ? String(m.wonMonth) : '', num(m.totalPaid), num(m.balanceDue)]),
     };
-    const kindLabel = { COLLECTION: 'Member paid', PAYOUT: 'Paid winner', COMMISSION: 'My commission' };
+    const receipts = {
+        name: 'Receipts',
+        columns: [{ label: 'Receipt' }, { label: 'Date', type: 'date' }, { label: 'Member' }, { label: 'Month', type: 'number' }, { label: 'Installment', type: 'money' },
+            { label: 'Late interest', type: 'money' }, { label: 'Waived', type: 'money' }, { label: 'How' }, { label: 'Reference' }, { label: 'Note' }],
+        rows: d.payments.map(p => [p.receiptNo || '', p.paidDate, p.memberName, p.monthNo, num(p.amount), num(p.lateFee), num(p.lateFeeWaived), p.mode, p.reference || '', p.note || '']),
+    };
+    const kindLabel = { COLLECTION: 'Member paid', LATE_FEE: 'Late interest', PAYOUT: 'Paid winner', COMMISSION: 'My commission' };
     const history = {
         name: 'History',
         columns: [{ label: 'Date', type: 'date' }, { label: 'What' }, { label: 'Month', type: 'number' }, { label: 'Member' }, { label: 'How' },
-            { label: 'Money in', type: 'money' }, { label: 'Money out', type: 'money' }, { label: 'Money with you', type: 'money' }, { label: 'Note' }],
+            { label: 'Money in', type: 'money' }, { label: 'Money out', type: 'money' }, { label: 'Money with me', type: 'money' }, { label: 'Entry' }, { label: 'Note' }],
         rows: d.ledger.map(r => [r.date, kindLabel[r.kind], r.monthNo, r.kind === 'COMMISSION' ? '' : r.party || '', r.mode || '',
-            num(r.moneyIn) || '', num(r.moneyOut) || '', num(r.held), r.note || '']),
+            num(r.moneyIn) || '', num(r.moneyOut) || '', num(r.held), r.entryNo || '', r.note || '']),
     };
-    const order = { payments: [grid, months, members, history], members: [members, grid, months, history],
-        history: [history, months, grid, members] }[view.tab] || [months, grid, members, history];
+    const order = { payments: [grid, receipts, months, members, history], members: [members, grid, receipts, months, history],
+        history: [history, receipts, months, grid, members] }[view.tab] || [months, grid, receipts, members, history];
     return {
         title: c.name,
-        subtitle: `${c.memberCount} members · ${money(c.installment)} a month · from ${monthName(c.startMonth)}`,
+        subtitle: `${auction ? 'Auction chit' : 'Fixed chit'} · ${c.memberCount} members · ${money(c.installment)} a month · from ${monthName(c.startMonth)}`,
         filename: `chit-${c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
         summary: [['Collected so far', money(c.totalCollected)], ['Paid to winners', money(c.totalPaidOut)],
             ['My commission', money(c.commissionEarned)], ['Still to collect', money(c.pendingDues)]],
         sheets: order,
     };
 }
+

@@ -2,7 +2,18 @@ package com.aditya.personalbudget.web;
 
 import com.aditya.personalbudget.security.Permission;
 import com.aditya.personalbudget.security.RequiresPermission;
+import com.aditya.personalbudget.service.HostedChitMailService;
 import com.aditya.personalbudget.service.HostedChitService;
+import com.aditya.personalbudget.service.HostedChitService.SignatureRequest;
+import com.aditya.personalbudget.service.HostedChitShareService;
+import com.aditya.personalbudget.service.HostedChitService.AgreementRequest;
+import com.aditya.personalbudget.service.HostedChitShareService.AcceptRequest;
+import com.aditya.personalbudget.service.HostedChitShareService.BatchLink;
+import com.aditya.personalbudget.service.HostedChitShareService.BatchRequest;
+import com.aditya.personalbudget.service.HostedChitShareService.CreatedShare;
+import com.aditya.personalbudget.service.HostedChitShareService.PublicChit;
+import com.aditya.personalbudget.service.HostedChitShareService.ShareRequest;
+import com.aditya.personalbudget.service.HostedChitShareService.ShareView;
 import com.aditya.personalbudget.service.HostedChitService.ChitRequest;
 import com.aditya.personalbudget.service.HostedChitService.ChitView;
 import com.aditya.personalbudget.service.HostedChitService.CollectAllRequest;
@@ -13,6 +24,8 @@ import com.aditya.personalbudget.service.HostedChitService.PayoutRequest;
 import com.aditya.personalbudget.service.HostedChitService.Summary;
 import com.aditya.personalbudget.service.HostedChitService.WinnerRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,61 +34,79 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
 
-/** Host a Chit: chits the user runs as the organiser (see {@link HostedChitService}). */
+/**
+ * Host a Chit: chits the user runs as the organiser (see {@link HostedChitService}), their share links
+ * ({@link HostedChitShareService}) and the public side of a link ({@code /api/public/hosted-chits/…}), which needs
+ * no sign-in, only the link's token.
+ */
 @RestController
-@RequestMapping("/api/hosted-chits")
+@RequestMapping("/api")
 public class HostedChitController {
 
     private final HostedChitService service;
+    private final HostedChitShareService shares;
+    private final HostedChitMailService mail;
 
-    public HostedChitController(HostedChitService service) {
+    public HostedChitController(HostedChitService service, HostedChitShareService shares, HostedChitMailService mail) {
         this.service = service;
+        this.shares = shares;
+        this.mail = mail;
     }
 
-    @GetMapping
+    @GetMapping("/hosted-chits")
     @RequiresPermission(Permission.VIEW)
     public List<ChitView> list() {
         return service.list();
     }
 
     /** Dues still to collect across the running hosted chits (dashboard). */
-    @GetMapping("/summary")
+    @GetMapping("/hosted-chits/summary")
     @RequiresPermission(Permission.VIEW)
     public Summary summary() {
         return service.summary();
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/hosted-chits/{id}")
     @RequiresPermission(Permission.VIEW)
     public Detail detail(@PathVariable Long id) {
         return service.detail(id);
     }
 
-    @PostMapping
+    @PostMapping("/hosted-chits")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail create(@Valid @RequestBody ChitRequest request) {
         return service.create(request);
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/hosted-chits/{id}")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail update(@PathVariable Long id, @Valid @RequestBody ChitRequest request) {
         return service.update(id, request);
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/hosted-chits/{id}")
     @RequiresPermission(Permission.MANAGE_CHITS)
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        service.delete(id);
+    public ResponseEntity<Void> delete(@PathVariable Long id, @RequestParam(defaultValue = "false") boolean revert,
+                                       @RequestParam(required = false) String confirm) {
+        service.delete(id, revert, confirm);
         return ResponseEntity.noContent().build();
     }
 
-    @PutMapping("/{id}/members/{memberId}")
+    /** Hosted chits for the Reports page. */
+    @GetMapping("/hosted-chits/report")
+    @RequiresPermission(Permission.VIEW)
+    public HostedChitService.Report report(@RequestParam(required = false) java.time.LocalDate from,
+                                           @RequestParam(required = false) java.time.LocalDate to) {
+        return service.report(from, to);
+    }
+
+    @PutMapping("/hosted-chits/{id}/members/{memberId}")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail updateMember(@PathVariable Long id, @PathVariable Long memberId, @Valid @RequestBody MemberInput request) {
         return service.updateMember(id, memberId, request);
@@ -83,25 +114,25 @@ public class HostedChitController {
 
     // ---------------------------------------------------------------- collections
 
-    @PostMapping("/{id}/payments")
+    @PostMapping("/hosted-chits/{id}/payments")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail addPayment(@PathVariable Long id, @Valid @RequestBody PaymentRequest request) {
         return service.addPayment(id, request);
     }
 
-    @PutMapping("/{id}/payments/{paymentId}")
+    @PutMapping("/hosted-chits/{id}/payments/{paymentId}")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail updatePayment(@PathVariable Long id, @PathVariable Long paymentId, @Valid @RequestBody PaymentRequest request) {
         return service.updatePayment(id, paymentId, request);
     }
 
-    @DeleteMapping("/{id}/payments/{paymentId}")
+    @DeleteMapping("/hosted-chits/{id}/payments/{paymentId}")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail deletePayment(@PathVariable Long id, @PathVariable Long paymentId) {
         return service.deletePayment(id, paymentId);
     }
 
-    @PostMapping("/{id}/months/{monthNo}/collect-all")
+    @PostMapping("/hosted-chits/{id}/months/{monthNo}/collect-all")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail collectAll(@PathVariable Long id, @PathVariable int monthNo, @RequestBody(required = false) CollectAllRequest request) {
         return service.collectAll(id, monthNo, request);
@@ -109,41 +140,142 @@ public class HostedChitController {
 
     // ---------------------------------------------------------------- winner and payout
 
-    @PostMapping("/{id}/months/{monthNo}/winner")
+    @PostMapping("/hosted-chits/{id}/months/{monthNo}/winner")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail setWinner(@PathVariable Long id, @PathVariable int monthNo, @Valid @RequestBody WinnerRequest request) {
         return service.setWinner(id, monthNo, request);
     }
 
-    @DeleteMapping("/{id}/months/{monthNo}/winner")
+    @DeleteMapping("/hosted-chits/{id}/months/{monthNo}/winner")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail clearWinner(@PathVariable Long id, @PathVariable int monthNo) {
         return service.clearWinner(id, monthNo);
     }
 
-    @PostMapping("/{id}/months/{monthNo}/payout")
+    @PostMapping("/hosted-chits/{id}/months/{monthNo}/payout")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail payout(@PathVariable Long id, @PathVariable int monthNo, @RequestBody PayoutRequest request) {
         return service.payout(id, monthNo, request);
     }
 
-    @DeleteMapping("/{id}/months/{monthNo}/payout")
+    @DeleteMapping("/hosted-chits/{id}/months/{monthNo}/payout")
     @RequiresPermission(Permission.MANAGE_CHITS)
     public Detail undoPayout(@PathVariable Long id, @PathVariable int monthNo) {
         return service.undoPayout(id, monthNo);
     }
 
-    // ---------------------------------------------------------------- demo data
+    // ---------------------------------------------------------------- share links
 
-    @PostMapping("/demo")
-    @RequiresPermission(Permission.MANAGE_CHITS)
-    public Detail loadDemo() {
-        return service.loadDemo();
+    @GetMapping("/hosted-chits/{id}/shares")
+    @RequiresPermission(Permission.VIEW)
+    public List<ShareView> shares(@PathVariable Long id) {
+        return shares.list(id);
     }
 
-    @DeleteMapping("/demo")
+    @PostMapping("/hosted-chits/{id}/shares")
     @RequiresPermission(Permission.MANAGE_CHITS)
-    public Map<String, Integer> clearDemo() {
-        return Map.of("removed", service.clearDemo());
+    public CreatedShare share(@PathVariable Long id, @Valid @RequestBody ShareRequest request) {
+        return shares.create(id, request);
+    }
+
+    @PostMapping("/hosted-chits/{id}/shares/{shareId}/revoke")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public ShareView revokeShare(@PathVariable Long id, @PathVariable Long shareId) {
+        return shares.revoke(id, shareId);
+    }
+
+    /** Statement links with the UPI pay button for several members (reminders). */
+    @PostMapping("/hosted-chits/{id}/shares/batch")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public List<BatchLink> shareBatch(@PathVariable Long id, @Valid @RequestBody BatchRequest request) {
+        return shares.batch(id, request);
+    }
+
+    // ---------------------------------------------------------------- signed receipts and sending
+
+    @PutMapping("/hosted-chits/{id}/receipt-signature")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail receiptSignature(@PathVariable Long id, @Valid @RequestBody SignatureRequest request) {
+        return service.setReceiptSignature(id, request);
+    }
+
+    /** The signed receipt (organiser's signature and seal). */
+    @GetMapping("/hosted-chits/{id}/payments/{paymentId}/receipt")
+    @RequiresPermission(Permission.VIEW)
+    public HostedChitShareService.PublicReceipt receipt(@PathVariable Long id, @PathVariable Long paymentId) {
+        return shares.receipt(service.detail(id), paymentId);
+    }
+
+    @GetMapping("/hosted-chits/{id}/payments/{paymentId}/receipt.pdf")
+    @RequiresPermission(Permission.VIEW)
+    public ResponseEntity<byte[]> receiptPdf(@PathVariable Long id, @PathVariable Long paymentId) {
+        return pdf(shares.receiptPdf(id, paymentId), "receipt-" + paymentId + ".pdf");
+    }
+
+    /** Whether e-mail is set up (spring.mail.*), so reminders and receipts can go out by e-mail. */
+    @GetMapping("/hosted-chits/mail-status")
+    @RequiresPermission(Permission.VIEW)
+    public HostedChitMailService.MailStatus mailStatus() {
+        return mail.status();
+    }
+
+    /** E-mails a batch of reminders or receipts (receipts carry the signed PDF). */
+    @PostMapping("/hosted-chits/{id}/send-email")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public HostedChitMailService.SendResult sendEmail(@PathVariable Long id, @Valid @RequestBody HostedChitMailService.SendRequest request) {
+        return mail.send(id, request);
+    }
+
+    private static ResponseEntity<byte[]> pdf(byte[] bytes, String name) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + name + "\"")
+                .body(bytes);
+    }
+
+    // ---------------------------------------------------------------- digital agreements
+
+    @PostMapping("/hosted-chits/{id}/months/{monthNo}/agreement")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail createAgreement(@PathVariable Long id, @PathVariable int monthNo, @Valid @RequestBody AgreementRequest request) {
+        return service.createAgreement(id, monthNo, request);
+    }
+
+    @DeleteMapping("/hosted-chits/{id}/agreements/{agreementId}")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail deleteAgreement(@PathVariable Long id, @PathVariable Long agreementId) {
+        return service.deleteAgreement(id, agreementId);
+    }
+
+    public record SignedRequest(@jakarta.validation.constraints.Size(max = 100) String name) {
+    }
+
+    @PostMapping("/hosted-chits/{id}/agreements/{agreementId}/signed")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail agreementSigned(@PathVariable Long id, @PathVariable Long agreementId, @RequestBody SignedRequest request) {
+        return service.markAgreementSigned(id, agreementId, request.name());
+    }
+
+    // ---------------------------------------------------------------- public side (no sign-in)
+
+    /** The page behind a share link. */
+    @PostMapping("/public/hosted-chits/{token}")
+    public PublicChit openShare(@PathVariable String token) {
+        return shares.open(token);
+    }
+
+    /** The signed receipt behind a receipt link, as a PDF. */
+    @GetMapping("/public/hosted-chits/{token}/receipt.pdf")
+    public ResponseEntity<byte[]> publicReceiptPdf(@PathVariable String token) {
+        return pdf(shares.publicReceiptPdf(token), "receipt.pdf");
+    }
+
+    /** The member accepts the agreement behind the link; when, from where and as whom is recorded. */
+    @PostMapping("/public/hosted-chits/{token}/accept")
+    public PublicChit acceptAgreement(@PathVariable String token, @Valid @RequestBody AcceptRequest request,
+                                      jakarta.servlet.http.HttpServletRequest http) {
+        String forwarded = http.getHeader("X-Forwarded-For");
+        String ip = forwarded != null && !forwarded.isBlank() ? forwarded.split(",")[0].trim() : http.getRemoteAddr();
+        return shares.accept(token, request, ip, http.getHeader("User-Agent"));
     }
 }

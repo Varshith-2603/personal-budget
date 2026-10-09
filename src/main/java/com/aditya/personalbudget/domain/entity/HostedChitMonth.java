@@ -49,9 +49,13 @@ public class HostedChitMonth implements TenantOwned {
     @References(HostedChitMember.class)
     private Long winnerMemberId;
 
-    /** "Picked" or "Random draw". */
+    /** "Picked", "Random draw" or "Auction". */
     @Column(length = 20)
     private String drawMethod;
+
+    /** Auction chits: the winning bid, i.e. the discount the winner gives up. */
+    @PositiveOrZero
+    private BigDecimal bidAmount;
 
     /** Paid to the winner (chit value - commission) once the payout is done. */
     @PositiveOrZero
@@ -66,11 +70,19 @@ public class HostedChitMonth implements TenantOwned {
     @Column(length = 10)
     private String payoutMode;
 
+    /** UPI reference, cheque or bank transfer number of the payout. */
+    @Column(length = 60)
+    private String payoutReference;
+
     @References(JournalEntry.class)
     private Long payoutEntryId;
 
     @References(JournalEntry.class)
     private Long commissionEntryId;
+
+    /** When the commission has its own account: the transfer moving it there out of the collections. */
+    @References(JournalEntry.class)
+    private Long commissionTransferEntryId;
 
     @Version
     private Long version;
