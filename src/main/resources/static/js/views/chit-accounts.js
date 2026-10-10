@@ -111,14 +111,14 @@ export function moneyAccountOptions(accounts, { chitId = null, chitName = 'This 
 export async function render(container, _params, isCurrent) {
     // coming from Chits the page stays on screen until this one is drawn (no spinner in between)
     if (!container.querySelector('.hc-page')) container.innerHTML = loading();
-    const [book, accounts] = await Promise.all([api.get('/hosted-chits/book'), loadAccounts(true)]);
+    const [book, accounts] = await Promise.all([api.get('/hosted-chits/book'), loadAccounts(true, { all: true })]);
     if (!isCurrent()) return;
     bindStatsToggle(container);
     const reload = async (selected = view.selected) => {
         view.selected = selected;
         const fresh = await api.get('/hosted-chits/book');
         if (!document.body.contains(container)) return;
-        draw(container, fresh, await loadAccounts(true), reload);
+        draw(container, fresh, await loadAccounts(true, { all: true }), reload);
     };
     draw(container, book, accounts, reload);
 }
@@ -712,7 +712,7 @@ export function transfersTable(list, empty, { actions = true } = {}) {
  * posts. Also edits a transfer ({ editing }). from: [{ accountId, amount }] to start with.
  */
 export async function openTransfer({ book = null, accounts = null, chitId = null, toAccountId = null, from = [], chitMoney = null, editing = null, onDone } = {}) {
-    [book, accounts] = await Promise.all([book || api.get('/hosted-chits/book'), accounts || loadAccounts()]);
+    [book, accounts] = await Promise.all([book || api.get('/hosted-chits/book'), accounts || loadAccounts(false, { all: true })]);
     const s = editing ? {
         chitId: editing.chitId, toAccountId: editing.toAccountId, chitMoney: editing.chitMoney, date: editing.date, mode: editing.mode,
         reference: editing.reference || '', note: editing.note || '',
@@ -757,12 +757,8 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
         return list.filter(p => (room -= num(p.amount)) >= -0.005).reverse();
     };
     /** "[Own a/c ICICI Bank] Gopal RC-000968 (UTR265) ₹25,000; ...": the payments, and the account they came into. */
-    const narrative = (list, accountId) => {
-        if (!list.length) return '';
-        const a = accounts.find(x => x.id === Number(accountId));
-        const label = a ? `[${a.chitBook ? '' : 'Own a/c '}${a.name}] ` : '';
-        return label + list.map(p => `${p.memberName} ${p.receiptNo || ''}${p.reference ? ` (${p.reference})` : ''} ${money(p.amount)}`.replace(/\s+/g, ' ')).join('; ');
-    };
+    /** The payments a transfer line moves, in short: "[Own a/c ICICI Bank] 2×₹25,000: Gopal #968/UTR265, Arjun #969". */
+    const narrative = (list, accountId, d) => paymentsNarrative(list, { members: d?.members, chitName: chitOf()?.name, accounts, lineAccountId: Number(accountId) });
     const flArea = (label, attrs, value = '', cls = '') => `<label class="fl fl-area ${cls}"><textarea rows="1" ${attrs} placeholder=" " data-plain>${esc(value)}</textarea><span>${label}</span></label>`;
     const fl = (label, attrs, value = '', unit = '', cls = '') => `<label class="fl ${cls}"><input ${attrs} value="${esc(value)}" placeholder=" " data-plain><span>${label}</span>${unit ? `<i class="fl-unit">${unit}</i>` : ''}</label>`;
     const options = selected => {
@@ -842,7 +838,7 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
                     if (waiting.length && l.paymentIds === null) {
                         l.paymentIds = waiting.map(p => p.id);
                         if (l.auto) l.amount = waiting.reduce((t, p) => t + num(p.amount), 0);
-                        if (!l.note) l.note = narrative(waiting, l.accountId);
+                        if (!l.note) l.note = narrative(waiting, l.accountId, d);
                     }
                     const picked = new Set(l.paymentIds || []);
                     return `<div class="ca-x-leg" data-i="${i}">
@@ -952,7 +948,7 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
                     leg.paymentIds = [...ids];
                     const chosen = (d?.payments || []).filter(p => ids.has(p.id));
                     leg.amount = chosen.reduce((t, p) => t + num(p.amount), 0) || leg.amount;
-                    leg.note = narrative(chosen, leg.accountId);
+                    leg.note = narrative(chosen, leg.accountId, d);
                     row.querySelector('[data-leg-amount]').value = leg.amount;
                     const noteEl = row.querySelector('[data-leg-note]');
                     if (noteEl) noteEl.value = leg.note;
@@ -976,6 +972,48 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
             });
         },
     });
+}
+
+/**
+ * A short narrative for the members' payments a journal line carries, with every detail kept: who (first names; the
+ * full name where two members share one), the receipt (#942 for RC-000942), the reference (/UTR265) and the amount,
+ * equal amounts grouped (4×₹25,000: …). The payments are grouped by the way the money came, in tags: "[Own a/c ICICI
+ * Bank → TR-000008]" for your own bank or cash account (and the transfer that moved it), "[Commission]" for another
+ * of the chit's accounts; no tag when it came straight into the line's own chit account.
+ * e.g. "4×₹25,000: Jyothi #942, Mahesh #943, Srinivas #944, Divya #945 | [Own a/c ICICI Bank → TR-000008] Suresh #946/UTR77 ₹1,000"
+ */
+export function paymentsNarrative(list, { members = [], chitName = '', accounts = [], lineAccountId = null, movedBy = () => null, fallbackAccountId = null } = {}) {
+    if (!list?.length) return '';
+    const firsts = {};
+    (members?.length ? members.map(m => m.name) : list.map(p => p.memberName)).forEach(n => {
+        const f = String(n).trim().split(/\s+/)[0].toLowerCase();
+        firsts[f] = (firsts[f] || new Set()).add(String(n).trim().toLowerCase());
+    });
+    const who = name => {
+        const f = String(name).trim().split(/\s+/)[0];
+        return (firsts[f.toLowerCase()]?.size || 0) > 1 ? String(name).trim() : f;
+    };
+    const receipt = r => (r ? ` #${String(r).replace(/^[A-Za-z]+-?0*/, '')}` : '');
+    const token = p => `${who(p.memberName)}${receipt(p.receiptNo)}${p.reference ? `/${p.reference}` : ''}`;
+    const prefix = chitName ? `${chitName} - ` : '';
+    const nameOf = a => (prefix && a.name.startsWith(prefix) ? a.name.slice(prefix.length).replace(/^./, ch => ch.toUpperCase()) : a.name);
+    const segments = new Map();
+    for (const p of list) {
+        const originId = p.accountId || fallbackAccountId;
+        const a = accounts.find(x => x.id === originId);
+        const t = movedBy(p.id);
+        const own = a && !a.chitBook;
+        const label = !own && !t && (originId === lineAccountId || !a) ? ''
+            : `[${own ? 'Own a/c ' : ''}${a ? nameOf(a) : 'Collections'}${t ? ` → ${t.entryNo}` : ''}] `;
+        segments.set(label, [...(segments.get(label) || []), p]);
+    }
+    return [...segments].map(([label, ps]) => {
+        const byAmount = new Map();
+        ps.forEach(p => byAmount.set(num(p.amount), [...(byAmount.get(num(p.amount)) || []), p]));
+        return label + [...byAmount].map(([amount, group]) => group.length > 1
+            ? `${group.length}×${money(amount)}: ${group.map(token).join(', ')}`
+            : `${token(group[0])} ${money(amount)}`).join('; ');
+    }).join(' | ');
 }
 
 /** Add or change a chit account: a common one (any chit) or a chit's own; or move one of my accounts in. */

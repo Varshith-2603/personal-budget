@@ -62,7 +62,7 @@ const savePrefs = () => setPref('statement', prefs);
 const toneOf = a => BUCKET_TONE[a.bucket] || (a.accountClass === 'INCOME' ? 'green' : a.accountClass === 'EXPENSE' ? 'coral' : 'slate');
 
 export async function render(container, _params, isCurrent) {
-    const everything = await loadAccounts(true);
+    const everything = await loadAccounts(true, { all: true });
     if (!isCurrent()) return;
     // the hosted-chit book (members' money, Host a Chit) has its own page: only its net counts here, in net worth
     const accounts = everything.filter(a => !a.chitBook);

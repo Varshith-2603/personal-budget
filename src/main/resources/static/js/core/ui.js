@@ -214,13 +214,13 @@ export function toast(message, kind = 'success') {
  * actions: [{ label, kind: 'primary'|'danger'|'', iconName, left, onClick: async (modal) => keepOpen? }]
  * Returns { el, close, setError }.
  */
-export function openModal({ title, iconName = 'droplet', body, size = '', actions = [], onOpen }) {
+export function openModal({ title, sub = '', iconName = 'droplet', body, size = '', actions = [], onOpen }) {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
     backdrop.innerHTML = `
         <div class="modal ${size}" role="dialog" aria-modal="true">
             <header class="modal-head">
-                <h3>${icon(iconName)}${esc(title)}</h3>
+                <h3><span class="modal-icon">${icon(iconName)}</span><span class="modal-title"><b data-modal-title>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span></h3>
                 <button class="btn ghost icon sm" data-close title="Close">${icon('x')}</button>
             </header>
             <div class="modal-body">${body}<p class="form-error" data-error></p></div>

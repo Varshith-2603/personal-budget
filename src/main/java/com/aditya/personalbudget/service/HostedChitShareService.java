@@ -136,7 +136,9 @@ public class HostedChitShareService {
                              int currentMonth, int completedMonths, String status, BigDecimal totalCollected,
                              BigDecimal totalPaidOut, boolean showEarnings, BigDecimal commission, BigDecimal commissionEarned,
                              BigDecimal held, BigDecimal pendingDues, List<PublicMonth> schedule, PublicMember member,
-                             PublicReceipt receipt, PublicAgreement agreement, PublicPayTo payTo) {
+                             PublicReceipt receipt, PublicAgreement agreement, PublicPayTo payTo,
+                             /* the chit in payment notes: AC5L gives AC5L-M03 for month 3 */
+                             String shortCode) {
     }
 
     /**
@@ -144,7 +146,15 @@ public class HostedChitShareService {
      * sealed (HMAC over every detail and the signature) so a changed account number or UPI ID shows as tampered.
      */
     public record PublicPayTo(String upiId, String payeeName, String holderName, String bankName, String accountNumber, String ifsc,
-                              String signer, String signature, String seal, LocalDateTime sealedAt, String stampName) {
+                              String signer, String signature, String seal, LocalDateTime sealedAt, String stampName,
+                              /* the digital signature: the exact signed text (JSON), its ECDSA P-256 signature, the public key and its fingerprint */
+                              String payload, String digitalSignature, String publicKey, String keyFingerprint,
+                              /* a fellow member (this month's winner) to pay directly: their name and mobile number */
+                              String toMember, String toMemberPhone) {
+    }
+
+    /** What the server says about a link's payment details: its own signature, and whether they are still the ones to pay into. */
+    public record PayToCheck(boolean signatureValid, boolean current, String keyFingerprint, String message) {
     }
 
     private final HostedChitShareRepository shares;
@@ -423,7 +433,7 @@ public class HostedChitShareService {
                 c.currentMonth(), c.completedMonths(), c.status(), full ? c.totalCollected() : null, full ? c.totalPaidOut() : null,
                 earnings, earnings ? c.commission() : null, earnings ? c.commissionEarned() : null, earnings ? c.held() : null,
                 CHIT.equals(kind) ? c.pendingDues() : null, full ? schedule : List.of(), MEMBER.equals(kind) ? member : null, receipt, agreement,
-                MEMBER.equals(kind) ? payTo(d, s, t) : null);
+                MEMBER.equals(kind) ? payTo(d, s, t) : null, c.shortCode());
     }
 
     /**
@@ -438,12 +448,22 @@ public class HostedChitShareService {
                 .filter(Objects::nonNull).map(id -> accountRepo.findById(id).orElse(null))
                 .filter(x -> x != null && Boolean.TRUE.equals(x.getActive()) && (x.getUpiId() != null || bankReady(x)))
                 .findFirst().orElse(null);
-        String upi = a != null ? a.getUpiId() : c.upiId();
+        // a fellow member to pay directly: the winner of a month not yet paid out (set off against their payout)
+        HostedChitMember to = m == null || m.getPayToMemberId() == null ? null : members.findById(m.getPayToMemberId())
+                .filter(x -> (x.getUpiId() != null || x.getPhone() != null)
+                        && d.schedule().stream().anyMatch(mo -> x.getId().equals(mo.winnerMemberId()) && mo.payoutDate() == null))
+                .orElse(null);
+        if (to != null) {
+            a = null;
+        }
+        String upi = to != null ? to.getUpiId() : a != null ? a.getUpiId() : c.upiId();
         boolean bank = a != null && bankReady(a);
-        if (upi == null && !bank) {
+        if (upi == null && !bank && to == null) {
             return null;
         }
-        String payee = a != null && a.getHolderName() != null ? a.getHolderName() : c.payeeName() != null ? c.payeeName() : s.getCreatedByName();
+        String payee = to != null ? to.getName() : a != null && a.getHolderName() != null ? a.getHolderName() : c.payeeName() != null ? c.payeeName() : s.getCreatedByName();
+        String toName = to == null ? null : to.getName();
+        String toPhone = to == null ? null : to.getPhone();
         String signer = c.receiptSigner() != null ? c.receiptSigner() : c.payeeName() != null ? c.payeeName() : c.createdBy();
         LocalDateTime at = LocalDateTime.now().withNano(0);
         String holder = bank ? (a.getHolderName() != null ? a.getHolderName() : payee) : null;
@@ -454,7 +474,63 @@ public class HostedChitShareService {
                 String.valueOf(payee), String.valueOf(holder), String.valueOf(bankName), String.valueOf(number), String.valueOf(ifsc),
                 String.valueOf(signer), c.receiptSignature() == null ? "" : HostedChitService.sha256(c.receiptSignature()), at.toString()));
         String stamp = t.getChitCompanyName() != null && !t.getChitCompanyName().isBlank() ? t.getChitCompanyName().trim() : t.getName();
-        return new PublicPayTo(upi, payee, holder, bankName, number, ifsc, signer, c.receiptSignature(), seal, at, stamp);
+        String payload = "{\"v\":1,\"kind\":\"PAY_TO\",\"pay\":" + payDetails(c.id(), s.getMemberId(), upi, payee, holder, bankName, number, ifsc, toName, toPhone)
+                + ",\"chit\":" + q(c.name()) + ",\"member\":" + q(m == null ? null : m.getName()) + ",\"organiser\":" + q(stamp)
+                + ",\"signer\":" + q(signer) + ",\"handSignature\":" + q(c.receiptSignature() == null ? null : HostedChitService.sha256(c.receiptSignature()))
+                + ",\"issuedAt\":" + q(at.toString()) + ",\"validUntil\":" + q(String.valueOf(s.getExpiresAt())) + "}";
+        return new PublicPayTo(upi, payee, holder, bankName, number, ifsc, signer, c.receiptSignature(), seal, at, stamp,
+                payload, settings.signPayLink(payload), settings.payLinkPublicKey(), settings.payLinkFingerprint(), toName, toPhone);
+    }
+
+    /** The fingerprint of the key that signs payment details on member links (to give out, so members can compare). */
+    public String keyFingerprint() {
+        return settings.payLinkFingerprint();
+    }
+
+    /** The payment details part of the signed text: the same details always give the same text. */
+    private static String payDetails(Long chitId, Long memberId, String upi, String payee, String holder, String bank, String number, String ifsc,
+                                     String toMember, String toMemberPhone) {
+        return "{\"chitId\":" + chitId + ",\"memberId\":" + memberId + ",\"upiId\":" + q(upi) + ",\"payee\":" + q(payee)
+                + ",\"holder\":" + q(holder) + ",\"bank\":" + q(bank) + ",\"accountNumber\":" + q(number) + ",\"ifsc\":" + q(ifsc)
+                + ",\"toMember\":" + q(toMember) + ",\"toMemberPhone\":" + q(toMemberPhone) + "}";
+    }
+
+    /** A JSON string (or null): quotes, backslashes and control characters escaped. */
+    private static String q(String v) {
+        if (v == null) {
+            return "null";
+        }
+        StringBuilder b = new StringBuilder().append('"');
+        for (char ch : v.toCharArray()) {
+            if (ch == '"' || ch == (char) 92) {
+                b.append((char) 92).append(ch);
+            } else if (ch < 0x20) {
+                b.append((char) 92).append('u').append(String.format("%04x", (int) ch));
+            } else {
+                b.append(ch);
+            }
+        }
+        return b.append('"').toString();
+    }
+
+    /**
+     * Checks the payment details a member's page shows: the signature must be this installation's over exactly that
+     * text, and the details must still be the ones this member pays into (a changed account shows as no longer current).
+     */
+    public PayToCheck checkPayTo(String token, String payload, String signature) {
+        HostedChitShare s = active(token);
+        if (!MEMBER.equals(kind(s))) {
+            throw new BusinessException("This link has no payment details");
+        }
+        boolean valid = settings.verifyPayLink(payload, signature);
+        Tenant tenant = tenant(s);
+        PublicPayTo now = asTenant(tenant, () -> payTo(service.detail(s.getChitId()), s, tenant));
+        boolean current = valid && now != null && payload.contains("\"pay\":" + payDetails(s.getChitId(), s.getMemberId(), now.upiId(),
+                now.payeeName(), now.holderName(), now.bankName(), now.accountNumber(), now.ifsc(), now.toMember(), now.toMemberPhone()) + ",");
+        String message = !valid ? "The signature does not match: these details were not issued by the organiser, or were changed. Do not pay into them."
+                : !current ? "Signed by the organiser, but these are no longer the details to pay into. Open the link again for the current ones."
+                : "Genuine: signed by the organiser and still the account to pay into.";
+        return new PayToCheck(valid, current, settings.payLinkFingerprint(), message);
     }
 
     private static boolean bankReady(Account a) {

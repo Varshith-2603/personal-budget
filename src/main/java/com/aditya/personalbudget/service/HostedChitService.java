@@ -101,17 +101,22 @@ public class HostedChitService {
 
     // ================================================================== requests
 
-    /** payoutAccount: where the member takes the payout (bank, account number and IFSC, or a UPI ID). */
     /**
-     * payoutAccount: where the member takes the payout (bank, account number and IFSC, or a UPI ID); payToAccountId:
-     * the organiser's account this member pays into (its UPI ID or bank details are on the member's payment link).
+     * payoutAccount: where the member takes the payout (bank, account number and IFSC, or a UPI ID); upiId: the
+     * member's own UPI ID (fellow members pay them on it when they win); payToAccountId: the organiser's account this
+     * member pays into; payToMemberId: or a fellow member, this month's winner, they pay directly (on their link).
      */
     public record MemberInput(@NotBlank @Size(max = 100) String name, @Size(max = 20) String phone,
                               @jakarta.validation.constraints.Email @Size(max = 120) String email,
-                              @Size(max = 120) String payoutAccount, Long payToAccountId) {
+                              @Size(max = 120) String payoutAccount, Long payToAccountId,
+                              @Size(max = 60) String upiId, Long payToMemberId) {
 
         public MemberInput(String name, String phone, String email, String payoutAccount) {
-            this(name, phone, email, payoutAccount, null);
+            this(name, phone, email, payoutAccount, null, null, null);
+        }
+
+        public MemberInput(String name, String phone, String email, String payoutAccount, Long payToAccountId) {
+            this(name, phone, email, payoutAccount, payToAccountId, null, null);
         }
     }
 
@@ -162,7 +167,23 @@ public class HostedChitService {
             @PositiveOrZero BigDecimal installmentIncrement,
             List<@Valid PlanMonth> plan,
             /* the account members pay into by default (its UPI ID or bank details go on their payment links) */
-            Long payToAccountId) {
+            Long payToAccountId,
+            /* up to 4 letters or digits: the chit in payment notes, e.g. AC5L in AC5L-M03 (empty: made from the name) */
+            @jakarta.validation.constraints.Pattern(regexp = "^$|^[A-Za-z0-9]{1,4}$", message = "The short code is 1 to 4 letters or digits") String shortCode) {
+
+        public ChitRequest(String name, String chitType, LocalDate startMonth, Integer dueDay, Integer memberCount, Integer months,
+                           BigDecimal installment, BigDecimal baseValue, BigDecimal monthlyIncrement, BigDecimal commission,
+                           String winnerExtraType, BigDecimal winnerExtraValue, BigDecimal maxBidPercent, BigDecimal lateFeePercent,
+                           Integer lateGraceDays, String upiId, String payeeName, Boolean postToBooks, Long accountId,
+                           Boolean separateCollectionAccount, Long commissionAccountId, Boolean separateCommissionAccount,
+                           Long commissionCategoryId, Long lateFeeAccountId, Boolean separateLateFeeAccount, String notes,
+                           List<MemberInput> members, Long version, BigDecimal installmentIncrement, List<PlanMonth> plan,
+                           Long payToAccountId) {
+            this(name, chitType, startMonth, dueDay, memberCount, months, installment, baseValue, monthlyIncrement, commission,
+                    winnerExtraType, winnerExtraValue, maxBidPercent, lateFeePercent, lateGraceDays, upiId, payeeName, postToBooks,
+                    accountId, separateCollectionAccount, commissionAccountId, separateCommissionAccount, commissionCategoryId,
+                    lateFeeAccountId, separateLateFeeAccount, notes, members, version, installmentIncrement, plan, payToAccountId, null);
+        }
 
         public ChitRequest(String name, String chitType, LocalDate startMonth, Integer dueDay, Integer memberCount, Integer months,
                            BigDecimal installment, BigDecimal baseValue, BigDecimal monthlyIncrement, BigDecimal commission,
@@ -174,7 +195,7 @@ public class HostedChitService {
             this(name, chitType, startMonth, dueDay, memberCount, months, installment, baseValue, monthlyIncrement, commission,
                     winnerExtraType, winnerExtraValue, maxBidPercent, lateFeePercent, lateGraceDays, upiId, payeeName, postToBooks,
                     accountId, separateCollectionAccount, commissionAccountId, separateCommissionAccount, commissionCategoryId,
-                    lateFeeAccountId, separateLateFeeAccount, notes, members, version, installmentIncrement, plan, null);
+                    lateFeeAccountId, separateLateFeeAccount, notes, members, version, installmentIncrement, plan, null, null);
         }
     }
 
@@ -249,10 +270,16 @@ public class HostedChitService {
                            /* started: amounts, percentages, dates and the chit table no longer change */
                            boolean termsLocked,
                            /* the account members pay into by default (else the UPI ID above) */
-                           Long payToAccountId, String payToAccountName) {
+                           Long payToAccountId, String payToAccountName,
+                           /* the chit in payment notes: AC5L gives AC5L-M03 for month 3 (8 characters, fits bank statements) */
+                           String shortCode) {
     }
 
-    public record MemberView(Long id, int slot, String name, String phone, String email, String payoutAccount, Long payToAccountId, Integer wonMonth,
+    public record MemberView(Long id, int slot, String name, String phone, String email, String payoutAccount, Long payToAccountId,
+                             /* their own UPI ID; the fellow member (a winner) they pay directly, if any */
+                             String upiId, Long payToMemberId, String payToMemberName,
+                             /* the account they pay into: its name and what is on their link (UPI ID or A/c ••1234) */
+                             String payToAccountName, String payToSummary, Integer wonMonth,
                              BigDecimal totalPaid, BigDecimal balanceDue, BigDecimal lateFeeDue, Long version) {
     }
 
@@ -388,7 +415,7 @@ public class HostedChitService {
     // ================================================================== settings
 
     /** The household's chit-funds company name (new chits are named after it), and the household's name as a fallback. */
-    public record ChitSettings(String companyName, String householdName) {
+    public record ChitSettings(String companyName, String householdName, String keyFingerprint) {
     }
 
     public record ChitSettingsRequest(@Size(max = 60) String companyName) {
@@ -397,7 +424,7 @@ public class HostedChitService {
     public ChitSettings chitSettings() {
         com.aditya.personalbudget.domain.entity.Tenant t = tenants.findById(UserContext.tenantId())
                 .orElseThrow(() -> new NotFoundException("Household", UserContext.tenantId()));
-        return new ChitSettings(t.getChitCompanyName(), t.getName());
+        return new ChitSettings(t.getChitCompanyName(), t.getName(), null);
     }
 
     @Transactional
@@ -526,6 +553,7 @@ public class HostedChitService {
         }
         c.setNotes(blank(r.notes()));
         c.setPayToAccountId(r.payToAccountId() == null ? null : requirePayTo(r.payToAccountId()).getId());
+        c.setShortCode(uniqueShortCode(c, r.shortCode()));
         String upi = blank(r.upiId());
         if (upi != null && !upi.matches("[\\w.\\-]{2,}@[A-Za-z][\\w.]{1,}")) {
             throw new BusinessException("The UPI ID should look like name@bank");
@@ -630,6 +658,7 @@ public class HostedChitService {
             m.setEmail(blank(list.get(i).email()));
             m.setPayoutAccount(blank(list.get(i).payoutAccount()));
             m.setPayToAccountId(list.get(i).payToAccountId() == null ? null : requirePayTo(list.get(i).payToAccountId()).getId());
+            m.setUpiId(cleanUpi(list.get(i).upiId(), list.get(i).name()));
             rows.add(m);
         }
         members.saveAll(rows);
@@ -687,7 +716,12 @@ public class HostedChitService {
         m.setPhone(cleanPhone(r.phone(), name));
         m.setEmail(blank(r.email()));
         m.setPayoutAccount(blank(r.payoutAccount()));
+        m.setUpiId(cleanUpi(r.upiId(), name));
+        if (r.payToAccountId() != null && r.payToMemberId() != null) {
+            throw new BusinessException("Pick either an account or a fellow member for " + name + " to pay into, not both");
+        }
         m.setPayToAccountId(r.payToAccountId() == null ? null : requirePayTo(r.payToAccountId()).getId());
+        m.setPayToMemberId(r.payToMemberId() == null ? null : requirePayToMember(c, m, r.payToMemberId()).getId());
         members.save(m);
         activity.record("CHANGED", AREA, "Edited a member · " + c.getName() + " · " + before
                 + (before.equals(m.getName()) ? "" : " → " + m.getName()));
@@ -1178,9 +1212,9 @@ public class HostedChitService {
      * chit's money, whichever account it is in). One entry, one credit line per account with its mode and reference.
      */
     JournalDraft payoutDraft(HostedChit c, HostedChitMonth month, HostedChitMember winner, List<HostedChitLeg> parts) {
-        String of = " (" + c.getName() + " month " + month.getMonthNo() + "/" + c.getMonths() + ")";
-        JournalDraft draft = JournalDraft.of(month.getPayoutDate(), VoucherType.HOSTED_CHIT_PAYOUT, "Chit payout - " + winner.getName() + of
-                        + (parts.size() > 1 ? " from " + parts.size() + " accounts" : ""))
+        // short: "Chit payout AC5L-M03 · Jyothi · Aditya Chitfunds 5L" (the code names the chit and the month; the lines, the accounts)
+        JournalDraft draft = JournalDraft.of(month.getPayoutDate(), VoucherType.HOSTED_CHIT_PAYOUT,
+                        "Chit payout " + payCode(shortCodeOf(c), month.getMonthNo()) + " · " + winner.getName() + " · " + c.getName())
                 .debit(fundsAccount().getId(), month.getPayoutAmount(), month.getPayoutTo() == null ? null : "To " + month.getPayoutTo())
                 .hostedChit(c.getId());
         for (HostedChitLeg leg : parts) {
@@ -1409,6 +1443,9 @@ public class HostedChitService {
         month.setPayoutAmount(payout);
         month.setCommissionAmount(commission);
         month.setPayoutDate(date);
+        // members pointed at this winner pay into the chit again from now on
+        members.findByChitId(c.getId()).stream().filter(x -> month.getWinnerMemberId() != null && month.getWinnerMemberId().equals(x.getPayToMemberId()))
+                .forEach(x -> { x.setPayToMemberId(null); members.save(x); });
         month.setPayoutMode(parts.stream().map(HostedChitLeg::getMode).filter(m -> !DIRECT_MODE.equals(m)).findFirst()
                 .orElse(parts.isEmpty() ? mode(r.mode()) : DIRECT_MODE));
         month.setPayoutReference(payoutReference(r.reference(), parts));
@@ -1909,6 +1946,18 @@ public class HostedChitService {
         return accountId != null && accounts.findById(accountId).map(a -> Account.ROLE_DIRECT.equals(a.getChitRole())).orElse(false);
     }
 
+    private String payToName(Long accountId) {
+        return accountId == null ? null : accounts.findById(accountId).map(Account::getName).orElse(null);
+    }
+
+    /** What a member's link shows for the account: "UPI name@bank" or "A/c ••1234 · IFSC". */
+    private String payToSummary(Long accountId) {
+        return accountId == null ? null : accounts.findById(accountId).map(a -> a.getUpiId() != null ? "UPI " + a.getUpiId()
+                : a.getAccountNumber() != null && a.getIfsc() != null
+                ? "A/c ••" + a.getAccountNumber().replace(" ", "").substring(Math.max(0, a.getAccountNumber().replace(" ", "").length() - 4)) + " · " + a.getIfsc()
+                : "no bank details").orElse(null);
+    }
+
     /**
      * An account members can be asked to pay into: a bank or wallet account, active, with a UPI ID or a bank account
      * number and IFSC (they go on the member's payment link).
@@ -1923,6 +1972,111 @@ public class HostedChitService {
             throw new BusinessException(a.getName() + " has no UPI ID or bank details (account number and IFSC): add them to the account first");
         }
         return a;
+    }
+
+    /**
+     * A fellow member another member may pay directly: of the same chit, not themselves, with a UPI ID or a mobile
+     * number, and chosen as the winner of a month not yet paid out (the money is set off against their payout).
+     */
+    HostedChitMember requirePayToMember(HostedChit c, HostedChitMember payer, Long targetId) {
+        HostedChitMember t = requireMember(c, targetId);
+        if (t.getId().equals(payer.getId())) {
+            throw new BusinessException(payer.getName() + " cannot pay themselves");
+        }
+        if (t.getUpiId() == null && t.getPhone() == null) {
+            throw new BusinessException(t.getName() + " has no UPI ID or mobile number to be paid on: add one first");
+        }
+        boolean winning = months.findByChitId(c.getId()).stream()
+                .anyMatch(x -> t.getId().equals(x.getWinnerMemberId()) && x.getPayoutDate() == null);
+        if (!winning) {
+            throw new BusinessException("Members can pay only a month's winner directly (it is set off against the payout): "
+                    + t.getName() + " is not the winner of an open month");
+        }
+        return t;
+    }
+
+    /** A member's own UPI ID, checked (name@bank). */
+    private static String cleanUpi(String upi, String name) {
+        if (upi == null || upi.isBlank()) {
+            return null;
+        }
+        String v = upi.trim();
+        if (!v.matches("[\\w.\\-]{2,}@[A-Za-z][\\w.]{1,}")) {
+            throw new BusinessException(name + "'s UPI ID should look like name@bank");
+        }
+        return v;
+    }
+
+    /** The chit's short code: the one kept, else made from its name (AC5L for "Aditya Chitfunds 5L (Nov26-Jun28)"). */
+    public static String shortCodeOf(HostedChit c) {
+        return c.getShortCode() != null && !c.getShortCode().isBlank() ? c.getShortCode() : deriveShortCode(c.getName());
+    }
+
+    /** First letters of the words, number-and-letter words whole (5L, 2L), up to 4 characters, upper case. */
+    static String deriveShortCode(String name) {
+        StringBuilder b = new StringBuilder();
+        for (String w : (name == null ? "" : name).split("[^A-Za-z0-9]+")) {
+            if (w.isEmpty()) continue;
+            b.append(w.chars().anyMatch(Character::isDigit) ? w.toUpperCase() : w.substring(0, 1).toUpperCase());
+            if (b.length() >= 4) break;
+        }
+        String s = b.length() > 4 ? b.substring(0, 4) : b.toString();
+        return s.isEmpty() ? "CHIT" : s;
+    }
+
+    /** The 8-character payment note for a month: AC5L-M03 (a 100-month chit: AC5-M100). */
+    public static String payCode(String shortCode, int monthNo) {
+        String m = monthNo < 100 ? String.format("M%02d", monthNo) : "M" + monthNo;
+        String s = shortCode.length() > 7 - m.length() ? shortCode.substring(0, 7 - m.length()) : shortCode;
+        return s + "-" + m;
+    }
+
+    /**
+     * Gives every chit of the household without a short code one made from its name, the oldest chit first, so two
+     * chits never share a code (AC5L, then AC52 ...). Run at start-up; returns how many were given one.
+     */
+    @Transactional
+    public int assignShortCodes() {
+        List<HostedChit> all = chits.findByTenantId(UserContext.tenantId()).stream().sorted(Comparator.comparing(HostedChit::getId)).toList();
+        Set<String> taken = all.stream().map(HostedChit::getShortCode).filter(x -> x != null && !x.isBlank()).collect(Collectors.toSet());
+        int given = 0;
+        for (HostedChit c : all) {
+            if (c.getShortCode() != null && !c.getShortCode().isBlank()) continue;
+            String code = deriveShortCode(c.getName());
+            for (int i = 2; taken.contains(code) && i <= 9; i++) {
+                code = (code.length() >= 4 ? code.substring(0, 3) : code) + i;
+            }
+            c.setShortCode(code);
+            taken.add(code);
+            chits.save(c);
+            given++;
+        }
+        return given;
+    }
+
+    /** The code asked for (upper case), or one made from the name; another chit of the household may not use it. */
+    private String uniqueShortCode(HostedChit c, String asked) {
+        java.util.Set<String> taken = new java.util.HashSet<>();
+        chits.findByTenantId(UserContext.tenantId()).stream().filter(x -> !x.getId().equals(c.getId()))
+                .forEach(x -> taken.add(shortCodeOf(x)));
+        if (asked != null && !asked.isBlank()) {
+            String code = asked.trim().toUpperCase();
+            if (code.equals(c.getShortCode())) {
+                return code;   // unchanged
+            }
+            if (taken.contains(code)) {
+                throw new BusinessException("Another chit already uses the short code " + code + ": pick another, so payment notes stay clear");
+            }
+            return code;
+        }
+        if (c.getShortCode() != null && !c.getShortCode().isBlank()) {
+            return c.getShortCode();
+        }
+        String code = deriveShortCode(c.getName());
+        for (int i = 2; taken.contains(code) && i <= 9; i++) {
+            code = (code.length() >= 4 ? code.substring(0, 3) : code) + i;
+        }
+        return code;
     }
 
     private static boolean hasPayments(Calc calc, int monthNo) {
@@ -1943,7 +2097,8 @@ public class HostedChitService {
                 throw new BusinessException("Two members are called \"" + name + "\"; add a surname or an initial");
             }
             out.add(new MemberInput(name, cleanPhone(m.phone(), name), m.email() == null || m.email().isBlank() ? null : m.email().trim(),
-                    m.payoutAccount() == null || m.payoutAccount().isBlank() ? null : m.payoutAccount().trim(), m.payToAccountId()));
+                    m.payoutAccount() == null || m.payoutAccount().isBlank() ? null : m.payoutAccount().trim(), m.payToAccountId(),
+                    m.upiId(), null));
         }
         return out;
     }
@@ -2251,7 +2406,8 @@ public class HostedChitService {
                     totalCollected.subtract(paidOut).subtract(commission), next, locked,
                     c.getCreatedBy(), c.getCreatedAt(), c.getVersion(), Money.nz(c.getInstallmentIncrement()),
                     !today.isBefore(c.getStartMonth()) || locked, c.getPayToAccountId(),
-                    c.getPayToAccountId() == null ? null : accounts.findById(c.getPayToAccountId()).map(Account::getName).orElse(null));
+                    c.getPayToAccountId() == null ? null : accounts.findById(c.getPayToAccountId()).map(Account::getName).orElse(null),
+                    shortCodeOf(c));
         }
 
         Detail detail() {
@@ -2266,7 +2422,9 @@ public class HostedChitService {
             entries.findAllById(entryIds).forEach(e -> entryNos.put(e.getId(), e.getEntryNo()));
 
             List<MemberView> memberViews = memberList.stream().map(m -> new MemberView(m.getId(), m.getSlot(), m.getName(), m.getPhone(), m.getEmail(),
-                    m.getPayoutAccount(), m.getPayToAccountId(), wonMonth(m.getId()),
+                    m.getPayoutAccount(), m.getPayToAccountId(), m.getUpiId(), m.getPayToMemberId(),
+                    m.getPayToMemberId() == null ? null : names.get(m.getPayToMemberId()),
+                    payToName(m.getPayToAccountId()), payToSummary(m.getPayToAccountId()), wonMonth(m.getId()),
                     paid.getOrDefault(m.getId(), Map.of()).values().stream().reduce(Money.ZERO, BigDecimal::add),
                     dues(m.getId()), lateDueOf(m.getId()), m.getVersion())).toList();
 

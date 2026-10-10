@@ -154,7 +154,7 @@ export async function openQuickEntry({ kind = 'EXPENSE', onSaved, preset = {} } 
 /** Create (entry = null), edit, or duplicate (copy = true) a multi-line journal. */
 export async function openJournalEditor({ entry: source = null, copy = false, onSaved } = {}) {
     const saveKey = newRequestKey();   // one key per dialog: a retry or a second click saves once
-    const accounts = await loadAccounts();
+    const accounts = await loadAccounts(false, { all: true });   // the pickers still hide chit-book accounts unless a line uses one
     const allCategories = await loadCategories();
     const chits = await api.get('/chits').catch(() => []);
     const accountById = new Map(accounts.map(a => [a.id, a]));

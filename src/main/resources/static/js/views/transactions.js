@@ -24,7 +24,7 @@ const filters = DEFAULTS();
 const isFiltered = () => Object.entries(DEFAULTS()).some(([k, v]) => String(filters[k] ?? '') !== String(v));
 
 export async function render(container, _params, isCurrent) {
-    const accounts = await loadAccounts();
+    const accounts = await loadAccounts(false, { all: true });
     if (!isCurrent()) return;
     const voucherOptions = [{ value: '', label: 'All types' }, ...state.options.voucherTypes];
 

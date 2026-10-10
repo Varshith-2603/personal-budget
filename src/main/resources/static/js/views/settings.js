@@ -274,13 +274,16 @@ async function renderChitSettings(body, reload) {
         const tag = (plus) => { const x = new Date(d.getFullYear(), d.getMonth() + plus, 1); return x.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3) + String(x.getFullYear()).slice(2); };
         return `${(name || cfg.householdName || 'Chit').trim()} 5L (${tag(0)}–${tag(19)})`;
     };
-    body.innerHTML = panel({ title: 'Host a Chit', iconName: 'hand-coins', sub: 'Naming new chits',
+    body.innerHTML = panel({ title: 'Host a Chit', iconName: 'hand-coins', sub: 'Naming new chits · signing payment links',
         body: `<form class="form-grid one chit-settings" id="chit-settings" onsubmit="return false" style="max-width:560px">
             <label class="field"><span>Chit-funds company name</span>
                 <input type="text" name="companyName" maxlength="60" value="${esc(cfg.companyName || '')}" placeholder="${esc(cfg.householdName || 'e.g. Aditya Chitfunds')}" ${admin ? '' : 'disabled'} data-plain>
                 <small>New chits are named after it; empty uses the household's name.</small></label>
             <div class="book-note">${icon('sparkles')}<span>A new chit of ₹5L over 20 months starting this month is named <b data-sample>${esc(sample(cfg.companyName))}</b>.
                 Auction and planned chits add “Auction” or “Planned”. You can always type another name.</span></div>
+            ${cfg.keyFingerprint ? `<div class="book-note">${icon('shield')}<span><b>Signing key for payment links</b>: the bank details and UPI ID on members' links are digitally signed
+                (ECDSA P-256) with this installation's private key. Give members this fingerprint (on the chit card or in the group):
+                their page shows the same key when the details are genuine.<br><span class="hc-key-fp">${icon('lock')}<code>${esc(cfg.keyFingerprint)}</code></span></span></div>` : ''}
             ${admin ? `<div class="row"><button class="btn primary" type="submit">${icon('check')}Save</button></div>`
                 : `<p class="small muted">${icon('lock')} Only an admin of the household can change it.</p>`}
         </form>` });

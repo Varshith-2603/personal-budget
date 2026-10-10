@@ -351,9 +351,9 @@ function bind(form, { categories, budgets, payers, claimList, history, setMode }
         form.querySelector('[data-narration-label]').textContent = next === 'EXPENSE' ? 'What was it for?' : next === 'LENT' ? 'Purpose (optional)' : 'What did you pay for?';
         form.narration.placeholder = next === 'EXPENSE' ? 'e.g. Weekly groceries, Uber to office'
             : next === 'LENT' ? 'e.g. Hand loan for bike repair' : "e.g. Movie tickets, Mom's medicines";
-        const heading = form.closest('.modal')?.querySelector('.modal-head h3');
-        if (heading && /^Add /.test(heading.lastChild.textContent)) {
-            heading.lastChild.textContent = next === 'EXPENSE' ? 'Add expense' : next === 'LENT' ? 'Add money lent' : 'Add payment for someone';
+        const heading = form.closest('.modal')?.querySelector('[data-modal-title]');
+        if (heading && /^Add /.test(heading.textContent)) {
+            heading.textContent = next === 'EXPENSE' ? 'Add expense' : next === 'LENT' ? 'Add money lent' : 'Add payment for someone';
         }
         renderPayers();
         updateClaimInfo();

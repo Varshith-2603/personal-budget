@@ -135,6 +135,10 @@ public class HostedChit implements TenantOwned {
     @Column(length = 60)
     private String upiId;
 
+    /** Up to 4 letters or digits naming the chit in payment notes (AC5L in AC5L-M03); empty: made from the name. */
+    @Column(length = 4)
+    private String shortCode;
+
     /** The account members pay into by default: its UPI ID, or its bank details, go on their payment links. */
     @References(Account.class)
     private Long payToAccountId;

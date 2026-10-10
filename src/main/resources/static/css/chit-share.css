@@ -145,3 +145,51 @@
     .cs-bank-sign { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 }
 @media print { .cs-bank-row button { display: none; } }
+
+/* UPI app marks on the pay buttons */
+.upi-logo { display: inline-flex; align-items: center; flex-shrink: 0; line-height: 0; }
+.upi-logo svg { height: 22px; width: auto; display: block; }
+.cs-app { justify-content: space-between; min-height: 48px; padding: 8px 12px; transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s; }
+.cs-app .upi-logo svg { height: 24px; }
+.cs-app > span:last-child { font-size: 12px; font-weight: 700; color: #fff; background: var(--ocean-600, #0b7cbd); border-radius: 999px; padding: 3px 10px; }
+.cs-app.gpay > span:last-child { background: #1a73e8; }
+.cs-app.phonepe > span:last-child { background: #5f259f; }
+.cs-app.paytm > span:last-child { background: #00baf2; }
+.cs-app.bhim > span:last-child { background: #f47920; }
+.cs-app:hover { box-shadow: 0 4px 14px rgba(16, 52, 84, 0.12); }
+.cs-app:active { transform: scale(0.98); }
+.cs-any-upi { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.cs-any-upi .upi-logo svg { height: 16px; }
+
+/* the organiser's digital signature over the payment details */
+.cs-sig { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cs-sig-status { display: flex; flex-direction: column; gap: 2px; padding: 9px 12px; border-radius: 10px; border: 1px solid; font-size: 12px; line-height: 1.45; }
+.cs-sig-status b { font-size: 13px; }
+.cs-sig-status code { font-size: 11px; font-weight: 700; }
+.cs-sig-status.wait { background: #f2f7fb; border-color: #cfe0ee; color: #335b7a; }
+.cs-sig-status.ok { background: #f0f8f3; border-color: rgba(12, 163, 12, 0.3); color: #0a6b2c; }
+.cs-sig-status.ok small { color: #2d5a3c; }
+.cs-sig-status.bad { background: #fdf1f1; border-color: #efb8b8; color: #a12828; }
+.cs-sig-note { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+.cs-sig-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-muted); }
+.cs-sig-acts button { border: 1px solid #b9d3e6; background: #f2f8fc; color: #1f6a9c; border-radius: 8px; padding: 5px 10px; font: inherit; font-weight: 600; cursor: pointer; }
+.cs-sig-acts code { font-weight: 700; color: var(--text-primary); }
+.cs-sig-raw summary { cursor: pointer; font-size: 11px; color: var(--text-muted); }
+.cs-sig-raw code { display: block; font-size: 10px; word-break: break-all; color: var(--text-muted); }
+.cs-pay-main .cs-sig-status { margin-top: 8px; }
+.cs-bank-qr { display: flex; align-items: center; gap: 12px; padding-top: 10px; border-top: 1px dashed var(--hairline-strong, #d5e0ea); }
+.cs-bank-qr svg { width: 92px; height: 92px; flex-shrink: 0; }
+.cs-bank-qr small { color: var(--text-muted); font-size: 11.5px; line-height: 1.45; }
+@media print { .cs-sig-acts button { display: none; } }
+
+/* paying a fellow member (this month's winner) directly, and the 8-character payment note */
+.cs-fellow { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin-bottom: 10px; border-radius: 12px; background: #fff8e8; border: 1px solid #f0d49a; }
+.cs-fellow-ico { font-size: 20px; line-height: 1; }
+.cs-fellow b { font-size: 14px; }
+.cs-fellow small { display: block; color: #6b5420; font-size: 12px; line-height: 1.45; margin-top: 2px; }
+.cs-fellow-acts { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-size: 12.5px; }
+.cs-fellow-acts button, .cs-note-code button { border: 1px solid #b9d3e6; background: #f2f8fc; color: #1f6a9c; border-radius: 8px; padding: 2px 8px; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.cs-note-code { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 10px; padding: 8px 12px; border-radius: 10px; background: #f2f7fb; border: 1px dashed #b9d3e6; }
+.cs-note-code > span { font-size: 11.5px; color: var(--text-muted); }
+.cs-note-code > b { font-family: ui-monospace, Consolas, monospace; font-size: 16px; letter-spacing: 0.08em; color: var(--ocean-900, #0b3550); }
+.cs-note-code small { flex-basis: 100%; color: var(--text-muted); font-size: 11px; }

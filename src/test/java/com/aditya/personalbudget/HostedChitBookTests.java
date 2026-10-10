@@ -350,6 +350,21 @@ class HostedChitBookTests {
         assertThat(hers.payTo().seal()).hasSize(64);
         assertThat(shares.open(shares.create(chitId, new ShareRequest(c, null, null, "Suresh", 24, false, null)).token()).payTo()).isNull();
 
+        // digitally signed (ECDSA): the signature checks, a changed copy does not, and new bank details make the old copy stale
+        String herToken = shares.create(chitId, new ShareRequest(b, null, null, "Lakshmi", 24, false, null)).token();
+        var signed = shares.open(herToken).payTo();
+        assertThat(signed.payload()).contains("\"accountNumber\":\"123456789012\"").contains("\"ifsc\":\"ICIC0001234\"");
+        assertThat(signed.keyFingerprint()).matches("[0-9A-F]{4}( [0-9A-F]{4}){4}");
+        var check = shares.checkPayTo(herToken, signed.payload(), signed.digitalSignature());
+        assertThat(check.signatureValid()).isTrue();
+        assertThat(check.current()).isTrue();
+        String forged = signed.payload().replace("123456789012", "999999999999");
+        assertThat(shares.checkPayTo(herToken, forged, signed.digitalSignature()).signatureValid()).isFalse();
+        accounts.updateBankDetails(icici, new BankDetailsRequest("ICICI Bank", "555566667777", "Asha Organiser", "ICIC0001234", null, null));
+        var stale = shares.checkPayTo(herToken, signed.payload(), signed.digitalSignature());
+        assertThat(stale.signatureValid()).isTrue();
+        assertThat(stale.current()).isFalse();
+
         // a long narrative reaches the payout and its journal line whole
         pay(chitId, a, 1, null);
         pay(chitId, b, 1, null);
@@ -361,6 +376,41 @@ class HostedChitBookTests {
         assertThat(d.schedule().getFirst().legs().getFirst().note()).isEqualTo(note);
         assertThat(lines.findByJournalEntryId(d.schedule().getFirst().payoutEntryId()))
                 .anyMatch(l -> l.getMemo() != null && l.getMemo().endsWith(note));
+    }
+
+    @Test
+    void membersPayTheWinnerOnTheirUpiWithAShortPaymentNote() {
+        String name = "Short Code Chit 5L " + System.nanoTime();
+        Detail d = chits.create(chit(name));
+        Detail twin = chits.create(chit(name + " twin"));
+        assertThat(d.chit().shortCode()).isEqualTo("SCC5");
+        assertThat(twin.chit().shortCode()).isNotEqualTo(d.chit().shortCode()).hasSize(4);
+        assertThat(HostedChitService.payCode("AC5L", 3)).isEqualTo("AC5L-M03").hasSize(8);
+        assertThat(HostedChitService.payCode("AC5L", 100)).isEqualTo("AC5-M100").hasSize(8);
+
+        Long chitId = d.chit().id();
+        Long a = d.members().get(0).id(), b = d.members().get(1).id(), c = d.members().get(2).id();
+        // Ravi gets a UPI ID; a member can pay him only once he is a month's winner
+        chits.updateMember(chitId, a, new MemberInput("Ravi", null, null, "SBI 1234", null, "ravi@okaxis", null));
+        assertThatThrownBy(() -> chits.updateMember(chitId, b, new MemberInput("Lakshmi", null, null, null, null, null, a)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("not the winner of an open month");
+        chits.setWinner(chitId, 1, new WinnerRequest(a, false, null));
+        d = chits.updateMember(chitId, b, new MemberInput("Lakshmi", null, null, null, null, null, a));
+        assertThat(d.members().stream().filter(m -> m.id().equals(b)).findFirst().orElseThrow().payToMemberName()).isEqualTo("Ravi");
+
+        // her signed link shows Ravi's UPI ID, and the chit's short code for the note
+        PublicChit hers = shares.open(shares.create(chitId, new ShareRequest(b, null, null, "Lakshmi", 24, false, null)).token());
+        assertThat(hers.shortCode()).isEqualTo("SCC5");
+        assertThat(hers.payTo().toMember()).isEqualTo("Ravi");
+        assertThat(hers.payTo().upiId()).isEqualTo("ravi@okaxis");
+        assertThat(hers.payTo().payload()).contains("\"toMember\":\"Ravi\"");
+
+        // she pays him directly; once month 1 is paid out she pays into the chit again
+        payDirect(chitId, b, 1, a);
+        pay(chitId, a, 1, null);
+        pay(chitId, c, 1, null);
+        d = chits.payout(chitId, 1, payout(List.of(new LegInput(d.chit().accountId(), bd(18500), "Bank", null))));
+        assertThat(d.members().stream().filter(m -> m.id().equals(b)).findFirst().orElseThrow().payToMemberId()).isNull();
     }
 
     private Detail pay(Long chitId, Long memberId, int monthNo, Long into) {

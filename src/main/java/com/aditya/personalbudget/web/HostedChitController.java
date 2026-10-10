@@ -76,7 +76,8 @@ public class HostedChitController {
     @GetMapping("/hosted-chits/settings")
     @RequiresPermission(Permission.VIEW)
     public HostedChitService.ChitSettings chitSettings() {
-        return service.chitSettings();
+        var s = service.chitSettings();
+        return new HostedChitService.ChitSettings(s.companyName(), s.householdName(), shares.keyFingerprint());
     }
 
     @GetMapping("/hosted-chits/{id}")
@@ -283,6 +284,12 @@ public class HostedChitController {
     @PostMapping("/public/hosted-chits/{token}")
     public PublicChit openShare(@PathVariable String token) {
         return shares.open(token);
+    }
+
+    /** Checks the payment details on a member's link: the organiser's signature, and that they are still current. */
+    @PostMapping("/public/hosted-chits/{token}/verify-pay-to")
+    public HostedChitShareService.PayToCheck verifyPayTo(@PathVariable String token, @RequestBody java.util.Map<String, String> body) {
+        return shares.checkPayTo(token, body.get("payload"), body.get("signature"));
     }
 
     /** The signed receipt behind a receipt link, as a PDF. */

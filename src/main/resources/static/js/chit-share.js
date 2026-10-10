@@ -9,6 +9,7 @@
  *              (location if they allow it); the device's details are recorded as evidence
  * Worked out when the page is opened, so it is always current. The token stays in the address fragment.
  */
+import { upiLogo } from './core/upi-logos.js';
 import { qrSvg } from './core/qr.js';
 
 const $ = id => document.getElementById(id);
@@ -32,7 +33,57 @@ async function start() {
     } catch (error) { main.innerHTML = message(error.message); return; }
     fmt = new Intl.NumberFormat(ch.currency === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency: ch.currency || 'INR', maximumFractionDigits: 0 });
     document.title = TITLES[ch.kind] ? `${TITLES[ch.kind]} · ${ch.name}` : ch.name;
+    useSignedDetails();
     draw();
+    verifyPayTo();
+}
+
+/** The page shows the payment details exactly as the organiser's key signed them (not separate fields that could differ). */
+function useSignedDetails() {
+    const to = ch.payTo;
+    if (!to?.payload) return;
+    try {
+        const p = JSON.parse(to.payload).pay;
+        Object.assign(to, { upiId: p.upiId, payeeName: p.payee, holderName: p.holder, bankName: p.bank, accountNumber: p.accountNumber, ifsc: p.ifsc });
+    } catch { to.payload = null; }
+}
+
+const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+
+/** Shows the result of a check in every status line on the page. */
+function sigStatus(state, html) {
+    document.querySelectorAll('[data-sig-status]').forEach(el => { el.className = `cs-sig-status ${state}`; el.innerHTML = html; });
+}
+
+/**
+ * Checks the organiser's digital signature over the payment details in this browser (ECDSA P-256, SHA-256, WebCrypto);
+ * where the browser cannot (an http:// page), asks the organiser's server instead.
+ */
+async function verifyPayTo() {
+    const to = ch.payTo;
+    if (!to?.payload) return;
+    if (!window.crypto?.subtle) { await verifyWithServer(); return; }
+    try {
+        const key = await crypto.subtle.importKey('spki', fromB64(to.publicKey), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+        const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, fromB64(to.digitalSignature), new TextEncoder().encode(to.payload));
+        sigStatus(ok ? 'ok' : 'bad', ok
+            ? `<b>✓ Digital signature verified</b><small>Signed by ${esc(to.signer || 'the organiser')} with key <code>${esc(to.keyFingerprint)}</code>. It should match the key your organiser gave you.</small>`
+            : '<b>✗ The signature does not match</b><small>These details were changed after the organiser signed them. Do not pay into them; ask the organiser.</small>');
+    } catch {
+        await verifyWithServer();
+    }
+}
+
+/** Asks the organiser's server: is the signature theirs, and are these still the details to pay into? */
+async function verifyWithServer() {
+    const to = ch.payTo;
+    sigStatus('wait', '<b>Checking with the organiser…</b>');
+    try {
+        const r = await call(`/api/public/hosted-chits/${encodeURIComponent(token)}/verify-pay-to`, { payload: to.payload, signature: to.digitalSignature });
+        sigStatus(r.signatureValid && r.current ? 'ok' : 'bad', `<b>${r.signatureValid && r.current ? '✓ Confirmed by the organiser' : '✗ Not confirmed'}</b><small>${esc(r.message)} Key <code>${esc(r.keyFingerprint)}</code>.</small>`);
+    } catch (e) {
+        sigStatus('bad', `<b>Could not check</b><small>${esc(e.message)}</small>`);
+    }
 }
 
 async function call(url, body) {
@@ -56,6 +107,7 @@ function draw() {
     main.querySelector('[data-copy-upi]')?.addEventListener('click', async e => {
         try { await navigator.clipboard.writeText(payUpi()); e.target.textContent = 'Copied'; } catch { /* not allowed */ }
     });
+    main.querySelectorAll('[data-verify-server]').forEach(b => b.addEventListener('click', () => verifyWithServer()));
     main.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
         try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); } catch { /* not allowed */ }
     }));
@@ -130,10 +182,23 @@ function payeeName() {
     return ch.payTo?.payeeName || ch.payeeName || payUpi();
 }
 
+/** "AC5L-M03": the chit's short code and the installment, 8 characters, so it reads whole on a bank statement. */
+function payCode(short, monthNo) {
+    const m = monthNo < 100 ? `M${String(monthNo).padStart(2, '0')}` : `M${monthNo}`;
+    return `${String(short || 'CHIT').slice(0, 7 - m.length)}-${m}`;
+}
+
+/** The note for this payment: the earliest month still owed (else the next one). */
+function payNote() {
+    const m = ch.member;
+    const open = (m?.dues || []).filter(x => x.status === 'PENDING' || x.status === 'PARTIAL').sort((a, b) => a.monthNo - b.monthNo)[0];
+    return payCode(ch.shortCode, open?.monthNo || ch.currentMonth || 1);
+}
+
 /** The UPI payment's query string (payee, name, amount, note). */
 function upiQuery(amount) {
     const params = [['pa', payUpi()], ['pn', payeeName()], ['am', Number(amount).toFixed(2)], ['cu', 'INR'],
-        ['tn', `${ch.name} - ${ch.member.name}`.slice(0, 50)]];
+        ['tn', payNote()]];
     return params.map(([k, v]) => `${k}=${encodeURIComponent(v).replace(/%40/g, '@')}`).join('&');
 }
 
@@ -173,23 +238,42 @@ function memberHtml() {
     const phone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const to = ch.payTo;
     const bank = to && to.accountNumber ? bankHtml(to, payNow, m) : '';
-    const pay = payUpi() && payNow > 0 ? `
+    const fellow = to?.toMember ? `<div class="cs-fellow">
+            <span class="cs-fellow-ico">👤</span>
+            <div><b>Pay ${esc(to.toMember)} directly</b>
+                <small>${esc(to.toMember)} won this month’s chit. The organiser asks you to pay them straight; it counts as your installment
+                    and comes off their payout. Tell the organiser once paid.</small>
+                <div class="cs-fellow-acts">
+                    ${to.upiId ? `<span>UPI <b>${esc(to.upiId)}</b></span>` : ''}
+                    ${to.toMemberPhone ? `<span>Mobile <a href="tel:${esc(to.toMemberPhone)}"><b>${esc(to.toMemberPhone)}</b></a> <button type="button" data-copy="${esc(to.toMemberPhone)}">Copy</button></span>` : ''}
+                </div></div></div>` : '';
+    const note = `<div class="cs-note-code"><span>Payment note</span><b>${esc(payNote())}</b><button type="button" data-copy="${esc(payNote())}">Copy</button>
+        <small>Put this in the UPI note or transfer remarks: it shows on the bank statement and tells which chit and month you paid.</small></div>`;
+    const mobileOnly = to?.toMember && !to.upiId && to.toMemberPhone && payNow > 0 ? `
         <section class="sh-card cs-pay">
             <div class="cs-pay-main"><span>Pay now</span><b>${money(payNow)}</b>
+                <small>to ${esc(to.toMember)} · in any UPI app, choose “Pay to mobile number” and enter ${esc(to.toMemberPhone)}</small>
+                ${fellow}${note}
+                ${to.payload ? `<div class="cs-sig-status wait" data-sig-status><b>Checking the organiser’s digital signature…</b></div>` : ''}</div>
+        </section>` : '';
+    const pay = mobileOnly || (payUpi() && payNow > 0 ? `
+        <section class="sh-card cs-pay">
+            <div class="cs-pay-main">${fellow}<span>Pay now</span><b>${money(payNow)}</b>
                 <small>${Number(m.lateFeeDue) ? `includes ${money(m.lateFeeDue)} late interest · ` : ''}to ${esc(payeeName())}</small>
                 <div class="cs-apps">${UPI_APPS.map(app => {
                     const href = appLink(app, payNow);
-                    return href ? `<a class="cs-app ${app.cls}" href="${esc(href)}"><i>${app.short.slice(0, 1)}</i>Pay with ${app.name}</a>`
-                        : `<button type="button" class="cs-app ${app.cls}" data-desktop><i>${app.short.slice(0, 1)}</i>${app.name}</button>`;
+                    return href ? `<a class="cs-app ${app.cls}" href="${esc(href)}" title="Pay with ${app.name}">${upiLogo(app.cls)}<span>Pay</span></a>`
+                        : `<button type="button" class="cs-app ${app.cls}" data-desktop title="${app.name}">${upiLogo(app.cls)}<span>Pay</span></button>`;
                 }).join('')}</div>
-                <a class="cs-pay-btn" href="${upiLink(payNow)}">Any UPI app</a>
+                <a class="cs-pay-btn cs-any-upi" href="${upiLink(payNow)}">${upiLogo('upi')}Any UPI app</a>
                 <div class="cs-upi-id"><span>UPI ID <b>${esc(payUpi())}</b></span><button type="button" data-copy-upi>Copy</button></div>
+                ${note}
                 <small id="cs-pay-tip">${phone ? 'Tap your app: the amount and note are filled in. Check the name before you pay.'
                     : 'On a computer: scan the code with your phone’s UPI app, or open this link on your phone.'}</small>
-                ${to?.seal ? `<small class="cs-pay-seal">✓ Sealed by ${esc(to.signer || 'the organiser')} · <code>${esc(to.seal.slice(0, 16))}</code></small>` : ''}</div>
+                ${to?.payload ? `<div class="cs-sig-status wait" data-sig-status><b>Checking the organiser’s digital signature…</b></div>` : ''}</div>
             <div class="cs-qr">${qrSvg(upiLink(payNow), { size: 170 })}<small>Scan to pay ${money(payNow)}</small></div>
             ${bank ? `<details class="cs-bank-alt"><summary>Pay by bank transfer instead</summary>${bank}</details>` : ''}
-        </section>` : bank ? `<section class="sh-card cs-bank-card">${bank}</section>` : '';
+        </section>` : bank ? `<section class="sh-card cs-bank-card">${bank}</section>` : '');
     return `
         <section class="sh-card st-hero">
             ${head(m.name, ch.name)}
@@ -293,7 +377,7 @@ function receiptHtml() {
  * reference to write, signed by the organiser, stamped and sealed (the seal covers every detail and the signature).
  */
 function bankHtml(to, payNow, m) {
-    const ref = `${ch.name} - ${m.name}`.slice(0, 40);
+    const ref = payNote();
     const row = (label, value, copy = value) => `<div class="cs-bank-row"><span>${label}</span><b>${esc(value)}</b>${copy ? `<button type="button" data-copy="${esc(copy)}">Copy</button>` : '<i></i>'}</div>`;
     return `<div class="cs-bank">
         <div class="cs-bank-head"><span>${payNow > 0 ? 'Pay by bank transfer' : 'Where to pay'}</span>
@@ -307,13 +391,20 @@ function bankHtml(to, payNow, m) {
             ${row('Remarks / reference', ref)}
         </div>
         <div class="cs-rc-sign cs-bank-sign">
-            <div class="cs-rc-seal"><b>✓ Digitally sealed by the organiser</b>
-                <small>These are the only details to pay this chit into. The seal is worked out from them and the organiser's signature with
-                    the organiser's secret key on ${when(to.sealedAt)}; if anyone sends you different details, or a copy whose seal differs, do not pay: ask the organiser.</small>
-                <code>${esc(to.seal || '')}</code></div>
+            <div class="cs-sig">
+                ${to.payload ? `<div class="cs-sig-status wait" data-sig-status><b>Checking the organiser’s digital signature…</b></div>` : ''}
+                <small class="cs-sig-note">These are the only details to pay this chit into, digitally signed by the organiser on ${when(to.sealedAt)}
+                    (ECDSA P-256 · SHA-256). If anyone sends you different details, or this page says the signature does not match, do not pay: ask the organiser.</small>
+                <div class="cs-sig-acts">
+                    ${to.payload ? '<button type="button" data-verify-server>Check with the organiser</button>' : ''}
+                    ${to.keyFingerprint ? `<span>Key <code>${esc(to.keyFingerprint)}</code></span>` : ''}
+                </div>
+                ${to.digitalSignature ? `<details class="cs-sig-raw"><summary>Signature</summary><code>${esc(to.digitalSignature)}</code></details>` : ''}
+            </div>
             <div class="cs-stamp" aria-hidden="true"><span>${esc((to.stampName || ch.household || '').slice(0, 26))}</span><b>VERIFIED</b><small>${day(String(to.sealedAt).slice(0, 10))}</small></div>
             <div class="cs-rc-signer">${to.signature ? signatureSvg(to.signature) : ''}<b>${esc(to.signer || ch.sharedBy || '')}</b><small>${to.signature ? 'Digitally signed · organiser' : 'Organiser'}</small></div>
         </div>
+        <div class="cs-bank-qr">${qrSvg(location.href, { size: 92 })}<small>Got these details on paper or as a photo? Scan this to open the organiser’s signed page and compare.</small></div>
     </div>`;
 }
 

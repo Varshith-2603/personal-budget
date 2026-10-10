@@ -1789,3 +1789,10 @@ tr.sched-current td:first-child { box-shadow: inset 3px 0 0 #f2c94c; }
 .nv-seg.own { background: #fff3dc; color: #8a5300; border-color: #f0cf8e; }
 .nv-sep { display: inline-block; width: 1px; height: 0.95em; margin: 0 6px; vertical-align: -1px; background: var(--hairline-strong, #c9d6e2); }
 .ed-fact.memo { line-height: 1.6; }
+
+/* UPI app marks */
+.upi-logo { display: inline-flex; align-items: center; flex-shrink: 0; line-height: 0; }
+.upi-logo svg { height: 22px; width: auto; display: block; }
+.upi-logos { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.upi-logos .upi-logo svg { height: 18px; }
+.upi-brands { display: flex; justify-content: center; margin: 2px 0 6px; }

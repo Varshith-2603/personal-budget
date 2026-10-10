@@ -52,6 +52,7 @@ public class HostedChitBookMigration implements ApplicationRunner {
                         log.warn("Tenant {}: hosted chit {} could not be brought into the chit book: {}", tenant.getCode(), chitId, e.getMessage());
                     }
                 }
+                changed += chits.assignShortCodes();   // payment notes: AC5L-M03
                 if (moved + changed > 0) {
                     log.info("Tenant {}: chit book: {} account(s) moved, {} record(s) updated", tenant.getCode(), moved, changed);
                 }

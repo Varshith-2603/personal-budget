@@ -17,9 +17,15 @@ export async function loadOptions() {
     return state.options;
 }
 
-export async function loadAccounts(force = false) {
+/**
+ * Your own accounts. The hosted-chit book (Host a Chit's collection, commission and common chit accounts: the
+ * members' money) is left out, so it never shows up in expenses, income, transfers, gifts, loans and the like.
+ * { all: true } adds it, for the chit pages, the journal and the Accounts page. state.accounts keeps every account
+ * (for looking up names).
+ */
+export async function loadAccounts(force = false, { all = false } = {}) {
     if (!state.accounts || force) state.accounts = await api.get('/accounts');
-    return state.accounts;
+    return all ? state.accounts : state.accounts.filter(a => !a.chitBook);
 }
 
 /** Expense and income categories with this / last month's figures. */

@@ -1152,3 +1152,44 @@ code.hc-hash { display: block; font-size: 10.5px; word-break: break-all; overflo
 .fl > textarea:focus + span, .fl > textarea:not(:placeholder-shown) + span { top: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; color: var(--text-secondary); }
 .ca-je-note { white-space: normal; word-break: break-word; }
 .ca-stmt-what .nv-seg { font-size: 10px; }
+
+/* members: the account each pays into */
+.hc-mem-row.with-pay { grid-template-columns: 22px minmax(0, 1.3fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1.2fr) 26px; }
+.hc-mem-row select { min-width: 0; width: 100%; height: 30px; font-size: 12px; }
+.hc-payto-chip { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 0; max-width: 220px; padding: 3px 8px 3px 24px; position: relative;
+    border-radius: 8px; border: 1px solid #cfe0ee; background: #f4f9fd; font: inherit; text-align: left; cursor: pointer; }
+.hc-payto-chip svg { position: absolute; left: 6px; top: 6px; width: 13px; height: 13px; color: var(--ocean-600); }
+.hc-payto-chip b { font-size: 12px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hc-payto-chip small { font-size: 10.5px; color: var(--text-muted); }
+.hc-payto-chip:hover { border-color: var(--ocean-500); }
+@media (max-width: 1100px) { .hc-mem-row.with-pay { grid-template-columns: 20px minmax(0, 1fr) minmax(0, 1fr) 26px; } }
+.hc-key-fp { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 9px; background: #f0f8f3; border: 1px solid rgba(12, 163, 12, 0.25); color: #0a6b2c; font-size: 12px; }
+.hc-key-fp code { font-weight: 700; letter-spacing: 0.04em; color: #0b3d1e; }
+.hc-payto-chip.member { background: #fff8e8; border-color: #f0d49a; } .hc-payto-chip.member svg { color: #b07d1a; }
+
+/* members pay the winner directly */
+.hc-direct { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; }
+.hc-direct-left, .hc-direct-right { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.hc-direct-winner { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #fff8e8; border: 1px solid #f0d49a; }
+.hc-direct-winner small { display: block; color: #6b5420; font-size: 11.5px; }
+.hc-code { display: flex; flex-direction: column; align-items: flex-end; padding: 4px 10px; border-radius: 9px; background: #fff; border: 1px dashed #d9b46a; }
+.hc-code small { font-size: 10px; color: var(--text-muted); }
+.hc-code b { font-family: ui-monospace, Consolas, monospace; font-size: 15px; letter-spacing: 0.08em; color: var(--ocean-900); }
+.hc-direct-list { display: flex; flex-direction: column; max-height: 300px; overflow: auto; border: 1px solid var(--hairline); border-radius: 11px; }
+.hc-direct-row { display: grid; grid-template-columns: 18px 24px minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12.5px; cursor: pointer; }
+.hc-direct-row + .hc-direct-row { border-top: 1px solid var(--hairline); }
+.hc-direct-row small { color: var(--text-muted); }
+.hc-direct-right textarea { width: 100%; min-height: 150px; padding: 10px 12px; border-radius: 11px; font-size: 13px; line-height: 1.5; resize: vertical; }
+@media (max-width: 900px) { .hc-direct { grid-template-columns: minmax(0, 1fr); } }
+
+/* settings on the hosting page: locked terms, members with their UPI ID */
+.hc-lock-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+    background: rgba(240, 212, 154, 0.18); color: #f0d49a; border: 1px solid rgba(240, 212, 154, 0.45); vertical-align: 2px; }
+.hc-lock-badge svg { width: 11px; height: 11px; }
+.fl.locked > input, .fl.locked > select { background: repeating-linear-gradient(135deg, #f6f9fc, #f6f9fc 6px, #f1f5f9 6px, #f1f5f9 12px); color: var(--text-secondary); cursor: not-allowed; }
+.hc-terms-locked [data-type][disabled] { opacity: 0.6; cursor: not-allowed; }
+.hc-terms-locked [data-type].active[disabled] { opacity: 1; }
+.hc-terms-locked .hc-plan-wrap input[disabled] { background: transparent; border-color: transparent; color: var(--text-primary); }
+.hc-mem-row.with-pay { grid-template-columns: 22px minmax(0, 1.3fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) 26px; }
+.hc-create-body .hc-mem-list:has(.with-pay) { grid-template-columns: minmax(0, 1fr); }
+.hc-create-foot .btn.danger { color: var(--negative, #c0392b); }
