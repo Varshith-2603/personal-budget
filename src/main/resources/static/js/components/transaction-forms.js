@@ -177,7 +177,7 @@ export async function openJournalEditor({ entry: source = null, copy = false, on
 
     const lineRow = (l, i) => `
         <tr data-line="${i}">
-            <td><select name="accountId" required>${accountOptions(accounts, () => true, l.ledgerAccountId ?? l.accountId)}</select></td>
+            <td><select name="accountId" required>${accountOptions(accounts, () => true, l.ledgerAccountId ?? l.accountId, undefined, { chitBook: true })}</select></td>
             <td data-dimension>${dimension(l.ledgerAccountId ?? l.accountId, l)}</td>
             <td><input name="debit" class="num" data-type="number" type="number" step="any" min="0" value="${Number(l.debit) || ''}"></td>
             <td><input name="credit" class="num" data-type="number" type="number" step="any" min="0" value="${Number(l.credit) || ''}"></td>

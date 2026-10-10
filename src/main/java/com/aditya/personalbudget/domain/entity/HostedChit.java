@@ -49,6 +49,12 @@ public class HostedChit implements TenantOwned {
     public static final String TYPE_FIXED = "FIXED";
     /** Auction (bidding) chit, Margadarsi style: members bid a discount, the discount less commission is shared. */
     public static final String TYPE_AUCTION = "AUCTION";
+    /**
+     * Planned chit: the organiser sets, month by month, what the winner gets (and what members pay, the same every
+     * month unless edited or set to rise). The commission is what is collected less the payout; in later months it can
+     * be negative, paid out of the commission kept from earlier months.
+     */
+    public static final String TYPE_PLANNED = "PLANNED";
 
     @Id
     @GeneratedValue
@@ -101,6 +107,10 @@ public class HostedChit implements TenantOwned {
     @PositiveOrZero
     @Column(nullable = false)
     private BigDecimal commission;
+
+    /** Planned chits: how much the monthly installment rises each month when the table was made (0: the same). */
+    @PositiveOrZero
+    private BigDecimal installmentIncrement;
 
     /**
      * What a member pays on top of the installment in every month after the month they won: NONE, PERCENT (of the

@@ -93,6 +93,29 @@ public class Account implements TenantOwned {
     @Column(length = 255)
     private String description;
 
+    /**
+     * Part of the hosted-chit book (Host a Chit, Chit accounts): the money of the chits the user runs as organiser.
+     * These accounts are kept off the personal Accounts page, pickers and liquid-money figures.
+     */
+    private Boolean chitBook;
+
+    /** The hosted chit this account belongs to; empty for a common chit account (shared by every hosted chit). */
+    @References(HostedChit.class)
+    private Long hostedChitId;
+
+    /** Chit-book accounts: COLLECTION, COMMISSION, LATE_FEE, COMMON or FUNDS (see {@link #ROLE_COLLECTION} ...). */
+    @Column(length = 12)
+    private String chitRole;
+
+    public static final String ROLE_COLLECTION = "COLLECTION";
+    public static final String ROLE_COMMISSION = "COMMISSION";
+    public static final String ROLE_LATE_FEE = "LATE_FEE";
+    public static final String ROLE_COMMON = "COMMON";
+    /** The Hosted Chit Funds liability: the members' money held until it is paid out. */
+    public static final String ROLE_FUNDS = "FUNDS";
+    /** Clearing account: installments members paid straight to the month's winner, cleared by the payout. */
+    public static final String ROLE_DIRECT = "DIRECT";
+
     /** System accounts are created automatically and cannot be deleted. */
     @Column(nullable = false)
     private Boolean systemAccount;
@@ -106,4 +129,13 @@ public class Account implements TenantOwned {
     /** Optimistic locking: a save based on an older version is rejected. */
     @jakarta.persistence.Version
     private Long version;
+
+    public boolean isChitBook() {
+        return Boolean.TRUE.equals(chitBook);
+    }
+
+    /** Money the user can spend: cash, bank or wallet, and not the chit book's (members' money). */
+    public boolean isLiquid() {
+        return accountType.isLiquid() && !isChitBook();
+    }
 }

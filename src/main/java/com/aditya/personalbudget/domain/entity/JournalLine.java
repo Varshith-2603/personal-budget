@@ -65,4 +65,11 @@ public class JournalLine implements TenantOwned {
     /** The chit, on lines of the Chit Funds account. */
     @References(Chit.class)
     private Long chitId;
+
+    /**
+     * The hosted chit whose money this line moves (Host a Chit), on any account: it keeps a sub-ledger per hosted
+     * chit, so the chit's money can be traced even when it sits in a personal bank account.
+     */
+    @References(HostedChit.class)
+    private Long hostedChitId;
 }

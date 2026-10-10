@@ -103,3 +103,15 @@
 .st-scroll { max-width: 100%; overflow-x: auto; }
 .sh-main { grid-template-columns: minmax(0, 1fr); }
 .sh-main > * { min-width: 0; }
+
+/* auction chit table link: a month at the lowest, a middle and the highest bid */
+.cs-ags { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
+.cs-ag { display: flex; flex-direction: column; padding: 10px 12px; border-radius: 12px; border: 1px solid #dfe7ee; border-top: 3px solid #13a89a; background: #fff; }
+.cs-ag:nth-child(2) { border-top-color: #c99a3b; }
+.cs-ag:nth-child(3) { border-top-color: #5b4fc9; }
+.cs-ag small { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7d8f; }
+.cs-ag b { font-size: 18px; }
+.cs-ag span { font-size: 11px; color: #6b7d8f; margin-bottom: 6px; }
+.cs-ag dl { display: grid; grid-template-columns: auto auto; gap: 3px 8px; margin: 0; font-size: 13px; }
+.cs-ag dd { margin: 0; text-align: right; font-weight: 650; }
+@media (max-width: 640px) { .cs-ags { grid-template-columns: 1fr; } }

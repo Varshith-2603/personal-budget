@@ -394,6 +394,8 @@ function bindShell() {
 // ===================================================================== router
 
 let renderToken = 0;
+/** The page on screen: moving within it (e.g. Host a Chit's Chits and Chit accounts) keeps it until the new view is drawn. */
+let shownPath = null;
 
 async function route({ silent = false } = {}) {
     if (!state.user) return;
@@ -411,10 +413,11 @@ async function route({ silent = false } = {}) {
     const scrolls = silent ? [...container.querySelectorAll('*')].filter(el => el.scrollTop > 0)
         .map(el => [el.id || el.className, el.scrollTop]) : [];
     const pageScroll = window.scrollY;
-    if (!silent) container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    if (!silent && match.path !== shownPath) container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
     try {
         await match.view.render(container, params, () => token === renderToken);
         if (token !== renderToken) return;
+        shownPath = match.path;
         if (silent) {
             window.scrollTo(0, pageScroll);
             scrolls.forEach(([key, top]) => {
@@ -425,6 +428,7 @@ async function route({ silent = false } = {}) {
         hydrateIcons(container);
     } catch (error) {
         if (token !== renderToken) return;
+        shownPath = null;
         container.innerHTML = `<div class="empty">${icon('alert-circle')}<div>${esc(error.message)}</div></div>`;
         if (error.status !== 401) toast(error.message, 'error');
     }

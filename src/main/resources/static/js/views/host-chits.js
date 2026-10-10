@@ -18,14 +18,17 @@
  */
 import { api } from '../core/api.js';
 import { state, can, loadAccounts, categoriesOf } from '../core/store.js';
-import { panel, esc, openModal, confirmDialog, toast, emptyState, accountOptions, printElement } from '../core/ui.js';
+import { panel, esc, openModal, confirmDialog, toast, emptyState, printElement } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, moneyShort, date, shortDate, shortDateYear, isoDate, daysFromToday, dateTime } from '../core/format.js';
 import { exportButton, bindExport } from '../core/export.js';
 import { setPageKeys, listNavigator } from '../core/keys.js';
 import { qrSvg } from '../core/qr.js';
+import { getPref, setPref } from '../core/prefs.js';
 import { evidenceFieldHtml, bindEvidenceField } from '../components/evidence.js';
 import { openEntryDetail } from '../components/transaction-forms.js';
+import * as chitAccounts from './chit-accounts.js';
+import { sectionSwitch, moneyAccountOptions, openTransfer, whereHtml, monthTrailHtml, transfersTable, statsToggleHtml, bindStatsToggle } from './chit-accounts.js';
 
 const view = { selectedId: null, tab: 'month', historyKind: 'ALL', memberQuery: '', duesFilter: 'ALL' };
 /** The chit on screen (the last answer from the server). */
@@ -35,10 +38,11 @@ const TABS = [
     { key: 'month', label: 'This month', iconName: 'check-circle' },
     { key: 'dues', label: 'Dues', iconName: 'alert' },
     { key: 'months', label: 'Months', iconName: 'calendar' },
+    { key: 'money', label: 'Money', iconName: 'wallet' },
     { key: 'payments', label: 'Payments', iconName: 'grid' },
     { key: 'members', label: 'Members', iconName: 'users' },
     { key: 'agreements', label: 'Agreements', iconName: 'file-text' },
-    { key: 'history', label: 'History', iconName: 'history' },
+    { key: 'history', label: 'In & out', iconName: 'transfer' },
 ];
 const MODES = ['Cash', 'UPI', 'Bank'];
 const SHARE_DURATIONS = [[24, '1 day'], [72, '3 days'], [168, '1 week'], [720, '1 month'], [2160, '3 months']];
@@ -53,6 +57,12 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const manage = () => can('MANAGE_CHITS');
 const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 const isAuction = c => c.chitType === 'AUCTION';
+/** Planned chit: the organiser sets each month's payout (and what members pay) in the chit table. */
+const isPlanned = c => c.chitType === 'PLANNED';
+const typeName = c => isAuction(c) ? 'Auction' : isPlanned(c) ? 'Planned' : 'Fixed';
+const typeIcon = c => isAuction(c) ? 'gavel' : isPlanned(c) ? 'calendar' : 'hand-coins';
+/** The top figures (portfolio cards and the chit's key tiles) are shown on demand; the choice is remembered. */
+const statsPref = () => getPref('hostChitStats', { show: false });
 
 /** "2026-05-01" -> "May 2026" */
 function monthName(iso) {
@@ -94,7 +104,7 @@ function randomPhone() {
 
 /** The rupees a winner pays on top of the monthly amount after winning (s: a chit or the wizard's draft). */
 function extraOf(s) {
-    if (isAuction(s)) return 0;
+    if (isAuction(s) || isPlanned(s)) return 0;
     const v = num(s.winnerExtraValue);
     return s.winnerExtraType === 'PERCENT' ? Math.round(num(s.baseValue) * v / 100) : s.winnerExtraType === 'FIXED' ? v : 0;
 }
@@ -106,6 +116,7 @@ function extraText(s) {
 /** What a member owes for a month: auction, the installment less the month's dividend; fixed, plus the winner extra. */
 function dueFor(d, member, month) {
     const c = d.chit;
+    if (isPlanned(c)) return num(month.installment);
     if (isAuction(c)) return num(c.installment) - num(month.dividend);
     return num(c.installment) + (member.wonMonth && member.wonMonth < month.monthNo ? num(c.winnerExtraAmount) : 0);
 }
@@ -170,7 +181,8 @@ function statusBadge(status) {
     const [tone, iconName, label] = STATUS[status] || ['gray', 'info', status];
     return `<span class="badge ${tone}">${icon(iconName)}${label}</span>`;
 }
-const typeBadge = c => isAuction(c) ? `<span class="badge violet">${icon('gavel')}Auction</span>` : `<span class="badge">${icon('trending')}Fixed</span>`;
+const typeBadge = c => isAuction(c) ? `<span class="badge violet">${icon('gavel')}Auction</span>`
+    : isPlanned(c) ? `<span class="badge aqua">${icon('calendar')}Planned</span>` : `<span class="badge">${icon('trending')}Fixed</span>`;
 
 /** Every member who owes something now: all due months not fully paid. */
 function owingList(d) {
@@ -198,8 +210,11 @@ const chosenMode = root => root.querySelector('[data-chips] .active')?.dataset.m
 // ===================================================================== page
 
 export async function render(container, params, isCurrent) {
+    // Host a Chit › Chit accounts: the accounts holding the chits' money (their own page, off the personal Accounts)
+    if (params[0] === 'accounts') return chitAccounts.render(container, params.slice(1), isCurrent);
     const chits = await api.get('/hosted-chits');
     if (!isCurrent()) return;
+    bindStatsToggle(container);
     const [first, second] = params;
     if (/^\d+$/.test(first || '')) view.selectedId = Number(first);
     if (second && TABS.some(t => t.key === second)) view.tab = second;
@@ -207,13 +222,13 @@ export async function render(container, params, isCurrent) {
     const reload = () => render(container, [], isCurrent);
 
     container.innerHTML = `
-    <div class="page chits-page hc-page">
+    <div class="page chits-page hc-page ${statsPref().show ? '' : 'stats-hidden'}">
         <section class="cp-card" id="hc-brand"></section>
         <div class="cs-cards" id="hc-cards"></div>
         ${panel({
             title: 'Chits I host', iconName: 'hand-coins', cls: 'p-chit-list', bodyClass: 'flush',
             sub: `${chits.filter(c => c.status === 'ACTIVE').length} running`,
-            actions: manage() ? `<button class="btn sm primary" id="hc-new">${icon('plus')}Chit</button>` : '',
+            actions: manage() ? `<button class="btn sm primary icon hc-add" id="hc-new" title="Host a new chit" aria-label="Host a new chit">${icon('plus')}</button>` : '',
             body: `<div class="chit-rows scroll" id="hc-list" tabindex="0"></div>`,
         })}
         <div class="chit-detail" id="hc-detail"></div>
@@ -221,7 +236,6 @@ export async function render(container, params, isCurrent) {
 
     drawPortfolio(container, chits);
     container.querySelector('#hc-new')?.addEventListener('click', () => openWizard());
-    if (first === 'new') openWizard();
 
     const listEl = container.querySelector('#hc-list');
     listEl.addEventListener('click', async e => {
@@ -254,7 +268,9 @@ export async function render(container, params, isCurrent) {
         },
     }));
 
-    if (view.selectedId) await show(view.selectedId);
+    // #/host-chits/new opens the new-chit steps (after the list, so the selected chit does not replace them)
+    if (first === 'new') openWizard();
+    else if (view.selectedId) await show(view.selectedId);
     else container.querySelector('#hc-detail').innerHTML = welcomeHtml();
     container.querySelector('#hc-detail').addEventListener('click', e => {
         if (e.target.closest('[data-act="welcome-new"]')) openWizard();
@@ -300,7 +316,7 @@ function drawPortfolio(container, chits) {
         <div class="cp-progress" title="Collected this month across the running chits">
             <i class="onc-bar"><em style="width:${Math.min(100, pct)}%"></em></i>
             <span>${moneyShort(collected)} of ${moneyShort(expected)} collected this month</span></div>
-        <div class="cp-foot">
+        <div class="cp-foot">${sectionSwitch('chits')}${statsToggleHtml()}
             <span class="cp-pill run">${icon('play')}${running.length} running</span>
             ${chits.length - running.length ? `<span class="cp-pill done">${icon('lock')}${chits.length - running.length} finished</span>` : ''}
             ${auctions ? `<span class="cp-pill done">${icon('gavel')}${auctions} auction</span>` : ''}
@@ -326,11 +342,11 @@ function drawPortfolio(container, chits) {
         const pctDone = (c.completedMonths / c.months) * 100;
         const accent = done ? 'slate' : isAuction(c) ? 'gold' : 'aqua';
         return `<div class="acct-item rich chit-item accent-${accent} status-${done ? 'matured' : 'active'} ${c.id === view.selectedId ? 'selected' : ''}" data-id="${c.id}">
-            <span class="chip-icon sm ${isAuction(c) ? 'violet' : 'gold'}">${icon(isAuction(c) ? 'gavel' : 'hand-coins')}</span>
+            <span class="chip-icon sm ${isAuction(c) ? 'violet' : isPlanned(c) ? 'aqua' : 'gold'}">${icon(typeIcon(c))}</span>
             <div class="acct-main">
                 <div class="acct-line"><span class="acct-name">${esc(c.name)}</span><b class="acct-bal" title="Chit value">${money(c.currentChitValue)}</b></div>
                 <div class="acct-line sub">
-                    <span class="acct-meta">${isAuction(c) ? 'Auction' : 'Fixed'} · ${c.memberCount} members</span>
+                    <span class="acct-meta">${typeName(c)} · ${c.memberCount} members</span>
                     <span class="acct-facts">${c.pendingCount ? `<span class="fact bad" title="${money(c.pendingDues)} still to collect">${c.pendingCount} due</span>` : `<span class="fact good">all paid</span>`}
                         ${c.demo ? '<span class="fact muted">example</span>' : ''}</span>
                     <span class="acct-delta pos" title="My commission so far">+${moneyShort(c.commissionEarned)}</span>
@@ -368,7 +384,7 @@ function drawDetail(container, d) {
     target.innerHTML = `
         <section class="panel p-chit-head">
             <div class="chit-banner">
-                <span class="hero-icon">${icon(isAuction(c) ? 'gavel' : 'hand-coins')}</span>
+                <span class="hero-icon">${icon(typeIcon(c))}</span>
                 <div class="ab-id">
                     <div class="ab-name">${esc(c.name)} ${typeBadge(c)} ${statusBadge(c.status)}${c.demo ? '<span class="badge gray">Example</span>' : ''}</div>
                     <div class="ab-meta">${[`${c.memberCount} members`, `${money(c.installment)} a month`, `from ${monthName(c.startMonth)}`, `due on the ${ordinal(c.dueDay)}`]
@@ -398,6 +414,7 @@ function drawDetail(container, d) {
             <div class="chit-statline">
                 <span title="Collected minus paid out and commission">${icon('wallet')}Money with me <b class="${num(c.held) < 0 ? 'neg' : ''}">${money(c.held)}</b></span>
                 ${isAuction(c) ? `<span title="Lowest bid = your commission; highest bid allowed">${icon('gavel')}Bids <b>${moneyShort(c.minBid)}</b>–<b>${moneyShort(c.maxBid)}</b><small>${num(c.maxBidPercent)}%</small></span>`
+                    : isPlanned(c) ? plannedStatline(d)
                     : `<span title="Chit value goes up each month by">${icon('trending')}Rises <b>${money(c.monthlyIncrement)}</b><small>/month</small></span>
                        <span title="What a member pays on top after winning">${icon('hand-coins')}Winner extra <b>${num(c.winnerExtraAmount) ? money(c.winnerExtraAmount) : 'none'}</b></span>`}
                 <span title="Interest on late installments">${icon('clock')}Late interest <b>${num(c.lateFeePercent) ? `${num(c.lateFeePercent)}%` : 'none'}</b>${num(c.lateFeePercent) ? `<small>/month after ${c.lateGraceDays} days</small> · collected <b>${money(c.lateFeesCollected)}</b>` : ''}</span>
@@ -407,16 +424,16 @@ function drawDetail(container, d) {
                     : 'Not in my accounts'}</span>
             </div>
         </section>
-        ${panel({
+        <div class="hc-detail-rest">${panel({
             title: 'Chit book', iconName: 'journal', cls: 'p-chit-tabs', bodyClass: 'flush',
             actions: `${exportButton({ label: '' })}<div class="tabs sm" id="hc-tabs">${TABS.map(t =>
                 `<button class="tab ${view.tab === t.key ? 'active' : ''}" data-tab="${t.key}">${icon(t.iconName)}<span class="hc-tab-label">${t.label}</span></button>`).join('')}</div>`,
             body: '<div class="scroll chit-tab-body" id="hc-tab"></div>',
-        })}`;
+        })}</div>`;
 
     const body = target.querySelector('#hc-tab');
     const drawTab = () => {
-        body.innerHTML = { month: thisMonthHtml, dues: duesHtml, months: monthsHtml, payments: paymentsHtml, members: membersHtml,
+        body.innerHTML = { month: thisMonthHtml, dues: duesHtml, months: monthsHtml, money: moneyHtml, payments: paymentsHtml, members: membersHtml,
             agreements: agreementsHtml, history: historyHtml }[view.tab](d);
     };
     drawTab();
@@ -445,19 +462,27 @@ function drawDetail(container, d) {
             else if (act === 'send-receipts') openSend(d, { kind: 'RECEIPT' });
             else if (act === 'share') openShare(d, el.dataset.member ? memberId : null);
             else if (act === 'goto') target.querySelector(`#hc-tabs [data-tab="${el.dataset.to}"]`).click();
-            else if (act === 'quick-paid') {
-                if (isAuction(c) && monthOf(d, monthNo).bid === null) { toast('Record the auction first', 'error'); return; }
-                el.disabled = true;
-                const member = d.members.find(x => x.id === memberId);
-                const rest = Math.max(0, dueFor(d, member, monthOf(d, monthNo)) - paidFor(d, memberId, monthNo));
-                const late = num(lateFor(d, memberId, monthNo)?.due);
-                await afterChange(await api.post(`/hosted-chits/${c.id}/payments`, { memberId, monthNo, amount: rest, lateFee: late, mode: 'Cash', paidDate: isoDate() }),
-                    `${member.name} paid ${money(rest + late)} ✓`);
+            else if (act === 'quick-paid') openQuickPaid(d, memberId, monthNo);
+            else if (act === 'revert-batch') {
+                const list = d.payments.filter(p => p.batchId === el.dataset.batch);
+                if (!await confirmDialog(`Undo the ${plural(list.length, 'payment')} (${money(list.reduce((s, p) => s + num(p.amount), 0))}) marked paid at once for month ${monthNo}? Their journal entries are removed.`,
+                    { title: 'Revert “everyone has paid”', confirmLabel: 'Revert' })) return;
+                await afterChange(await api.del(`/hosted-chits/${c.id}/months/${monthNo}/batches/${el.dataset.batch}`), `${plural(list.length, 'payment')} undone`);
             }
             else if (act === 'receipt') openReceipt(d, d.payments.find(x => x.id === Number(el.dataset.payment)));
             else if (act === 'statement') openStatement(d, d.members.find(x => x.id === memberId));
             else if (act === 'agreement') openAgreement(d, Number(el.dataset.month));
-            else if (act === 'view-entry') openEntryDetail(Number(el.dataset.entry));
+            else if (act === 'view-entry' || act === 'entry') openEntryDetail(Number(el.dataset.entry));
+            else if (act === 'transfer') openTransfer({ chitId: c.id, toAccountId: el.dataset.to ? Number(el.dataset.to) : null,
+                from: el.dataset.from ? [{ accountId: Number(el.dataset.from), amount: num(el.dataset.amount) }] : [],
+                chitMoney: el.dataset.money === '1' ? true : el.dataset.money === '0' ? false : null, onDone: refreshChit });
+            else if (act === 'consolidate') openTransfer({ chitId: c.id, toAccountId: c.accountId, chitMoney: true, onDone: refreshChit,
+                from: d.money.spots.filter(s => !s.chitBook && num(s.amount) > 0).map(s => ({ accountId: s.accountId, amount: num(s.amount) })) });
+            else if (act === 'go') { chitAccounts.focus(el.dataset.go); location.hash = '#/host-chits/accounts'; }
+            else if (act === 'money-tab') { view.moneyTab = el.dataset.tab; drawTab(); }
+            else if (act === 'plan-pdf') printPlan(draftFromChit(d));
+            else if (act === 'plan-link') sharePlan(draftFromChit(d));
+            else if (act === 'edit-plan') openPlanEditor(d);
             else if (act === 'pay') openPayment(d, memberId, monthNo);
             else if (act === 'collect-all') openCollectAll(d, monthNo);
             else if (act === 'winner') (isAuction(c) ? openAuction : openWinner)(d, m, el.dataset.random === '1');
@@ -477,6 +502,12 @@ function drawDetail(container, d) {
             else if (act === 'undo-payment') undoPayment(d, d.payments.find(x => x.id === Number(el.dataset.payment)));
             else if (act === 'edit-member') openMember(d, d.members.find(x => x.id === memberId));
             else if (act === 'history-kind') { view.historyKind = el.dataset.kind; drawTab(); }
+            else if (act === 'ledger-open') body.querySelectorAll('details.hc-lg').forEach(x => { x.open = true; });
+            else if (act === 'lg-expand') {
+                const more = el.parentElement.querySelector('.hc-lg-more');
+                more.hidden = !more.hidden;
+                el.classList.toggle('open', !more.hidden);
+            }
             else if (act === 'dues-filter') { view.duesFilter = el.dataset.kind; drawTab(); }
             else if (act === 'delete-chit') openDelete(d);
         } catch (err) {
@@ -485,11 +516,137 @@ function drawDetail(container, d) {
         }
     });
     target.addEventListener('input', e => {
+        if (e.target.id === 'hc-ledger-search') {
+            view.ledgerQuery = e.target.value;
+            const q = view.ledgerQuery.trim().toLowerCase();
+            target.querySelectorAll('[data-lg-name]').forEach(r => { r.hidden = !!q && !r.dataset.lgName.includes(q); });
+            if (q) target.querySelectorAll('details.hc-lg').forEach(x => { x.open = true; });
+            return;
+        }
         if (e.target.id !== 'hc-member-search') return;
         view.memberQuery = e.target.value;
         const q = view.memberQuery.trim().toLowerCase();
         target.querySelectorAll('[data-member-row]').forEach(r => { r.hidden = !!q && !r.dataset.memberRow.includes(q); });
     });
+}
+
+/** After a transfer: the chit again from the server (its money moved). */
+/**
+ * Planned chits: edit the chit table of a running chit. Months already paid out are locked; what members pay is
+ * locked in months that have payments. "Fill evenly" spreads the open months' payouts from a first to a last figure.
+ */
+function openPlanEditor(d) {
+    const c = d.chit;
+    const w = draftFromChit(d);
+    const locked = new Set(d.schedule.filter(m => m.status === 'COMPLETED').map(m => m.monthNo));
+    const lockedEmi = new Set(d.payments.map(p => p.monthNo));
+    const open = d.schedule.filter(m => !locked.has(m.monthNo));
+    openModal({
+        title: `Chit table · ${c.name}`, iconName: 'calendar', size: 'xl',
+        body: `<div class="hc-plan-fill">
+                <span>${icon('sparkles')}Open months: winner gets from</span>
+                <input type="number" class="num" data-fill="first" value="${num(open[0]?.payout)}" step="1000" min="0" data-plain>
+                <span>to</span>
+                <input type="number" class="num" data-fill="last" value="${num(open.at(-1)?.payout)}" step="1000" min="0" data-plain>
+                <button type="button" class="btn sm" data-fill-go ${open.length ? '' : 'disabled'}>Fill evenly</button>
+                <span class="grow"></span><span data-plan-sum class="hc-plan-sum"></span></div>
+            <div class="hc-plan-wrap hc-plan-modal" data-table></div>
+            <p class="muted hc-small">${icon('lock')}Paid-out months keep their figures; what members pay stays in months with payments. Members see the new table through the share link or PDF.</p>`,
+        actions: [
+            { label: 'Cancel' },
+            { label: 'Save the table', kind: 'primary', iconName: 'check', onClick: async () => {
+                const bad = w.plan.findIndex(x => !(num(x.payout) > 0) || !(num(x.installment) > 0));
+                if (bad >= 0) throw new Error(`Month ${bad + 1}: enter what each member pays and what the winner gets`);
+                const months = w.plan.map((x, i) => ({ monthNo: i + 1, installment: num(x.installment), payout: num(x.payout) }))
+                    .filter(x => !locked.has(x.monthNo));
+                await afterChange(await api.put(`/hosted-chits/${c.id}/plan`, { months }), 'Chit table saved');
+            } },
+        ],
+        onOpen: modal => {
+            const el = modal.el;
+            const draw = () => {
+                const plan = planOf(w);
+                el.querySelector('[data-table]').innerHTML = planTableHtml(w, plan, { editable: true, locked, lockedEmi });
+                const res = reserveOf(plan.rows);
+                el.querySelector('[data-plan-sum]').innerHTML = `net commission <b class="${res.total < 0 ? 'neg' : 'gold-ink'}">${signedMoney(res.total)}</b>${res.peak ? ` · keep up to <b>${money(res.peak)}</b>` : ''}`;
+            };
+            draw();
+            el.addEventListener('change', e => {
+                const cell = e.target.closest('[data-plan-i]');
+                if (!cell) return;
+                const row = w.plan[Number(cell.dataset.planI)];
+                if (cell.dataset.planField === 'installment') row.installment = num(e.target.value); else row.payout = num(e.target.value);
+                draw();
+            });
+            el.querySelector('[data-fill-go]').addEventListener('click', () => {
+                const first = num(el.querySelector('[data-fill="first"]').value);
+                const last = num(el.querySelector('[data-fill="last"]').value);
+                if (!(first > 0 && last > 0)) { modal.setError('Enter what the first and last open months pay'); return; }
+                const idx = w.plan.map((_, i) => i).filter(i => !locked.has(i + 1));
+                spreadPayouts(idx.length, first, last).forEach((p, k) => { w.plan[idx[k]].payout = p; });
+                draw();
+            });
+        },
+    });
+}
+
+async function refreshChit() {
+    if (current) await afterChange(await api.get(`/hosted-chits/${current.chit.id}`));
+}
+
+/**
+ * Money: where this chit's money is (its own accounts, common chit accounts, and personal accounts members paid into),
+ * month by month how each payout was funded, and the transfers. The full picture is under Chit accounts.
+ */
+function moneyHtml(d) {
+    const c = d.chit;
+    if (!c.postToBooks) return `<div class="hc-pad"><p class="book-note">${icon('lock')}<span>This chit is not recorded in your accounts. Turn it on in Settings to follow its money by account.</span></p></div>`;
+    const m = d.money;
+    const parked = num(m.inPersonal);
+    const sub = view.moneyTab || 'where';
+    return `<div class="hc-members-tools">
+            <div class="seg-chips sm">${[['where', 'Where it is', 'wallet'], ['months', 'Month by month', 'calendar'], ['moves', `Transfers${d.transfers.length ? ` (${d.transfers.length})` : ''}`, 'transfer']].map(([k, l, i]) =>
+                `<button class="seg-chip ${sub === k ? 'active' : ''}" data-act="money-tab" data-tab="${k}">${icon(i)}${l}</button>`).join('')}</div>
+            <span class="ca-sumline">held <b>${money(m.held)}</b> · owed <b>${money(m.owedToMembers)}</b> · mine <b class="gold-ink">${money(m.mine)}</b></span>
+            <span class="grow"></span>
+            ${manage() ? `${parked > 0 ? `<button class="btn sm gold-btn" data-act="consolidate">${icon('merge')}Consolidate ${moneyShort(parked)}</button>` : ''}
+                <button class="btn sm" data-act="transfer" ${c.accountId ? `data-to="${c.accountId}"` : ''}>${icon('transfer')}Move money</button>` : ''}
+            <button class="btn sm ghost" data-act="go" data-go="chit:${c.id}" title="Open in Chit accounts">${icon('wallet')}Chit accounts</button>
+        </div>
+        ${sub === 'where' ? whereHtml(null, { id: c.id, money: m, collectionAccountId: c.accountId })
+            : sub === 'months' ? monthTrailHtml(d)
+            : transfersTable(d.transfers, 'No money moved for this chit yet', { actions: false })}`;
+}
+
+/** Planned chits on the banner: this month's commission, and the commission to keep for months that pay out more. */
+function plannedStatline(d) {
+    const rows = d.schedule.map(m => ({ monthNo: m.monthNo, commission: num(m.commission), done: m.status === 'COMPLETED' }));
+    const r = reserveOf(rows);
+    const open = rows.filter(x => !x.done);
+    const still = reserveOf(open).peak;
+    return `<span title="Set month by month in the chit table">${icon('calendar')}Chit table <b>${d.schedule.length} months</b></span>
+        <span title="Commission over the whole chit (collected less paid out)">${icon('piggy')}Net commission <b class="${r.total < 0 ? 'neg' : ''}">${money(r.total)}</b></span>
+        ${still > 0 ? `<span title="Later months pay out more than they collect: keep this much of your commission for them">${icon('shield')}Keep aside <b>${money(still)}</b></span>` : ''}`;
+}
+
+/**
+ * A planned chit's commission month by month: the net, how much has to be kept for later months that pay out more
+ * than they collect (peak, and the months), and whether the organiser has to put in money of their own.
+ */
+function reserveOf(rows) {
+    let cum = 0;
+    const cumulative = rows.map(x => (cum += num(x.commission)));
+    let peak = 0, from = null, to = null;
+    for (let t = 0; t < rows.length; t++) {
+        const base = t === 0 ? 0 : cumulative[t - 1];
+        let low = base;
+        let at = null;
+        for (let j = t; j < rows.length; j++) if (cumulative[j] < low) { low = cumulative[j]; at = j; }
+        if (base - low > peak) { peak = base - low; from = rows[t].monthNo; to = rows[at].monthNo; }
+    }
+    const minCum = Math.min(0, ...cumulative);
+    return { total: cumulative.at(-1) || 0, cumulative, peak, from, to, ownMoney: -minCum,
+        negative: rows.filter(x => num(x.commission) < 0).map(x => x.monthNo) };
 }
 
 function keyTile(iconName, label, value, note, cls = '') {
@@ -539,12 +696,14 @@ function thisMonthHtml(d) {
             <i class="ov-meter hc-meter"><em style="width:${expected ? Math.min(100, (collected / expected) * 100) : 0}%"></em></i>
             ${unpaid.length ? `<div class="hc-people">${unpaid.map(r => personRow(d, r.m, month, canManage, !auction && r.due > num(c.installment) ? `won month ${r.m.wonMonth}` : '')).join('')}</div>`
                 : `<p class="hc-ok">${icon('check-circle')}Everyone has paid this month.</p>`}
+            ${batchesHtml(d, month, canManage)}
             ${paid.length ? `<details class="hc-paid-list" ${unpaid.length ? '' : 'open'}><summary>Paid · ${paid.length}</summary><div class="hc-people">${paid.map(r => {
                 const last = d.payments.filter(p => p.memberId === r.m.id && p.monthNo === month.monthNo).at(-1);
-                return `<div class="hc-person paid ${canManage ? 'clickable' : ''}" ${canManage ? `data-act="pay" data-member="${r.m.id}" data-no="${month.monthNo}" title="Change or undo"` : ''}>
+                return `<div class="hc-person paid ${canManage ? 'clickable' : ''}" ${canManage ? `data-act="pay" data-member="${r.m.id}" data-no="${month.monthNo}" title="Change it"` : ''}>
                     <span class="hc-avatar">${esc(initials(r.m.name))}</span>
-                    <div class="min-0"><b class="ellipsis">${esc(r.m.name)}</b><small>${last ? `${date(last.paidDate)} · ${esc(last.mode)}` : ''}</small></div>
-                    <span class="hc-paid-amt">${icon('check')}${money(r.paid)}</span></div>`;
+                    <div class="min-0"><b class="ellipsis">${esc(r.m.name)}</b><small class="ellipsis">${last ? `${date(last.paidDate)} · ${esc(last.mode)} · ${esc(paidWhere(last))}` : ''}</small></div>
+                    <span class="hc-paid-amt">${icon(last?.paidToMemberId ? 'hand' : 'check')}${money(r.paid)}</span>
+                    ${canManage && last ? `<button class="btn sm ghost icon" data-act="undo-payment" data-payment="${last.id}" title="Take back this payment">${icon('undo')}</button>` : ''}</div>`;
             }).join('')}</div></details>` : ''}
         </li>`;
 
@@ -576,12 +735,15 @@ function thisMonthHtml(d) {
                     <button class="btn" data-act="winner" data-random="1" data-month="${month.monthNo}">${icon('dice')}Random draw</button></div>` : ''}
         </li>`;
 
+    const directPaid = d.payments.filter(p => p.monthNo === month.monthNo && p.paidToMemberId && p.paidToMemberId === month.winnerMemberId)
+        .reduce((s, p) => s + num(p.amount), 0);
     const payStep = (no) => `
         <li class="hc-step ${decided ? 'active' : 'waiting'}">
             <div class="hc-step-head">
                 <span class="hc-step-no">${no}</span>
                 <div class="min-0"><b>Pay the winner</b>
-                    <small>${decided ? `Give ${money(month.payout)} to ${esc(month.winnerName)}, then mark it done. This closes month ${month.monthNo}.` : auction ? 'Hold the auction first' : 'Choose the winner first'}</small></div>
+                    <small>${decided ? `Give ${money(month.payout)} to ${esc(month.winnerName)}, then mark it done. This closes month ${month.monthNo}.` : auction ? 'Hold the auction first' : 'Choose the winner first'}
+                        ${decided && directPaid ? `<br>${icon('hand')}${money(directPaid)} of it is already with ${esc(month.winnerName)}: members paid directly.` : ''}</small></div>
             </div>
             ${canManage && decided ? `<div class="row wrap hc-step-actions"><button class="btn primary" data-act="payout" data-month="${month.monthNo}">${icon('check')}I paid ${money(month.payout)} to ${esc(month.winnerName)}</button>
                 ${unpaid.length ? `<small class="neg">${plural(unpaid.length, 'member')} still to pay</small>` : ''}</div>` : ''}
@@ -599,6 +761,7 @@ function thisMonthHtml(d) {
                 <span><small>Chit value</small><b>${money(month.chitValue)}</b></span>
                 <i>−</i>
                 ${auction ? `<span><small>Winning bid</small><b>${month.bid !== null ? money(month.bid) : '?'}</b></span>`
+                    : isPlanned(c) && num(month.commission) < 0 ? `<span><small>From my commission</small><b class="neg">+${money(-num(month.commission))}</b></span>`
                     : `<span><small>My commission</small><b class="gold-ink">${money(month.commission)}</b></span>`}
                 <i>=</i>
                 <span class="win"><small>Winner gets</small><b>${month.estimated ? 'up to ' : ''}${money(month.payout)}</b></span>
@@ -610,6 +773,96 @@ function thisMonthHtml(d) {
         <ol class="hc-flow">${auction ? decideStep(1) + collectStep(2) + payStep(3) : collectStep(1) + decideStep(2) + payStep(3)}</ol>
         ${olderHtml}
     </div>`;
+}
+
+/** Where a payment went: the account it came into, or the winner it was paid to directly. */
+function paidWhere(p) {
+    if (!p.paidToMemberId) return p.accountName ? `into ${p.accountName}` : '';
+    return p.paidToMemberId === p.memberId ? 'set off against the payout' : `paid ${p.paidToName} directly`;
+}
+
+/** Payments recorded together ("Everyone has paid") for the month, each batch with a way to revert it. */
+function batchesHtml(d, month, canManage) {
+    const batches = new Map();
+    d.payments.filter(p => p.monthNo === month.monthNo && p.batchId).forEach(p => {
+        if (!batches.has(p.batchId)) batches.set(p.batchId, []);
+        batches.get(p.batchId).push(p);
+    });
+    return [...batches].map(([id, list]) => `<div class="hc-batch">${icon(list[0].paidToMemberId ? 'hand' : 'check-circle')}
+        <span class="grow min-0">${plural(list.length, 'member')} marked paid at once · ${date(list[0].paidDate)} · <b>${money(list.reduce((s, p) => s + num(p.amount), 0))}</b>
+            <small class="muted">${esc(list[0].paidToMemberId ? `paid ${list[0].paidToName} directly` : paidWhere(list[0]))}</small></span>
+        ${canManage && !month.payoutDate ? `<button class="btn sm ghost" data-act="revert-batch" data-batch="${id}" data-no="${month.monthNo}" title="Undo all of them">${icon('undo')}Revert</button>` : ''}</div>`).join('');
+}
+
+/**
+ * "Paid": a quick confirmation before anything is recorded, with what is due, the date, the mode and the account it
+ * came into at hand; or that the member paid this month's winner directly (the winner's own installment: set off
+ * against the payout). "More options" opens the full payment form (part payments, late interest, evidence).
+ */
+async function openQuickPaid(d, memberId, monthNo) {
+    const c = d.chit;
+    const member = d.members.find(x => x.id === memberId);
+    const month = monthOf(d, monthNo);
+    if (isAuction(c) && month.bid === null) { toast('Record the auction first: the dividend decides what each member pays', 'error'); return; }
+    const rest = Math.max(0, dueFor(d, member, month) - paidFor(d, memberId, monthNo));
+    const late = num(lateFor(d, memberId, monthNo)?.due);
+    const accounts = c.postToBooks ? await loadAccounts().catch(() => []) : [];
+    const lastInto = d.payments.filter(p => p.memberId === memberId && p.accountId && !p.paidToMemberId).sort((a, b) => b.id - a.id)[0]?.accountId;
+    const winner = month.winnerMemberId && !month.payoutDate ? d.members.find(m => m.id === month.winnerMemberId) : null;
+    let direct = false;
+    openModal({
+        title: `${member.name} has paid?`, iconName: 'check-circle',
+        body: `
+        <div class="hc-confirm">
+            <span class="hc-avatar">${esc(initials(member.name))}</span>
+            <div class="min-0 grow"><b>${esc(member.name)}</b><small>month ${monthNo} · due ${date(month.dueDate)}</small></div>
+            <b class="hc-confirm-amt" data-total>${money(rest + late)}</b>
+        </div>
+        ${late ? `<p class="muted hc-small" data-late>${icon('clock')}Includes ${money(late)} late interest.</p>` : ''}
+        ${winner ? `<div class="seg-chips hc-to" data-to>
+            <button type="button" class="seg-chip active" data-direct="0">${icon('arrow-in')}Paid to me</button>
+            <button type="button" class="seg-chip" data-direct="1">${icon('hand')}${winner.id === memberId ? 'Set off against the payout' : `Paid ${esc(winner.name)} directly`}</button></div>
+            <p class="hc-note" data-direct-note hidden>${icon('info')}<span>${winner.id === memberId
+                ? `${esc(member.name)} won this month: the installment is kept back from the ${money(month.payout)} payout.`
+                : `The money went straight to the winner, ${esc(winner.name)}. It counts towards ${esc(member.name)}'s installment and is taken off what you pay ${esc(winner.name)}.`}
+                ${late ? ` Late interest (${money(late)}) is yours: it stays due.` : ''}</span></p>` : ''}
+        <form class="form-grid two" onsubmit="return false">
+            <label class="field"><span>Paid on</span><input type="date" name="paidDate" value="${isoDate()}" max="${isoDate()}"></label>
+            <label class="field"><span>Reference <small class="muted">optional</small></span><input type="text" name="reference" maxlength="60" placeholder="UPI ref / UTR" data-plain></label>
+            <div class="field span-2"><span>Paid by</span>${modeChips('UPI')}</div>
+            ${c.postToBooks ? `<label class="field span-2" data-into><span>Received into</span><select name="accountId">${moneyAccountOptions(accounts,
+                { chitId: c.id, chitName: c.name, selected: lastInto || c.accountId })}</select></label>` : ''}
+        </form>`,
+        actions: [
+            { label: 'More options…', left: true, onClick: () => { setTimeout(() => openPayment(d, memberId, monthNo), 0); } },
+            { label: 'Cancel' },
+            { label: 'Yes, record it', kind: 'primary', iconName: 'check', onClick: async modal => {
+                const f = modal.el.querySelector('form');
+                const into = f.accountId?.value;
+                if (f.paidDate.value && f.paidDate.value > isoDate()) throw new Error('The payment date cannot be in the future');
+                if (c.postToBooks && !direct && !into) throw new Error('Pick the account the money came into');
+                const fresh = await api.post(`/hosted-chits/${c.id}/payments`, {
+                    memberId, monthNo, amount: rest, lateFee: direct ? 0 : late, mode: chosenMode(modal.el), paidDate: f.paidDate.value || isoDate(),
+                    reference: f.reference.value.trim() || null, accountId: !direct && into ? Number(into) : null, paidToMemberId: direct ? winner.id : null,
+                });
+                await afterChange(fresh, `${member.name} paid ${money(rest + (direct ? 0 : late))}${direct ? (winner.id === memberId ? ' · set off' : ` to ${winner.name}`) : ''} ✓`);
+            } },
+        ],
+        onOpen: modal => {
+            bindModeChips(modal.el);
+            modal.el.querySelector('[data-to]')?.addEventListener('click', e => {
+                const b = e.target.closest('[data-direct]');
+                if (!b) return;
+                direct = b.dataset.direct === '1';
+                modal.el.querySelectorAll('[data-to] [data-direct]').forEach(x => x.classList.toggle('active', x === b));
+                modal.el.querySelector('[data-direct-note]').hidden = !direct;
+                const intoField = modal.el.querySelector('[data-into]');
+                if (intoField) intoField.hidden = direct;
+                modal.el.querySelector('[data-late]')?.toggleAttribute('hidden', direct);
+                modal.el.querySelector('[data-total]').textContent = money(rest + (direct ? 0 : late));
+            });
+        },
+    });
 }
 
 /** A member who owes money: name, a hint, the amount and the buttons to record it or remind them. */
@@ -632,7 +885,7 @@ function personRow(d, m, month, canManage, note = '') {
             <button class="btn sm ghost icon" data-act="remind" data-member="${m.id}" title="Send a reminder with a payment link">${icon('bell')}</button>
             ${waiting ? `<span class="badge gray" title="Record the auction first: the dividend decides what each member pays">${icon('gavel')}After the auction</span>` : `
             <button class="btn sm ghost" data-act="pay" data-member="${m.id}" data-no="${month.monthNo}" title="A part payment, or a different date, mode or reference">Part</button>
-            <button class="btn sm primary" data-act="quick-paid" data-member="${m.id}" data-no="${month.monthNo}" title="Record ${money(total)} in cash, today${late ? ' (with the late interest)' : ''}">${icon('check')}Paid</button>`}</span>` : ''}
+            <button class="btn sm primary" data-act="quick-paid" data-member="${m.id}" data-no="${month.monthNo}" title="Record ${money(total)}${late ? ' (with the late interest)' : ''}: you confirm the date, mode and account first">${icon('check')}Paid</button>`}</span>` : ''}
     </div>`;
 }
 
@@ -800,25 +1053,38 @@ function monthsHtml(d) {
     const auction = isAuction(c);
     const lastDone = c.completedMonths;
     const sum = k => d.schedule.reduce((s, m) => s + num(m[k]), 0);
-    return `<table class="grid compact hc-months">
-        <thead><tr><th class="c">Month</th><th>Pay by</th>${auction ? '<th class="r">Winning bid</th><th class="r">Dividend</th><th class="r">Each pays</th>' : '<th class="r">Chit value</th>'}
-            <th class="r">Winner gets</th><th>Winner</th><th class="r">Collected</th><th>Status</th><th>Agreement</th><th></th></tr></thead>
+    const planned = isPlanned(c);
+    const tools = `<div class="hc-members-tools hc-months-tools">
+        ${planned && manage() && !c.termsLocked ? `<button class="btn sm primary" data-act="edit-plan">${icon('edit')}Edit chit table</button>` : ''}
+        ${planned && c.termsLocked ? `<span class="badge gray" title="The chit has started: the table is what the members agreed to">${icon('lock')}Table fixed</span>` : ''}
+        <button class="btn sm" data-act="plan-pdf" title="${auction ? 'How the auction works' : 'The chit table'}, for the members (without your commission)">${icon('printer')}${auction ? 'Auction guide' : 'Table'} PDF</button>
+        <button class="btn sm" data-act="plan-link" title="A link for the members (without your commission)">${icon('link')}Share link</button>
+        <span class="grow"></span>
+        ${auction ? '' : `<a class="btn sm ghost" href="#/forecast/analyzer/${c.id}" title="Who gains and who pays interest in each month, and what to keep aside">${icon('calculator')}Analyse</a>`}
+    </div>`;
+    return `${tools}<table class="grid compact hc-months">
+        <thead><tr><th class="c">Month</th><th>Pay by</th>${auction ? '<th class="r">Winning bid</th><th class="r">Dividend</th><th class="r">Each pays</th>'
+            : planned ? '<th class="r">Each pays</th><th class="r">You collect</th>' : '<th class="r">Chit value</th>'}
+            <th class="r">Winner gets</th>${planned ? '<th class="r" title="Collected less paid out">Commission</th>' : ''}<th>Winner</th><th class="r">Collected</th><th>Status</th><th>Agreement</th><th></th></tr></thead>
         <tbody>${d.schedule.map(m => `<tr class="${m.status === 'ONGOING' ? 'hc-now' : m.status === 'COMPLETED' ? 'hc-past' : ''}">
             <td class="c"><b>${m.monthNo}</b></td>
             <td>${date(m.dueDate)}</td>
             ${auction ? `<td class="r">${m.bid !== null ? money(m.bid) : '<span class="muted">—</span>'}</td>
                 <td class="r">${m.bid !== null ? money(m.dividend) : '<span class="muted">—</span>'}</td>
-                <td class="r">${money(num(c.installment) - num(m.dividend))}</td>` : `<td class="r">${money(m.chitValue)}</td>`}
+                <td class="r">${money(num(c.installment) - num(m.dividend))}</td>` : planned ? `<td class="r">${money(m.installment)}</td><td class="r">${money(m.chitValue)}</td>` : `<td class="r">${money(m.chitValue)}</td>`}
             <td class="r"><b>${m.estimated ? '<small class="muted">up to</small> ' : ''}${money(m.payout)}</b></td>
+            ${planned ? `<td class="r ${num(m.commission) < 0 ? 'neg' : 'gold-ink'}">${signedMoney(num(m.commission))}</td>` : ''}
             <td>${m.winnerName ? `<span class="hc-winner">${icon(auction ? 'gavel' : 'crown')}${esc(m.winnerName)}</span>` : '<span class="muted">—</span>'}</td>
             <td class="r" title="${m.paidCount} of ${d.members.length} paid in full">${m.due || num(m.collected) ? `${moneyShort(m.collected)} <small class="muted">${m.paidCount}/${d.members.length}</small>` : '<span class="muted">—</span>'}</td>
-            <td>${statusBadge(m.status)}${m.payoutDate ? `<small class="muted hc-when">paid ${shortDate(m.payoutDate)}</small>` : ''}</td>
+            <td>${statusBadge(m.status)}${m.payoutDate ? `<small class="muted hc-when">paid ${shortDate(m.payoutDate)}</small>` : ''}
+                ${m.legs?.length > 1 ? `<small class="muted hc-when" title="${esc(m.legs.map(l => `${l.accountName}: ${money(l.amount)}${l.reference ? ` (${l.mode} ${l.reference})` : ''}`).join('\n'))}">${icon('split')}from ${m.legs.length} accounts</small>`
+                    : m.legs?.length ? `<small class="muted hc-when">from ${esc(m.legs[0].accountName)}</small>` : ''}</td>
             <td>${m.status === 'COMPLETED' ? agreementChip(d, m) : '<span class="muted">—</span>'}</td>
             <td class="r">${m.status === 'ONGOING' ? `<button class="btn sm" data-act="goto" data-to="month">Open${icon('chevron-right')}</button>`
                 : manage() && m.status === 'COMPLETED' && m.monthNo === lastDone ? `<button class="btn sm ghost" data-act="undo-payout" data-month="${m.monthNo}" title="Undo the payment to the winner">${icon('undo')}Undo</button>` : ''}</td>
         </tr>`).join('')}</tbody>
-        <tfoot><tr class="total"><td colspan="2">Total</td>${auction ? `<td class="r">${money(sum('bid'))}</td><td></td><td></td>` : `<td class="r">${money(sum('chitValue'))}</td>`}
-            <td class="r">${money(sum('payout'))}</td><td></td><td class="r">${moneyShort(sum('collected'))}</td><td colspan="3"></td></tr></tfoot>
+        <tfoot><tr class="total"><td colspan="2">Total</td>${auction ? `<td class="r">${money(sum('bid'))}</td><td></td><td></td>` : planned ? `<td></td><td class="r">${money(sum('chitValue'))}</td>` : `<td class="r">${money(sum('chitValue'))}</td>`}
+            <td class="r">${money(sum('payout'))}</td>${planned ? `<td class="r ${sum('commission') < 0 ? 'neg' : 'gold-ink'}">${signedMoney(sum('commission'))}</td>` : ''}<td></td><td class="r">${moneyShort(sum('collected'))}</td><td colspan="3"></td></tr></tfoot>
     </table>`;
 }
 
@@ -944,38 +1210,116 @@ function membersHtml(d) {
 
 // ---------------------------------------------------------------- history
 
+/**
+ * Money in and out, month by month: a card per chit month (newest first) with how much of the month is collected,
+ * the payments received (who, when, how, into which account or straight to the winner, reference, receipt) and the
+ * payout (to whom, from which accounts with their UTRs, into which account, the commission and the agreement).
+ * Totals on top; filter to money in or out, or find a member.
+ */
 function historyHtml(d) {
-    const kinds = [['ALL', 'Everything'], ['IN', 'Money in'], ['OUT', 'Money out']];
-    const rows = d.ledger.filter(r => view.historyKind === 'ALL' || (view.historyKind === 'IN' ? (r.kind === 'COLLECTION' || r.kind === 'LATE_FEE') : (r.kind === 'PAYOUT' || r.kind === 'COMMISSION'))).slice().reverse();
+    const c = d.chit;
+    const kind = view.historyKind;
     const canManage = manage();
-    const what = r => r.kind === 'COLLECTION' ? `<b>${esc(r.party)}</b> paid for month ${r.monthNo}`
-        : r.kind === 'LATE_FEE' ? `Late interest from <b>${esc(r.party)}</b> (month ${r.monthNo})`
-        : r.kind === 'PAYOUT' ? `Paid winner <b>${esc(r.party)}</b> (month ${r.monthNo})` : `My commission (month ${r.monthNo})`;
-    return `<div class="hc-members-tools"><div class="seg-chips sm">${kinds.map(([k, label]) =>
-            `<button class="seg-chip ${view.historyKind === k ? 'active' : ''}" data-act="history-kind" data-kind="${k}">${label}</button>`).join('')}</div>
-            <span class="muted">newest first</span></div>
-        ${rows.length ? `<table class="grid compact">
-        <thead><tr><th>Date</th><th>What happened</th><th>How</th><th class="r">Amount</th><th class="r" title="Collected minus paid out, after this entry">Money with me</th><th>Entry</th>${canManage ? '<th></th>' : ''}</tr></thead>
-        <tbody>${rows.map(r => {
-            const late = r.kind === 'LATE_FEE';
-            const lateAmount = late ? num(d.payments.find(p => p.id === r.paymentId)?.lateFee) : 0;
-            const isIn = num(r.moneyIn) > 0 || late;
-            const tone = r.kind === 'COLLECTION' ? 'aqua' : late ? 'coral' : r.kind === 'PAYOUT' ? 'gold' : 'violet';
-            const ico = r.kind === 'COLLECTION' ? 'arrow-in' : late ? 'clock' : r.kind === 'PAYOUT' ? 'crown' : 'piggy';
-            const pay = r.paymentId ? d.payments.find(p => p.id === r.paymentId) : null;
-            return `<tr>
-                <td class="hc-nowrap">${date(r.date)}</td>
-                <td><span class="hc-kind"><span class="chip-icon sm ${tone}">${icon(ico)}</span><span>${what(r)}${r.note ? `<small class="muted hc-sub-note">${esc(r.note)}</small>` : ''}</span></span></td>
-                <td>${esc(r.mode || '—')}</td>
-                <td class="r hc-nowrap"><b class="${isIn ? 'pos' : 'neg'}">${isIn ? '+' : '−'}${money(late ? lateAmount : isIn ? r.moneyIn : r.moneyOut)}</b></td>
-                <td class="r hc-nowrap muted">${money(r.held)}</td>
-                <td class="muted">${esc(r.entryNo || '—')}</td>
-                ${canManage ? `<td class="r hc-nowrap">${pay && !late ? `${pay.attachmentCount ? `<button class="btn sm ghost icon" data-act="view-entry" data-entry="${pay.journalEntryId}" title="${pay.attachmentCount} file(s) of evidence">${icon('paperclip')}</button>` : ''}
-                    <button class="btn sm ghost icon" data-act="receipt" data-payment="${r.paymentId}" title="Receipt ${esc(pay.receiptNo || '')}">${icon('receipt')}</button>
-                    <button class="btn sm ghost icon" data-act="edit-payment" data-payment="${r.paymentId}" title="Change this payment">${icon('edit')}</button>
-                    <button class="btn sm ghost icon" data-act="undo-payment" data-payment="${r.paymentId}" title="Undo this payment">${icon('undo')}</button>` : ''}</td>` : ''}
-            </tr>`;
-        }).join('')}</tbody></table>` : emptyState('Nothing recorded yet', 'history')}`;
+    const months = d.schedule.filter(m => m.payoutDate || d.payments.some(p => p.monthNo === m.monthNo)).slice().reverse();
+    const received = d.payments.reduce((s, p) => s + num(p.amount), 0);
+    const late = d.payments.reduce((s, p) => s + num(p.lateFee), 0);
+    const paidOut = d.schedule.reduce((s, m) => s + (m.status === 'COMPLETED' ? num(m.payout) : 0), 0);
+    const commission = d.schedule.reduce((s, m) => s + (m.status === 'COMPLETED' ? num(m.commission) : 0), 0);
+    const lastDone = c.completedMonths;
+    const agreementOf = no => d.agreements.find(a => a.monthNo === no);
+    const stat = (iconName, label, value, sub, cls = '') => `<div class="hc-lg-stat ${cls}"><span>${icon(iconName)}</span><div><small>${label}</small><b>${value}</b><em>${sub}</em></div></div>`;
+
+    // one dense line per payment; a click opens everything about it under the line (nothing is cut short)
+    const receivedRow = p => {
+        const where = p.paidToMemberId ? (p.paidToMemberId === p.memberId ? 'set off against the payout' : `paid ${p.paidToName} directly`)
+            : p.accountName ? `into ${p.accountName}` : '';
+        const facts = [['Received', `${date(p.paidDate)} · ${p.mode}`], ['Where', where], ['Reference', p.reference], ['Receipt', p.receiptNo],
+            ['Late interest', num(p.lateFee) ? money(p.lateFee) : ''], ['Let off', num(p.lateFeeWaived) ? money(p.lateFeeWaived) : ''],
+            ['Entry', p.entryNo], ['Note', p.note], ['Recorded', `${p.createdBy}, ${dateTime(p.createdAt)}`]].filter(([, v]) => v);
+        return `<div class="hc-lg-item" data-lg-name="${esc((p.memberName || '').toLowerCase())}">
+            <div class="hc-lg-row" data-act="lg-expand" title="Show the details">
+                <span class="hc-avatar xs">${esc(initials(p.memberName || '?'))}</span>
+                <b class="hc-lg-name">${esc(p.memberName)}</b>
+                <span class="hc-lg-mode">${esc(p.mode)}</span>
+                ${p.paidToMemberId ? `<span class="hc-lg-chip direct" title="${esc(where)}">${icon('hand')}direct</span>` : ''}
+                ${p.batchId ? '<span class="hc-lg-chip" title="Marked paid with everyone at once">all</span>' : ''}
+                ${p.attachmentCount ? `<span class="hc-lg-chip" title="${p.attachmentCount} file(s) of evidence">${icon('paperclip')}${p.attachmentCount}</span>` : ''}
+                <small class="hc-lg-date">${shortDate(p.paidDate)}</small>
+                <span class="grow"></span>
+                <b class="pos hc-lg-amt">+${money(p.amount)}</b>${num(p.lateFee) ? `<small class="hc-lg-late" title="Late payment interest">+${moneyShort(p.lateFee)}</small>` : ''}
+                ${canManage ? `<span class="hc-lg-acts">
+                    <button class="btn xs ghost icon" data-act="receipt" data-payment="${p.id}" title="Receipt ${esc(p.receiptNo || '')}">${icon('receipt')}</button>
+                    <button class="btn xs ghost icon" data-act="edit-payment" data-payment="${p.id}" title="Change">${icon('edit')}</button>
+                    <button class="btn xs ghost icon" data-act="undo-payment" data-payment="${p.id}" title="Take back">${icon('undo')}</button></span>` : ''}
+            </div>
+            <dl class="hc-lg-more" hidden>${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}
+                ${p.attachmentCount ? `<dt>Evidence</dt><dd><a href="#" data-act="view-entry" data-entry="${p.journalEntryId}">${icon('paperclip')}${p.attachmentCount} file(s)</a></dd>` : ''}</dl>
+        </div>`;
+    };
+
+    const payoutCard = m => {
+        if (m.status !== 'COMPLETED') {
+            return `<div class="hc-lg-payout pending">
+                <span class="hc-avatar gold">${icon(isAuction(c) ? 'gavel' : 'crown')}</span>
+                <div class="min-0 grow"><b>${m.winnerName ? esc(m.winnerName) : 'Winner not chosen'}</b>
+                    <small>${m.estimated ? 'up to ' : ''}${money(m.payout)} to be paid${m.status === 'ONGOING' ? ' this month' : ''}</small></div>
+                ${canManage && m.status === 'ONGOING' && m.winnerMemberId ? `<button class="btn sm gold-btn" data-act="payout" data-month="${m.monthNo}">${icon('check')}Pay winner</button>` : ''}</div>`;
+        }
+        const ag = agreementOf(m.monthNo);
+        const commissionNeg = num(m.commission) < 0;
+        return `<div class="hc-lg-payout">
+            <div class="hc-lg-payout-head"><span class="hc-avatar gold">${icon(isAuction(c) ? 'gavel' : 'crown')}</span>
+                <div class="min-0 grow"><b>${esc(m.winnerName)}</b><small>${shortDate(m.payoutDate)}${m.payoutTo ? ` · to ${esc(m.payoutTo)}` : ''}${m.payoutEntryNo ? ` · ${esc(m.payoutEntryNo)}` : ''}</small></div>
+                <b class="hc-lg-out">−${money(m.payout)}</b></div>
+            ${(m.legs || []).length ? `<div class="hc-lg-parts">${m.legs.map(l => `<span class="hc-lg-part ${l.mode === 'Direct' ? 'direct' : ''}">
+                ${icon(l.mode === 'Direct' ? 'hand' : 'arrow-out')}<span class="hc-lg-part-name">${esc(l.mode === 'Direct' ? 'Paid directly by members' : l.accountName)}</span>
+                <small>${esc(l.mode === 'Direct' ? '' : l.mode || '')}${l.reference && l.mode !== 'Direct' ? ` · ${esc(l.reference)}` : ''}</small><b>${money(l.amount)}</b></span>`).join('')}</div>` : ''}
+            <div class="hc-lg-foot">
+                <span class="${commissionNeg ? 'neg' : 'gold-ink'}" title="${commissionNeg ? 'Paid to the winner out of your commission' : 'Your commission'}">${icon('piggy')}${commissionNeg ? `from my commission ${money(-num(m.commission))}` : `commission ${money(m.commission)}`}</span>
+                ${ag ? `<span class="hc-lg-chip ${ag.status === 'DRAFT' ? 'warn' : 'good'}" data-act="agreement" data-month="${m.monthNo}" title="Open the agreement">${icon('file-text')}${ag.status === 'DRAFT' ? 'agreement not accepted' : 'agreement ' + ag.status.toLowerCase()}</span>`
+                    : canManage ? `<span class="hc-lg-chip muted clickable" data-act="agreement" data-month="${m.monthNo}">${icon('file-text')}no agreement</span>` : ''}
+                <span class="grow"></span>
+                ${canManage && m.monthNo === lastDone ? `<button class="btn sm ghost" data-act="undo-payout" data-month="${m.monthNo}" title="Undo the payout">${icon('undo')}Undo</button>` : ''}
+            </div></div>`;
+    };
+
+    const groups = months.map((m, i) => {
+        const pays = d.payments.filter(p => p.monthNo === m.monthNo).sort((a, b) => b.paidDate.localeCompare(a.paidDate) || b.id - a.id);
+        const inMonth = pays.reduce((s, p) => s + num(p.amount), 0);
+        const pct = num(m.expected) ? Math.min(100, (num(m.collected) / num(m.expected)) * 100) : 0;
+        return `<details class="hc-lg ${m.status.toLowerCase()}" ${i < 3 ? 'open' : ''}>
+            <summary class="hc-lg-head">
+                <span class="hc-lg-no">${m.monthNo}</span>
+                <div class="min-0"><b>${monthName(m.dueDate)}</b><small>${m.paidCount} of ${d.members.length} paid · ${plural(pays.length, 'payment')}</small></div>
+                <i class="hc-lg-bar" title="${money(m.collected)} of ${money(m.expected)} collected"><em style="width:${pct}%"></em></i>
+                <span class="hc-lg-sum"><small>In</small><b class="pos">${money(inMonth)}</b></span>
+                <span class="hc-lg-sum"><small>Out</small><b class="${m.status === 'COMPLETED' ? 'neg' : 'muted'}">${m.status === 'COMPLETED' ? money(m.payout) : '—'}</b></span>
+                ${statusBadge(m.status)}
+            </summary>
+            <div class="hc-lg-body ${kind === 'ALL' ? '' : 'one'}">
+                ${kind !== 'OUT' ? `<div class="hc-lg-col"><div class="hc-lg-col-head">${icon('arrow-in')}Received<span>${money(inMonth)}</span></div>
+                    ${pays.length ? pays.map(receivedRow).join('') : '<p class="muted hc-small">Nothing received yet.</p>'}</div>` : ''}
+                ${kind !== 'IN' ? `<div class="hc-lg-col"><div class="hc-lg-col-head">${icon('crown')}Paid out</div>${payoutCard(m)}</div>` : ''}
+            </div></details>`;
+    }).join('');
+
+    return `<div class="hc-pad hc-ledger">
+        <div class="hc-lg-stats">
+            ${stat('arrow-in', 'Received', money(received), plural(d.payments.length, 'payment'), 'in')}
+            ${late ? stat('clock', 'Late interest', money(late), 'your income', 'late') : ''}
+            ${stat('crown', 'Paid to winners', money(paidOut), plural(c.completedMonths, 'winner'), 'out')}
+            ${stat('piggy', 'Commission', money(commission), 'on paid-out months', commission < 0 ? 'neg' : 'gold')}
+            ${stat('wallet', 'Money with me', money(c.held), 'collected, not paid out')}
+        </div>
+        <div class="hc-members-tools">
+            <div class="seg-chips sm">${[['ALL', 'Everything', 'list'], ['IN', 'Received', 'arrow-in'], ['OUT', 'Paid out', 'crown']].map(([k, label, i]) =>
+                `<button class="seg-chip ${kind === k ? 'active' : ''}" data-act="history-kind" data-kind="${k}">${icon(i)}${label}</button>`).join('')}</div>
+            ${kind !== 'OUT' ? `<label class="hc-search">${icon('search')}<input id="hc-ledger-search" placeholder="Find a member" value="${esc(view.ledgerQuery || '')}" data-plain></label>` : ''}
+            <span class="grow"></span>
+            <button class="btn sm ghost" data-act="ledger-open" title="Open every month">${icon('chevron-down')}All months</button>
+        </div>
+        ${groups || emptyState('Nothing recorded yet', 'history')}
+    </div>`;
 }
 
 // ===================================================================== new chit (wizard dialog)
@@ -987,6 +1331,8 @@ function newDraft() {
         memberCount: 20, installment: 25000, baseValue: 500000, monthlyIncrement: 5000, commission: 25000,
         winnerExtraType: 'FIXED', winnerExtraValue: 5000, baseTouched: false,
         auctionValue: 1000000, commissionPercent: 5, maxBidPercent: 40,
+        // planned chits: what members pay rises by this each month (0: the same), and the chit table
+        installmentIncrement: 0, plan: null, payTouched: false,
         lateFeePercent: 2, lateGraceDays: 5, upiId: '', payeeName: '',
         postToBooks: true, collection: 'SEPARATE', accountId: null, commissionTo: 'SEPARATE', commissionAccountId: null, commissionCategoryId: null,
         lateTo: 'SEPARATE', lateFeeAccountId: null,
@@ -994,18 +1340,47 @@ function newDraft() {
     };
 }
 
+/** Planned chits: payouts rising evenly from `first` to `last`, to the nearest ₹1,000 (the last one exact). */
+function spreadPayouts(n, first, last) {
+    return Array.from({ length: n }, (_, i) => i === n - 1 ? last : n === 1 ? first : Math.round((first + (last - first) * i / (n - 1)) / 1000) * 1000);
+}
+
+/**
+ * Planned chits: the draft's chit table, made (or remade) for the number of members. Until the payouts are edited
+ * they start at about 82% of what is collected a month and rise to about 104%, so later winners get more than is
+ * collected and the early commission pays for it. Installments follow the monthly amount and its rise unless edited.
+ */
+function ensurePlan(w) {
+    const n = num(w.memberCount);
+    if (!(n >= 2 && n <= 100)) return;
+    const emi = num(w.installment);
+    const inc = num(w.installmentIncrement);
+    if (!w.plan || w.plan.length !== n || !w.payTouched) {
+        const first = emi * n;
+        const pays = spreadPayouts(n, Math.round(first * 0.82 / 1000) * 1000, Math.round((emi + inc * (n - 1)) * n * 1.04 / 1000) * 1000);
+        const old = w.plan || [];
+        w.plan = pays.map((p, i) => ({ payout: w.payTouched && old[i] ? old[i].payout : p, installment: old[i]?.instTouched ? old[i].installment : emi + inc * i,
+            instTouched: !!old[i]?.instTouched }));
+    }
+    w.plan.forEach((row, i) => { if (!row.instTouched) row.installment = emi + inc * i; });
+}
+
 /** The draft as the server's chit request. */
 function draftRequest(w) {
     const n = num(w.memberCount);
     const auction = w.chitType === 'AUCTION';
-    const value = auction ? num(w.auctionValue) : num(w.baseValue);
+    const planned = w.chitType === 'PLANNED';
+    const value = auction ? num(w.auctionValue) : planned ? num(w.installment) * n : num(w.baseValue);
+    if (planned) ensurePlan(w);
     return {
         name: w.name.trim(), chitType: w.chitType, startMonth: `${w.startMonth}-01`, dueDay: num(w.dueDay), memberCount: n, months: n,
         installment: auction ? Math.round(value / n) : num(w.installment), baseValue: value,
-        monthlyIncrement: auction ? 0 : num(w.monthlyIncrement),
-        commission: auction ? Math.round(value * num(w.commissionPercent) / 100) : num(w.commission),
-        winnerExtraType: auction ? 'NONE' : w.winnerExtraType, winnerExtraValue: auction ? 0 : num(w.winnerExtraValue),
+        monthlyIncrement: auction || planned ? 0 : num(w.monthlyIncrement),
+        commission: auction ? Math.round(value * num(w.commissionPercent) / 100) : planned ? 0 : num(w.commission),
+        winnerExtraType: auction || planned ? 'NONE' : w.winnerExtraType, winnerExtraValue: auction || planned ? 0 : num(w.winnerExtraValue),
         maxBidPercent: auction ? num(w.maxBidPercent) : null,
+        installmentIncrement: planned ? num(w.installmentIncrement) : null,
+        plan: planned ? (w.plan || []).map((x, i) => ({ monthNo: i + 1, installment: num(x.installment), payout: num(x.payout) })) : null,
         lateFeePercent: num(w.lateFeePercent), lateGraceDays: num(w.lateGraceDays), upiId: (w.upiId || '').trim() || null, payeeName: (w.payeeName || '').trim() || null,
         postToBooks: true,
         separateCollectionAccount: w.postToBooks && w.collection === 'SEPARATE', accountId: w.postToBooks && w.collection === 'EXISTING' ? w.accountId : null,
@@ -1017,15 +1392,25 @@ function draftRequest(w) {
     };
 }
 
-/** The months of a draft: what is collected, the chit value and what the winner gets (auction: the most). */
+/**
+ * The months of a draft: what each member pays, what is collected, the chit value, what the winner gets and the
+ * commission (planned chits: collected − payout, negative when the winner gets more). Auction: the most a winner gets.
+ */
 function planOf(w) {
     const r = draftRequest(w);
     const rows = [];
     for (let m = 1; m <= r.months; m++) {
+        if (w.chitType === 'PLANNED') {
+            const x = w.plan[m - 1];
+            const collect = num(x.installment) * r.memberCount;
+            rows.push({ monthNo: m, dueDate: dueDateOf(w.startMonth, r.dueDay || 1, m), installment: num(x.installment), chitValue: collect, collect,
+                payout: num(x.payout), commission: collect - num(x.payout) });
+            continue;
+        }
         const value = r.baseValue + (m - 1) * r.monthlyIncrement;
         rows.push({
-            monthNo: m, dueDate: dueDateOf(w.startMonth, r.dueDay || 1, m), chitValue: value,
-            payout: value - r.commission,
+            monthNo: m, dueDate: dueDateOf(w.startMonth, r.dueDay || 1, m), chitValue: value, installment: r.installment,
+            payout: value - r.commission, commission: r.commission,
             collect: w.chitType === 'AUCTION' ? r.baseValue : r.memberCount * r.installment + (m - 1) * extraOf({ ...r }),
         });
     }
@@ -1143,6 +1528,14 @@ function checkDetails(w) {
         if (!(num(w.maxBidPercent) > num(w.commissionPercent) && num(w.maxBidPercent) <= 40)) return 'The highest bid must be above your commission and at most 40%';
         return checkLate(w);
     }
+    if (w.chitType === 'PLANNED') {
+        if (!(num(w.installment) > 0)) return 'Enter how much each member pays a month';
+        if (num(w.installmentIncrement) < 0) return 'The monthly rise cannot be negative';
+        ensurePlan(w);
+        const bad = w.plan.findIndex(x => !(num(x.payout) > 0) || !(num(x.installment) > 0));
+        if (bad >= 0) return `Month ${bad + 1}: enter what each member pays and what the winner gets`;
+        return checkLate(w);
+    }
     if (!(num(w.installment) > 0)) return 'Enter how much each member pays a month';
     if (!(num(w.baseValue) > 0)) return 'Enter the chit value for month 1';
     if (num(w.monthlyIncrement) < 0 || num(w.commission) < 0) return 'Amounts cannot be negative';
@@ -1198,13 +1591,18 @@ function fl(label, key, w, { tip = '', attrs = '', type = 'number', unit = '', s
  */
 function drawDetails(host, w) {
     const auction = w.chitType === 'AUCTION';
+    const planned = w.chitType === 'PLANNED';
     const type = w.winnerExtraType || 'NONE';
+    if (planned) ensurePlan(w);
+    const typeButton = (t, iconName, title, sub) => `<button type="button" class="${w.chitType === t ? 'active' : ''}" data-type="${t}" role="radio" aria-checked="${w.chitType === t}">
+        ${icon(iconName)}<span><b>${title}</b><small>${sub}</small></span></button>`;
     host.innerHTML = `
     <div class="hc-two hc-fit">
         <div class="hc-col">
-            <div class="hc-type-toggle" role="radiogroup" aria-label="Kind of chit">
-                <button type="button" class="${!auction ? 'active' : ''}" data-type="FIXED" role="radio" aria-checked="${!auction}">${icon('trending')}<span><b>Fixed chit</b><small>value rises monthly · you pick or draw the winner</small></span></button>
-                <button type="button" class="${auction ? 'active' : ''}" data-type="AUCTION" role="radio" aria-checked="${auction}">${icon('gavel')}<span><b>Auction chit</b><small>Margadarsi style · members bid, the discount is shared</small></span></button>
+            <div class="hc-type-toggle hc-types-3" role="radiogroup" aria-label="Kind of chit">
+                ${typeButton('FIXED', 'trending', 'Fixed', 'value rises a set amount monthly')}
+                ${typeButton('PLANNED', 'calendar', 'Planned', 'you set each month’s payout')}
+                ${typeButton('AUCTION', 'gavel', 'Auction', 'members bid, the discount is shared')}
             </div>
             <div class="hc-fit-grid">
                 ${fl('Chit name', 'name', w, { type: 'text', attrs: 'maxlength="100"', span: 'span-2', tip: auction ? 'e.g. Auction Chit 10L' : 'e.g. Family Chit 2026' })}
@@ -1216,6 +1614,9 @@ function drawDetails(host, w) {
                     <label class="fl fixed" title="Chit value ÷ members, before the dividend"><input type="text" value="${money(Math.round(num(w.auctionValue) / Math.max(1, num(w.memberCount))))}" disabled data-installment-view data-plain><span>Each pays a month</span><i class="fl-unit">before dividend</i></label>
                     ${fl('Your commission', 'commissionPercent', w, { attrs: 'max="10"', unit: '% <b data-commission-hint></b>', tip: 'Each month, % of the chit value. Also the lowest bid.' })}
                     ${fl('Highest bid allowed', 'maxBidPercent', w, { attrs: 'max="40"', unit: '% of value', tip: 'The most a member may bid (at most 40%)' })}`
+                : planned ? `
+                    ${fl('Each pays a month', 'installment', w, { unit: '₹ (EMI)', tip: 'The same every month unless it rises or you edit a month in the table' })}
+                    ${fl('EMI rises each month by', 'installmentIncrement', w, { unit: '₹', tip: '0 keeps the EMI the same every month' })}`
                 : `
                     ${fl('Each pays a month', 'installment', w, { unit: '₹', tip: '₹ per member each month' })}
                     ${fl('Chit value, month 1', 'baseValue', w, { unit: '₹ <b data-base-hint></b>', tip: 'Usually members × the monthly amount' })}
@@ -1237,55 +1638,104 @@ function drawDetails(host, w) {
         <div class="hc-col hc-explain-box hc-plan-box" data-preview></div>
     </div>`;
 
+    const summaryHtml = () => {
+        const { r, rows } = planOf(w);
+        const n = r.memberCount;
+        if (auction) {
+            return `<ul class="hc-explain hc-explain-sm">
+                <li>${icon('gavel')}<span>Each month members who have not won <b>bid a discount</b>; the highest bid wins the chit value less the bid.</span></li>
+                <li>${icon('piggy')}<span>You keep <b>${money(r.commission)}</b> a month (also the lowest bid), <b>${money(r.commission * n)}</b> over the chit; the rest of each bid is shared as a dividend.</span></li>
+                ${lateLine(w, r.installment)}</ul>`;
+        }
+        if (planned) {
+            const res = reserveOf(rows);
+            return `<ul class="hc-explain hc-explain-sm">
+                <li>${icon('piggy')}<span>Over the chit you keep <b class="${res.total < 0 ? 'neg' : ''}">${money(res.total)}</b>: ${money(rows.reduce((s, x) => s + x.collect, 0))} collected, ${money(rows.reduce((s, x) => s + x.payout, 0))} paid to winners.</span></li>
+                ${res.negative.length ? `<li>${icon('shield')}<span>Months ${compactMonths(res.negative)} pay out more than they collect. Keep up to <b>${money(res.peak)}</b> of your commission for them${res.from ? ` (from month ${res.from})` : ''}; it comes out of the commission account.</span></li>` : ''}
+                ${lateLine(w, r.installment)}</ul>
+                ${res.ownMoney > 0 ? `<p class="hc-note warn">${icon('alert')}<span>By month ${res.cumulative.findIndex(v => v < 0) + 1} the payouts exceed everything collected so far: you would put in up to <b>${money(res.ownMoney)}</b> of your own.</span></p>`
+                    : res.total < 0 ? `<p class="hc-note warn">${icon('alert')}<span>Winners get <b>${money(-res.total)}</b> more than you collect. Lower the later payouts.</span></p>`
+                    : `<p class="hc-note good">${icon('check-circle')}<span>Collections cover every payout over the chit, in time.</span></p>`}`;
+        }
+        const net = rows.reduce((s, x) => s + x.collect - x.payout, 0);
+        const fix = r.monthlyIncrement > 0 && !(w.winnerExtraType === 'FIXED' && num(w.winnerExtraValue) === r.monthlyIncrement)
+            ? ` <a href="#" data-extra-fix>Make winners pay ${money(r.monthlyIncrement)} extra</a>.` : '';
+        return `<ul class="hc-explain hc-explain-sm">
+                <li>${icon('piggy')}<span>You keep <b>${money(r.commission)}</b> a month, <b>${money(r.commission * n)}</b> over the chit.</span></li>
+                ${lateLine(w, r.installment)}</ul>
+                ${net < 0 ? `<p class="hc-note warn">${icon('alert')}<span>You would pay winners <b>${money(-net)}</b> more than you collect.${fix || ' Lower the monthly rise or raise the amounts.'}</span></p>`
+                    : `<p class="hc-note good">${icon('check-circle')}<span>Balanced: collections cover every payout${net > 0 ? `, ${money(net)} left for you` : ''}.</span></p>`}`;
+    };
+
     const preview = () => {
         const n = num(w.memberCount);
         const ok = n >= 2 && n <= 100 && /^\d{4}-\d{2}$/.test(w.startMonth);
         const membersUnit = host.querySelector('[data-k="memberCount"] ~ .fl-unit');
         if (membersUnit) membersUnit.textContent = n ? `${n} months` : '';
-        if (!auction) {
-            host.querySelector('[data-base-hint]').innerHTML = w.baseTouched && num(w.baseValue) !== n * num(w.installment)
-                ? `· <a href="#" data-base-auto title="members × monthly amount">use ${moneyShort(n * num(w.installment))}</a>` : '';
-        } else {
+        if (auction) {
             const value = num(w.auctionValue);
             host.querySelector('[data-installment-view]').value = money(Math.round(value / Math.max(1, n)));
             host.querySelector('[data-commission-hint]').textContent = `= ${moneyShort(Math.round(value * num(w.commissionPercent) / 100))}`;
+        } else if (!planned) {
+            host.querySelector('[data-base-hint]').innerHTML = w.baseTouched && num(w.baseValue) !== n * num(w.installment)
+                ? `· <a href="#" data-base-auto title="members × monthly amount">use ${moneyShort(n * num(w.installment))}</a>` : '';
         }
         const out = host.querySelector('[data-preview]');
         const summary = host.querySelector('[data-summary]');
         if (!ok) { out.innerHTML = emptyState('Fill in the members and the start month to see the chit table', 'calendar'); summary.innerHTML = ''; return; }
+        if (planned) ensurePlan(w);
         const plan = planOf(w);
-        const { r, rows } = plan;
-        if (auction) {
-            const maxBid = Math.round(r.baseValue * num(w.maxBidPercent) / 100);
-            const sampleBid = Math.round((r.commission + maxBid) / 2 / 1000) * 1000;
-            const dividend = Math.floor((sampleBid - r.commission) / n);
-            summary.innerHTML = `<ul class="hc-explain hc-explain-sm">
-                <li>${icon('gavel')}<span>Each month members who have not won <b>bid a discount</b> of ${money(r.commission)}–${money(maxBid)}; the highest bid wins chit value − bid.</span></li>
-                <li>${icon('piggy')}<span>You keep <b>${money(r.commission)}</b> a month; the rest of the bid is shared as a <b>dividend</b>. Example: a bid of ${money(sampleBid)} → winner gets ${money(r.baseValue - sampleBid)}, everyone pays ${money(r.installment - dividend)}.</span></li>
-                ${lateLine(w, r.installment)}</ul>`;
-        } else {
-            const net = rows.reduce((s, x) => s + x.collect - x.payout, 0);
-            const fix = r.monthlyIncrement > 0 && !(w.winnerExtraType === 'FIXED' && num(w.winnerExtraValue) === r.monthlyIncrement)
-                ? ` <a href="#" data-extra-fix>Make winners pay ${money(r.monthlyIncrement)} extra</a>.` : '';
-            summary.innerHTML = `<ul class="hc-explain hc-explain-sm">
-                <li>${icon('piggy')}<span>You keep <b>${money(r.commission)}</b> a month, <b>${money(r.commission * n)}</b> over the chit.</span></li>
-                ${lateLine(w, r.installment)}</ul>
-                ${net < 0 ? `<p class="hc-note warn">${icon('alert')}<span>You would pay winners <b>${money(-net)}</b> more than you collect.${fix || ' Lower the monthly rise or raise the amounts.'}</span></p>`
-                    : `<p class="hc-note good">${icon('check-circle')}<span>Balanced: collections cover every payout${net > 0 ? `, ${money(net)} left for you` : ''}.</span></p>`}`;
-        }
-        out.innerHTML = `<div class="hc-plan-head"><div class="section-title">${icon('calendar')}Chit table · ${n} months</div>
+        summary.innerHTML = summaryHtml();
+        out.innerHTML = `<div class="hc-plan-head"><div class="section-title">${icon(auction ? 'gavel' : 'calendar')}${auction ? 'How the auction works' : `Chit table · ${n} months`}</div>
                 <span class="spacer"></span>
-                <button type="button" class="btn sm" data-plan="pdf" title="Print or save the chit table as a PDF">${icon('printer')}PDF</button>
-                <button type="button" class="btn sm" data-plan="link" title="A link to this chit table, to send to the members before the chit starts">${icon('link')}Share link</button></div>
-            <div class="hc-plan-wrap">${planTableHtml(w, plan)}</div>`;
+                <button type="button" class="btn sm" data-plan="pdf" title="Print or save it as a PDF for the members (without your commission)">${icon('printer')}PDF</button>
+                <button type="button" class="btn sm" data-plan="link" title="A link for the members, before the chit starts (without your commission)">${icon('link')}Share link</button></div>
+            ${planned ? `<div class="hc-plan-fill">
+                <span>${icon('sparkles')}Winner gets from</span>
+                <input type="number" class="num" data-fill="first" value="${num(w.plan[0].payout)}" step="1000" min="0" data-plain>
+                <span>in month 1 to</span>
+                <input type="number" class="num" data-fill="last" value="${num(w.plan.at(-1).payout)}" step="1000" min="0" data-plain>
+                <span>in month ${n}</span>
+                <button type="button" class="btn sm" data-fill-go>Fill evenly</button>
+                <small class="muted">then edit any month below</small></div>` : ''}
+            <div class="hc-plan-wrap">${auction ? auctionGuideHtml(plan.r, num(w.maxBidPercent)) : planTableHtml(w, plan, { editable: planned })}</div>`;
+    };
+
+    /** Planned chits: a cell was typed in; the row's figures, the totals and the summary follow without redrawing. */
+    const refreshPlanned = () => {
+        const plan = planOf(w);
+        const res = reserveOf(plan.rows);
+        plan.rows.forEach((x, i) => {
+            const row = host.querySelector(`[data-plan-row="${i}"]`);
+            if (!row) return;
+            row.querySelector('[data-cell="collect"]').textContent = money(x.collect);
+            const cm = row.querySelector('[data-cell="commission"]');
+            cm.textContent = signedMoney(x.commission);
+            cm.className = `r ${x.commission < 0 ? 'neg' : 'gold-ink'}`;
+            const kept = row.querySelector('[data-cell="kept"]');
+            kept.textContent = money(res.cumulative[i]);
+            kept.className = `r muted ${res.cumulative[i] < 0 ? 'neg' : ''}`;
+        });
+        const foot = host.querySelector('[data-plan-foot]');
+        if (foot) foot.outerHTML = plannedFootHtml(plan.rows, false);
+        host.querySelector('[data-summary]').innerHTML = summaryHtml();
     };
 
     host.oninput = e => {
+        const planCell = e.target.closest('[data-plan-i]');
+        if (planCell) {
+            const row = w.plan[Number(planCell.dataset.planI)];
+            if (planCell.dataset.planField === 'installment') { row.installment = num(e.target.value); row.instTouched = true; }
+            else { row.payout = num(e.target.value); w.payTouched = true; }
+            refreshPlanned();
+            return;
+        }
+        if (e.target.dataset.fill) return;
         const k = e.target.dataset.k;
         if (!k) return;
         w[k] = e.target.value;
         if (k === 'baseValue') w.baseTouched = true;
-        if (!auction && (k === 'memberCount' || k === 'installment') && !w.baseTouched) {
+        if (!auction && !planned && (k === 'memberCount' || k === 'installment') && !w.baseTouched) {
             w.baseValue = num(w.memberCount) * num(w.installment);
             host.querySelector('[data-k="baseValue"]').value = w.baseValue;
         }
@@ -1297,12 +1747,21 @@ function drawDetails(host, w) {
         }
         preview();
     };
-    host.onchange = host.oninput;
+    host.onchange = e => { if (!e.target.closest('[data-plan-i]') && !e.target.dataset.fill) host.oninput(e); };
     host.onclick = e => {
         const kind = e.target.closest('[data-type]');
         if (kind) { w.chitType = kind.dataset.type; drawDetails(host, w); return; }
         const share = e.target.closest('[data-plan]');
         if (share) { (share.dataset.plan === 'pdf' ? printPlan : sharePlan)(w); return; }
+        if (e.target.closest('[data-fill-go]')) {
+            const first = num(host.querySelector('[data-fill="first"]').value);
+            const last = num(host.querySelector('[data-fill="last"]').value);
+            if (!(first > 0 && last > 0)) { toast('Enter what the first and last winners get', 'error'); return; }
+            spreadPayouts(w.plan.length, first, last).forEach((p, i) => { w.plan[i].payout = p; });
+            w.payTouched = true;
+            preview();
+            return;
+        }
         if (e.target.closest('[data-extra-fix]')) {
             e.preventDefault();
             w.winnerExtraType = 'FIXED';
@@ -1325,77 +1784,141 @@ function drawDetails(host, w) {
     preview();
 }
 
+/** "3, 5–9, 12" from month numbers. */
+function compactMonths(list) {
+    const out = [];
+    list.forEach((no, i) => {
+        if (i && no === list[i - 1] + 1) { out[out.length - 1][1] = no; return; }
+        out.push([no, no]);
+    });
+    return out.map(([a, b]) => a === b ? `${a}` : `${a}–${b}`).join(', ');
+}
+
+const signedMoney = v => `${v < 0 ? '−' : ''}${money(Math.abs(v))}`;
+
+/** The totals row of a planned chit's table. */
+function plannedFootHtml(rows, forMembers) {
+    const total = f => rows.reduce((s, x) => s + f(x), 0);
+    const net = total(x => x.commission);
+    return forMembers
+        ? `<tfoot data-plan-foot><tr class="total"><td colspan="3">Total</td><td class="r">${money(total(x => x.payout))}</td></tr></tfoot>`
+        : `<tfoot data-plan-foot><tr class="total"><td colspan="3">Total</td><td class="r">${money(total(x => x.collect))}</td><td class="r">${money(total(x => x.payout))}</td>
+            <td class="r ${net < 0 ? 'neg' : 'gold-ink'}">${signedMoney(net)}</td><td></td></tr></tfoot>`;
+}
+
 /**
- * The full chit table. Fixed chits: per month what members who have not won pay, what past winners pay (with the
- * extra), what you collect, the chit value, your commission and what the winner gets. Auction chits: the range each
- * month can land in (bids decide it), the last month at the lowest bid.
+ * The full chit table. Fixed: per month what members who have not won pay, what past winners pay (with the extra),
+ * what you collect, the chit value, your commission and what the winner gets. Planned: what each pays, what you
+ * collect, what the winner gets, the commission (negative in months that pay out more) and the commission kept so
+ * far; editable in the wizard and the plan editor. forMembers: the members' copy, without the commission.
+ * locked: months that cannot change (paid out); lockedEmi: months whose installment cannot change (payments in).
  */
-function planTableHtml(w, { r, rows }) {
-    const auction = w.chitType === 'AUCTION';
-    if (auction) {
-        const n = r.memberCount;
-        const maxBid = Math.round(r.baseValue * num(w.maxBidPercent) / 100);
-        const minPay = r.installment - Math.floor((maxBid - r.commission) / n);
-        return `<table class="grid compact hc-plan">
-            <thead><tr><th class="c">Month</th><th>Pay by</th><th class="r">Chit value</th><th class="r">Winning bid</th><th class="r">Each member pays</th><th class="r">Commission</th><th class="r">Winner gets</th></tr></thead>
-            <tbody>${rows.map(x => {
-                const last = x.monthNo === n;
-                return `<tr><td class="c">${x.monthNo}</td><td>${shortDateYear(x.dueDate)}</td><td class="r">${money(r.baseValue)}</td>
-                    <td class="r">${last ? money(r.commission) : `${moneyShort(r.commission)} – ${moneyShort(maxBid)}`}</td>
-                    <td class="r">${last ? money(r.installment) : `${moneyShort(minPay)} – ${moneyShort(r.installment)}`}</td>
-                    <td class="r">${money(r.commission)}</td>
-                    <td class="r"><b>${last ? money(r.baseValue - r.commission) : `${moneyShort(r.baseValue - maxBid)} – ${moneyShort(r.baseValue - r.commission)}`}</b></td></tr>`;
-            }).join('')}</tbody>
-            <tfoot><tr class="total"><td colspan="5">Your commission over ${n} months</td><td class="r">${money(r.commission * n)}</td><td></td></tr></tfoot>
+function planTableHtml(w, { r, rows }, { forMembers = false, editable = false, locked = new Set(), lockedEmi = new Set() } = {}) {
+    if (w.chitType === 'AUCTION') return auctionGuideHtml(r, num(w.maxBidPercent), { forMembers });
+    if (w.chitType === 'PLANNED') {
+        const kept = reserveOf(rows).cumulative;
+        const cell = (i, field, value, isLocked) => editable && !isLocked
+            ? `<input type="number" class="num hc-plan-input" data-plan-i="${i}" data-plan-field="${field}" value="${value}" step="any" min="0" inputmode="decimal" data-plain>`
+            : `${money(value)}${isLocked ? ` <span class="hc-lock" title="${field === 'installment' ? 'Payments are recorded for this month' : 'Paid out'}">${icon('lock')}</span>` : ''}`;
+        return `<table class="grid compact hc-plan ${editable ? 'hc-plan-edit' : ''}">
+            <thead><tr><th class="c">Month</th><th>Pay by</th><th class="r">Each pays</th>${forMembers ? '' : '<th class="r">You collect</th>'}<th class="r">Winner gets</th>
+                ${forMembers ? '' : '<th class="r" title="Collected less paid out; negative when the winner gets more than is collected">Commission</th><th class="r" title="Your commission so far, after this month">Kept so far</th>'}</tr></thead>
+            <tbody>${rows.map((x, i) => `<tr data-plan-row="${i}" class="${locked.has(x.monthNo) ? 'hc-past' : ''}">
+                <td class="c">${x.monthNo}</td><td>${shortDateYear(x.dueDate)}</td>
+                <td class="r">${cell(i, 'installment', x.installment, locked.has(x.monthNo) || lockedEmi.has(x.monthNo))}</td>
+                ${forMembers ? '' : `<td class="r" data-cell="collect">${money(x.collect)}</td>`}
+                <td class="r"><b>${cell(i, 'payout', x.payout, locked.has(x.monthNo))}</b></td>
+                ${forMembers ? '' : `<td class="r ${x.commission < 0 ? 'neg' : 'gold-ink'}" data-cell="commission">${signedMoney(x.commission)}</td>
+                    <td class="r muted ${kept[i] < 0 ? 'neg' : ''}" data-cell="kept">${money(kept[i])}</td>`}</tr>`).join('')}</tbody>
+            ${plannedFootHtml(rows, forMembers)}
         </table>`;
     }
     const extra = extraOf(r);
     const total = (f) => rows.reduce((s, x) => s + f(x), 0);
     return `<table class="grid compact hc-plan">
         <thead><tr><th class="c">Month</th><th>Pay by</th><th class="r" title="Members who have not won yet">Members pay</th><th class="r" title="Members who won an earlier month (installment + extra)">Past winners pay</th>
-            <th class="r">You collect</th><th class="r">Chit value</th><th class="r">Commission</th><th class="r">Winner gets</th></tr></thead>
+            ${forMembers ? '' : '<th class="r">You collect</th>'}<th class="r">Chit value</th>${forMembers ? '' : '<th class="r">Commission</th>'}<th class="r">Winner gets</th></tr></thead>
         <tbody>${rows.map(x => `<tr><td class="c">${x.monthNo}</td><td>${shortDateYear(x.dueDate)}</td>
             <td class="r">${money(r.installment)} <small class="muted">× ${r.memberCount - x.monthNo + 1}</small></td>
             <td class="r">${x.monthNo > 1 ? `${money(r.installment + extra)} <small class="muted">× ${x.monthNo - 1}</small>` : '<span class="muted">—</span>'}</td>
-            <td class="r">${money(x.collect)}</td><td class="r">${money(x.chitValue)}</td><td class="r">${money(r.commission)}</td>
+            ${forMembers ? '' : `<td class="r">${money(x.collect)}</td>`}<td class="r">${money(x.chitValue)}</td>${forMembers ? '' : `<td class="r">${money(r.commission)}</td>`}
             <td class="r"><b>${money(x.payout)}</b></td></tr>`).join('')}</tbody>
-        <tfoot><tr class="total"><td colspan="4">Total</td><td class="r">${money(total(x => x.collect))}</td><td></td>
-            <td class="r">${money(r.commission * rows.length)}</td><td class="r">${money(total(x => x.payout))}</td></tr></tfoot>
+        <tfoot><tr class="total"><td colspan="4">Total</td>${forMembers ? '' : `<td class="r">${money(total(x => x.collect))}</td>`}<td></td>
+            ${forMembers ? '' : `<td class="r">${money(r.commission * rows.length)}</td>`}<td class="r">${money(total(x => x.payout))}</td></tr></tfoot>
     </table>`;
 }
 
-/** The chit table on a page of its own: print it or save it as a PDF. */
+/**
+ * Auction chits have no fixed table (the bids decide each month), so instead: what the month looks like at the
+ * lowest, a middle and the highest bid (winner gets, the dividend, what everyone pays), what a member pays over
+ * the chit, and (organiser only) the commission.
+ */
+function auctionGuideHtml(r, maxBidPercent, { forMembers = false } = {}) {
+    const n = Math.max(1, r.memberCount);
+    const low = r.commission;
+    const high = Math.round(r.baseValue * maxBidPercent / 100);
+    const mid = Math.round((low + high) / 2 / 1000) * 1000;
+    const scenario = (label, bid, cls) => {
+        const dividend = Math.floor((bid - r.commission) / n);
+        return `<div class="hc-ag-card ${cls}"><small>${label}</small><b>${money(bid)}</b><em>winning bid</em>
+            <dl><dt>Winner gets</dt><dd>${money(r.baseValue - bid)}</dd>
+                <dt>Dividend each</dt><dd>${money(dividend)}</dd>
+                <dt>Everyone pays</dt><dd>${money(r.installment - dividend)}</dd></dl></div>`;
+    };
+    const lowest = r.installment * n - Math.floor((high - low) / n) * (n - 1);
+    return `<div class="hc-auction-guide">
+        <p class="muted hc-small">The amounts change every month with the winning bid, so there is no fixed table. This is what a month looks like:</p>
+        <div class="hc-ag-cards">${scenario('Lowest bid', low, 'low')}${scenario('A middle bid', mid, 'mid')}${scenario('Highest bid allowed', high, 'high')}</div>
+        <ul class="hc-explain hc-explain-sm">
+            <li>${icon('users')}<span>Chit value <b>${money(r.baseValue)}</b>, ${n} members, ${money(r.installment)} a month before the dividend, by the ${ordinal(r.dueDay || 1)}.</span></li>
+            <li>${icon('hand-coins')}<span>A member pays between <b>${money(Math.max(0, lowest))}</b> (every month at the highest bid) and <b>${money(r.installment * n)}</b> over the chit.</span></li>
+            <li>${icon('crown')}<span>Bidding early gets the money sooner for a bigger discount; the last member left takes the chit at the lowest bid: <b>${money(r.baseValue - low)}</b>.</span></li>
+            ${forMembers ? '' : `<li>${icon('piggy')}<span>You keep <b>${money(r.commission)}</b> a month (the lowest bid), <b>${money(r.commission * n)}</b> over the chit.</span></li>`}
+        </ul></div>`;
+}
+
+/** The chit table on a page of its own, for the members (no commission): print it or save it as a PDF. */
 function printPlan(w) {
     const plan = planOf(w);
     const { r, rows } = plan;
     const auction = w.chitType === 'AUCTION';
+    const planned = w.chitType === 'PLANNED';
     const el = document.createElement('div');
     el.className = 'hc-plan-print';
-    el.innerHTML = `<div class="hc-rc-head"><div><small>Chit table${auction ? ' · auction chit' : ''}</small><h3>${esc(w.name || 'New chit')}</h3>
+    el.innerHTML = `<div class="hc-rc-head"><div><small>Chit table${auction ? ' · auction chit' : planned ? ' · planned chit' : ''}</small><h3>${esc(w.name || 'New chit')}</h3>
             <span class="muted">${esc(w.payeeName || state.user?.fullName || '')}</span></div>
             <div class="hc-rc-no"><b>${r.memberCount} members · ${r.months} months</b><span>${monthName(w.startMonth + '-01')} – ${monthName(rows.at(-1).dueDate)}</span></div></div>
         <p class="hc-plan-terms">${auction
-            ? `Chit value ${money(r.baseValue)}. Each member pays ${money(r.installment)} a month less that month's dividend, by the ${ordinal(r.dueDay)}. Bids from ${money(r.commission)} (the organiser's commission) up to ${money(Math.round(r.baseValue * num(w.maxBidPercent) / 100))}.`
-            : `Each member pays ${money(r.installment)} a month by the ${ordinal(r.dueDay)}${extraOf(r) ? `; after winning, ${money(r.installment + extraOf(r))} a month` : ''}. The organiser's commission is ${money(r.commission)} a month.`}
+            ? `Chit value ${money(r.baseValue)}. Each member pays ${money(r.installment)} a month less that month's dividend, by the ${ordinal(r.dueDay)}. Bids from ${money(r.commission)} up to ${money(Math.round(r.baseValue * num(w.maxBidPercent) / 100))}.`
+            : planned ? `Each member pays ${rows.every(x => x.installment === rows[0].installment) ? `${money(rows[0].installment)} a month` : 'the amount shown for each month'} by the ${ordinal(r.dueDay)}. Each month's winner gets the amount shown.`
+            : `Each member pays ${money(r.installment)} a month by the ${ordinal(r.dueDay)}${extraOf(r) ? `; after winning, ${money(r.installment + extraOf(r))} a month` : ''}.`}
             ${r.lateFeePercent ? ` Late payments carry ${r.lateFeePercent}% a month after ${r.lateGraceDays} days.` : ''}</p>
-        ${planTableHtml(w, plan)}`;
+        ${planTableHtml(w, plan, { forMembers: true })}`;
     printElement(el, `Chit table - ${w.name || 'new chit'}`);
 }
 
-/** A link to the chit table (it is carried in the link itself, nothing is saved), to send before the chit starts. */
+/**
+ * A link to the chit table for the members (it is carried in the link itself, nothing is saved). It carries what
+ * each member pays and what each winner gets, never the commission.
+ */
 function sharePlan(w) {
     const r = draftRequest(w);
+    const { rows } = planOf(w);
     const data = {
-        v: 1, n: r.name || 'New chit', t: r.chitType, s: w.startMonth, d: r.dueDay, m: r.memberCount, i: r.installment, b: r.baseValue,
-        inc: r.monthlyIncrement, c: r.commission, x: w.chitType === 'AUCTION' ? 0 : extraOf(r), mb: r.maxBidPercent, l: r.lateFeePercent,
+        v: 2, n: r.name || 'New chit', t: r.chitType, s: w.startMonth, d: r.dueDay, m: r.memberCount, i: r.installment, b: r.baseValue,
+        inc: r.monthlyIncrement, x: w.chitType === 'FIXED' ? extraOf(r) : 0, mb: r.maxBidPercent, l: r.lateFeePercent,
         g: r.lateGraceDays, o: (w.payeeName || state.user?.fullName || '').trim(), h: state.user?.tenantName || '',
     };
+    if (w.chitType === 'AUCTION') data.lb = r.commission;   // the lowest bid
+    else data.p = rows.map(x => x.payout);
+    if (w.chitType === 'PLANNED' && rows.some(x => x.installment !== rows[0].installment)) data.e = rows.map(x => x.installment);
+    if (w.chitType === 'PLANNED') data.i = rows[0].installment;
     const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(data)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     const url = `${location.origin}/chit-share.html#plan=${encoded}`;
-    const text = `${data.n}: the chit table (${data.m} members, ${money(r.installment)} a month). ${url}`;
+    const text = `${data.n}: the chit table (${data.m} members, ${money(data.i)} a month). ${url}`;
     openModal({
         title: 'Share the chit table', iconName: 'link',
-        body: `<p class="muted" style="margin-top:0">Anyone with this link sees the chit table as it is now: the figures travel inside the link, nothing is saved, and it does not change if you edit the chit later.</p>
+        body: `<p class="muted" style="margin-top:0">Members see what they pay and what each winner gets, not your commission. The figures travel inside the link: nothing is saved, and it does not change if you edit the chit later.</p>
             <div class="ln-made cs-made"><div class="ln-qr">${qrSvg(url, { size: 140 })}</div>
             <div class="ln-made-main">
                 <div class="ln-url"><input value="${esc(url)}" readonly data-plain><button type="button" class="btn sm primary" data-copy-url="${esc(url)}">${icon('copy')}Copy</button></div>
@@ -1405,6 +1928,21 @@ function sharePlan(w) {
             </div></div>`,
         actions: [{ label: 'Done', kind: 'primary' }],
     });
+}
+
+/** A running chit as a draft, to print or share its table (and, for planned chits, to edit it). */
+function draftFromChit(d) {
+    const c = d.chit;
+    return {
+        chitType: c.chitType, name: c.name, startMonth: c.startMonth.slice(0, 7), dueDay: c.dueDay, memberCount: c.memberCount,
+        installment: isPlanned(c) ? num(d.schedule[0]?.installment) : num(c.installment), baseValue: num(c.baseValue), monthlyIncrement: num(c.monthlyIncrement),
+        commission: num(c.commission), winnerExtraType: c.winnerExtraType, winnerExtraValue: num(c.winnerExtraValue),
+        auctionValue: num(c.baseValue), commissionPercent: num(c.baseValue) ? (num(c.commission) / num(c.baseValue)) * 100 : 0, maxBidPercent: num(c.maxBidPercent),
+        installmentIncrement: num(c.installmentIncrement), payTouched: true,
+        plan: d.schedule.map(m => ({ installment: num(m.installment), payout: num(m.payout), instTouched: true })),
+        lateFeePercent: num(c.lateFeePercent), lateGraceDays: c.lateGraceDays, payeeName: c.payeeName || '', upiId: c.upiId || '',
+        postToBooks: true, members: [],
+    };
 }
 
 /** The late-interest sentence of the explanation, e.g. 2% a month after 5 days: ₹500 for a month late on ₹25,000. */
@@ -1566,13 +2104,15 @@ function drawAccounts(host, w, accounts, categories) {
         <div class="hc-col">
             <div class="section-title">${icon('check-circle')}${esc(w.name)}</div>
             <div class="hc-review">
-                ${row('Type', w.chitType === 'AUCTION' ? 'Auction (Margadarsi style)' : 'Fixed')}
+                ${row('Type', w.chitType === 'AUCTION' ? 'Auction (Margadarsi style)' : w.chitType === 'PLANNED' ? 'Planned (you set each month’s payout)' : 'Fixed')}
                 ${row('Runs', `${monthName(w.startMonth + '-01')} – ${monthName(rows.at(-1).dueDate)} (${r.months} months)`)}
                 ${row('Members pay', `${money(r.installment)} each, by the ${ordinal(r.dueDay)}${w.chitType === 'AUCTION' ? ' (less the dividend)' : ''}`)}
                 ${w.chitType === 'AUCTION' ? row('Bids', `${money(r.commission)} – ${money(Math.round(r.baseValue * r.maxBidPercent / 100))}`)
+                    : w.chitType === 'PLANNED' ? row('EMI', num(w.installmentIncrement) ? `rises ${money(w.installmentIncrement)} a month` : rows.every(x => x.installment === rows[0].installment) ? 'the same every month' : 'as in the chit table')
                     : row('After winning', extraOf(r) ? `pays ${money(r.installment + extraOf(r))} a month` : 'the same amount')}
                 ${row('Winner gets', w.chitType === 'AUCTION' ? 'chit value − winning bid' : `${money(rows[0].payout)} → ${money(rows.at(-1).payout)}`)}
-                ${row('Your commission', `${money(r.commission)} a month · ${money(r.commission * r.months)} in all`)}
+                ${w.chitType === 'PLANNED' ? row('Your commission', (() => { const res = reserveOf(rows); return `${money(res.total)} over the chit${res.peak ? ` · keep up to ${money(res.peak)} for months ${compactMonths(res.negative)}` : ''}`; })())
+                    : row('Your commission', `${money(r.commission)} a month · ${money(r.commission * r.months)} in all`)}
                 ${row('Late payments', r.lateFeePercent ? `${r.lateFeePercent}% a month after ${r.lateGraceDays} days` : 'no interest')}
                 ${row('Members', `${r.memberCount}: ${esc(w.members.slice(0, 3).map(m => m.name).join(', '))}${r.memberCount > 3 ? '…' : ''}`)}
                 ${row('Reminders & receipts', `${withPhone} on WhatsApp · ${withMail} by e-mail`)}
@@ -1595,10 +2135,13 @@ function booksFields(s, accounts, categories, attr, always = false) {
     // a radio group needs one shared name, or every option stays ticked
     const chip = (name, value, checked, label, tip = '') => `<label class="hc-chip-radio" title="${esc(tip)}"><input type="radio" ${attr === 'data-k' ? `data-k="${name}" name="hc-${name}"` : `name="${name}"`}
         value="${value}" ${checked ? 'checked' : ''}><span>${label}</span></label>`;
-    const pick = (name, value) => `<span class="hc-pick" data-pick="${name}"><select ${key(name)}>${accountOptions(accounts, cashLike, value, 'Pick an account')}</select></span>`;
+    // this chit's own accounts, the common chit accounts (Chit accounts) and your own cash / bank accounts
+    const pick = (name, value) => `<span class="hc-pick" data-pick="${name}"><select ${key(name)}>${moneyAccountOptions(accounts.filter(cashLike),
+        { chitId: s.chitId || null, chitName: s.name || 'This chit', selected: value })}</select></span>`;
     const dedicated = categories.find(c => c.name === 'Chit Commission Income');
     return `<div class="hc-books">
-        ${always || s.locked ? `<p class="book-note">${icon('check-circle')}<span>Recorded in my accounts: journal, income and balance sheet. Money is held under <b>Hosted Chit Funds</b> until paid out; only commission and late interest are income.</span></p>`
+        ${always || s.locked ? `<p class="book-note">${icon('check-circle')}<span>Recorded in my accounts: journal, income and balance sheet. Money is held under <b>Hosted Chit Funds</b> until paid out; only commission and late interest are income.
+            New accounts are the chit's own, kept under <b>Host a Chit › Chit accounts</b> (not on the Accounts page).</span></p>`
             : `<label class="check-line"><input type="checkbox" ${key('postToBooks')} ${s.postToBooks ? 'checked' : ''}> Start recording this chit's money in my accounts (journal, income, balance sheet)</label>`}
         <div data-books ${s.postToBooks ? '' : 'hidden'}>
             <div class="hc-book-row"><span class="hc-book-label">Members' payments</span>
@@ -1652,7 +2195,7 @@ function bindBooksFields(host, s, attr) {
  * let off, date, mode, transaction reference, a note and evidence (photo or PDF, kept on the journal entry). After
  * saving, the receipt opens, ready to print or send.
  */
-function openPayment(d, memberId, monthNo, editing = null) {
+async function openPayment(d, memberId, monthNo, editing = null) {
     const c = d.chit;
     const member = d.members.find(m => m.id === memberId);
     const month = monthOf(d, monthNo);
@@ -1660,6 +2203,12 @@ function openPayment(d, memberId, monthNo, editing = null) {
         toast(`Record the auction for month ${monthNo} first: the dividend decides what each member pays`, 'error');
         return;
     }
+    const accounts = c.postToBooks ? await loadAccounts().catch(() => []) : [];
+    // the member may have paid into any of my accounts: the last one they used is the likely one
+    const lastInto = d.payments.filter(p => p.memberId === memberId && p.accountId && !p.paidToMemberId).sort((a, b) => b.id - a.id)[0]?.accountId;
+    // members can pay this month's winner directly (the winner's own installment: set off against the payout)
+    const winner = month.winnerMemberId && !month.payoutDate ? d.members.find(m => m.id === month.winnerMemberId) : null;
+    let direct = !!editing?.paidToMemberId;
     const due = dueFor(d, member, month);
     const list = d.payments.filter(p => p.memberId === memberId && p.monthNo === monthNo);
     const paid = list.reduce((s, p) => s + num(p.amount), 0) - (editing ? num(editing.amount) : 0);
@@ -1682,7 +2231,7 @@ function openPayment(d, memberId, monthNo, editing = null) {
         </div>
         <p class="muted hc-small">Pay by ${date(month.dueDate)}${why ? ` · ${why}` : ''}${late ? ` · ${late.daysLate || 0} days late, ${num(c.lateFeePercent)}% a month after ${c.lateGraceDays} days` : ''}</p>
         ${list.length ? `<div class="section-title">${icon('check')}Payments received</div><div class="cs-list">${list.map(p => `<div class="cs-row ${editing?.id === p.id ? 'active' : ''}">
-            <span class="grow min-0"><b>${money(num(p.amount) + num(p.lateFee))}</b> <small class="muted">${esc(p.receiptNo || '')} · ${date(p.paidDate)} · ${esc(p.mode)}${p.reference ? ' · ref ' + esc(p.reference) : ''}${num(p.lateFee) ? ` · incl. ${money(p.lateFee)} late interest` : ''}${p.note ? ' · ' + esc(p.note) : ''}</small></span>
+            <span class="grow min-0"><b>${money(num(p.amount) + num(p.lateFee))}</b> <small class="muted">${esc(p.receiptNo || '')} · ${date(p.paidDate)} · ${esc(p.mode)}${p.accountName ? ` · into ${esc(p.accountName)}` : ''}${p.reference ? ' · ref ' + esc(p.reference) : ''}${num(p.lateFee) ? ` · incl. ${money(p.lateFee)} late interest` : ''}${p.note ? ' · ' + esc(p.note) : ''}</small></span>
             ${p.attachmentCount ? `<button type="button" class="btn sm ghost icon" data-entry="${p.journalEntryId}" title="${p.attachmentCount} file(s) of evidence">${icon('paperclip')}</button>` : ''}
             <button type="button" class="btn sm ghost" data-pay-receipt="${p.id}">${icon('receipt')}Receipt</button>
             <button type="button" class="btn sm ghost icon" data-pay-edit="${p.id}" title="Change">${icon('edit')}</button>
@@ -1698,7 +2247,15 @@ function openPayment(d, memberId, monthNo, editing = null) {
                 value="${editing ? num(editing.lateFee) : lateOpen}"></label>
             <label class="field"><span>Let off (waive) late interest (₹)</span><input type="number" name="lateFeeWaived" step="any" min="0" class="num" data-type="number" inputmode="decimal"
                 value="${editing ? num(editing.lateFeeWaived) : 0}"><small>${lateOpen ? `${money(lateOpen)} is due` : 'nothing due now'}</small></label>` : ''}
-            <div class="field span-2"><span>Paid by</span>${modeChips(editing?.mode || 'Cash')}</div>
+            ${winner || direct ? `<div class="field span-2"><span>Paid to</span><div class="seg-chips" data-to>
+                <button type="button" class="seg-chip ${direct ? '' : 'active'}" data-direct="0">${icon('arrow-in')}Me</button>
+                <button type="button" class="seg-chip ${direct ? 'active' : ''}" data-direct="1" ${winner ? '' : 'disabled'}>${icon('hand')}${
+                    winner ? (winner.id === memberId ? 'Set off against the payout' : `${esc(winner.name)} directly (the winner)`) : 'The winner directly'}</button></div>
+                <small data-direct-note ${direct ? '' : 'hidden'}>The money went straight to the winner and is taken off what you pay them. Attach their acknowledgement or the transfer screenshot as evidence.</small></div>` : ''}
+            <div class="field ${c.postToBooks ? '' : 'span-2'}"><span>Paid by</span>${modeChips(editing?.mode || 'Cash')}</div>
+            ${c.postToBooks ? `<label class="field" data-into ${direct ? 'hidden' : ''}><span>Received into</span><select name="accountId">${moneyAccountOptions(accounts,
+                { chitId: c.id, chitName: c.name, selected: (!direct && editing?.accountId) || lastInto || c.accountId })}</select>
+                <small>The chit's account, or your own bank account if the member paid there</small></label>` : ''}
             <label class="field"><span>Transaction reference</span><input type="text" name="reference" maxlength="60" value="${esc(editing?.reference || '')}" placeholder="UPI ref, cheque or transfer no." data-plain></label>
             <label class="field"><span>Note <small class="muted">optional</small></span><input type="text" name="note" maxlength="255" value="${esc(editing?.note || '')}" data-plain></label>
             ${c.postToBooks ? `<div class="span-2">${evidenceFieldHtml({ label: 'Evidence', hint: 'UPI screenshot, cash receipt or cheque photo' })}</div>`
@@ -1713,6 +2270,8 @@ function openPayment(d, memberId, monthNo, editing = null) {
                 const lateFee = Number(form.lateFee?.value || 0);
                 const waived = Number(form.lateFeeWaived?.value || 0);
                 if (value < 0 || lateFee < 0 || waived < 0) throw new Error('Amounts cannot be negative');
+                if (form.paidDate.value && form.paidDate.value > isoDate()) throw new Error('The payment date cannot be in the future');
+                if (c.postToBooks && !direct && form.accountId && !form.accountId.value) throw new Error('Pick the account the money came into');
                 if (value + lateFee + waived <= 0) throw new Error('Enter the amount received');
                 let allowExcess = false;
                 if (paid + value > due || lateFee + waived > lateOpen) {
@@ -1723,7 +2282,10 @@ function openPayment(d, memberId, monthNo, editing = null) {
                     if (!allowExcess) return true;
                 }
                 const body = { memberId, monthNo, amount: value, lateFee, lateFeeWaived: waived, reference: form.reference.value.trim() || null,
-                    paidDate: form.paidDate.value || null, mode: chosenMode(modal.el), note: form.note.value.trim() || null, allowExcess, version: editing?.version };
+                    paidDate: form.paidDate.value || null, mode: chosenMode(modal.el), note: form.note.value.trim() || null, allowExcess, version: editing?.version,
+                    accountId: form.accountId?.value && !direct ? Number(form.accountId.value) : null,
+                    paidToMemberId: direct ? (winner?.id ?? editing?.paidToMemberId) : null };
+                if (direct && (lateFee || waived)) throw new Error('Late interest is yours: record it as a separate payment to you');
                 const fresh = await (editing ? api.put(`/hosted-chits/${c.id}/payments/${editing.id}`, body) : api.post(`/hosted-chits/${c.id}/payments`, body));
                 const saved = editing ? fresh.payments.find(p => p.id === editing.id)
                     : fresh.payments.filter(p => p.memberId === memberId && p.monthNo === monthNo).sort((a, b) => b.id - a.id)[0];
@@ -1742,6 +2304,16 @@ function openPayment(d, memberId, monthNo, editing = null) {
             modal.el.addEventListener('click', e => {
                 const amountChip = e.target.closest('[data-amount]');
                 if (amountChip) { modal.el.querySelector('[name=amount]').value = amountChip.dataset.amount; return; }
+                const to = e.target.closest('[data-direct]');
+                if (to) {
+                    direct = to.dataset.direct === '1';
+                    modal.el.querySelectorAll('[data-to] [data-direct]').forEach(x => x.classList.toggle('active', x === to));
+                    modal.el.querySelector('[data-direct-note]').hidden = !direct;
+                    const intoField = modal.el.querySelector('[data-into]');
+                    if (intoField) intoField.hidden = direct;
+                    if (direct) ['lateFee', 'lateFeeWaived'].forEach(n => { const i = modal.el.querySelector(`[name=${n}]`); if (i) i.value = 0; });
+                    return;
+                }
                 const edit = e.target.closest('[data-pay-edit]');
                 const undo = e.target.closest('[data-pay-undo]');
                 const receipt = e.target.closest('[data-pay-receipt]');
@@ -1765,10 +2337,12 @@ async function undoPayment(d, p) {
     }
 }
 
-function openCollectAll(d, monthNo) {
+async function openCollectAll(d, monthNo) {
     const month = monthOf(d, monthNo);
     const owing = d.members.map(m => ({ m, rest: dueFor(d, m, month) - paidFor(d, m.id, monthNo) })).filter(x => x.rest > 0);
     if (!owing.length) { toast(`Everyone has paid month ${monthNo}`, 'info'); return; }
+    const accounts = d.chit.postToBooks ? await loadAccounts().catch(() => []) : [];
+    const winner = month.winnerMemberId && !month.payoutDate ? d.members.find(m => m.id === month.winnerMemberId) : null;
     const total = owing.reduce((s, x) => s + x.rest, 0);
     openModal({
         title: `Everyone has paid month ${monthNo}`, iconName: 'check-circle',
@@ -1777,15 +2351,33 @@ function openCollectAll(d, monthNo) {
             <form class="form-grid two">
                 <label class="field"><span>Date</span><input type="date" name="paidDate" value="${isoDate()}"></label>
                 <div class="field"><span>Paid by</span>${modeChips()}</div>
-            </form>`,
+                ${winner ? `<div class="field span-2"><span>Paid to</span><div class="seg-chips" data-to>
+                    <button type="button" class="seg-chip active" data-direct="0">${icon('arrow-in')}Me</button>
+                    <button type="button" class="seg-chip" data-direct="1" title="${esc(winner.name)}'s own installment is set off against the payout">${icon('hand')}${esc(winner.name)} directly (the winner)</button></div></div>` : ''}
+                ${d.chit.postToBooks ? `<label class="field span-2" data-into><span>Received into</span><select name="accountId">${moneyAccountOptions(accounts,
+                    { chitId: d.chit.id, chitName: d.chit.name, selected: d.chit.accountId })}</select></label>` : ''}
+            </form>
+            <p class="muted hc-small">${icon('undo')}You can revert all of them in one go from This month.</p>`,
         actions: [
             { label: 'Cancel' },
             { label: `Mark ${owing.length} as paid`, kind: 'primary', iconName: 'check', onClick: async modal => {
+                const into = modal.el.querySelector('[name=accountId]')?.value;
+                const direct = modal.el.querySelector('[data-to] .active')?.dataset.direct === '1';
                 await afterChange(await api.post(`/hosted-chits/${d.chit.id}/months/${monthNo}/collect-all`,
-                    { paidDate: modal.el.querySelector('[name=paidDate]').value || null, mode: chosenMode(modal.el) }), `${plural(owing.length, 'payment')} recorded`);
+                    { paidDate: modal.el.querySelector('[name=paidDate]').value || null, mode: chosenMode(modal.el), accountId: into && !direct ? Number(into) : null, direct }),
+                    `${plural(owing.length, 'payment')} recorded`);
             } },
         ],
-        onOpen: modal => bindModeChips(modal.el),
+        onOpen: modal => {
+            bindModeChips(modal.el);
+            modal.el.querySelector('[data-to]')?.addEventListener('click', e => {
+                const b = e.target.closest('[data-direct]');
+                if (!b) return;
+                modal.el.querySelectorAll('[data-to] [data-direct]').forEach(x => x.classList.toggle('active', x === b));
+                const intoField = modal.el.querySelector('[data-into]');
+                if (intoField) intoField.hidden = b.dataset.direct === '1';
+            });
+        },
     });
 }
 
@@ -1897,68 +2489,271 @@ function openAuction(d, month) {
     });
 }
 
-function openPayout(d, month) {
+/**
+ * Pay the winner: the payout can come from several accounts (the members' money may have come into the chit's
+ * account and into your own bank accounts), each part with its own mode and UTR, into the winner's account. What
+ * members paid the winner directly is a fixed part. The parts are suggested from where the chit's money is, the
+ * money that came in this month can be tapped to pay from it, and the journal entry it posts can be previewed.
+ */
+async function openPayout(d, month) {
     const c = d.chit;
     const owing = d.members.map(m => ({ m, rest: dueFor(d, m, month) - paidFor(d, m.id, month.monthNo) })).filter(x => x.rest > 0);
     const dues = owing.reduce((s, x) => s + x.rest, 0);
+    const winner = d.members.find(m => m.id === month.winnerMemberId);
+    const books = c.postToBooks;
+    const accounts = books ? await loadAccounts().catch(() => []) : [];
+    const payout = num(month.payout);
+    const nameOf = id => accounts.find(a => a.id === Number(id))?.name || '?';
+    // what members paid the winner directly is already with the winner: it is a fixed part of the payout
+    const directList = d.payments.filter(p => p.monthNo === month.monthNo && p.paidToMemberId === month.winnerMemberId);
+    const direct = directList.reduce((s, p) => s + num(p.amount), 0);
+    const toPay = Math.max(0, payout - direct);
+    const spots = (d.money?.spots || []).filter(s => num(s.amount) > 0 && s.role !== 'DIRECT');
+    const chitMoney = Object.fromEntries((d.money?.spots || []).map(s => [s.accountId, num(s.amount)]));
+    // what came in for this month (to me), by the account it came into
+    const received = new Map();
+    d.payments.filter(p => p.monthNo === month.monthNo && num(p.amount) && !p.paidToMemberId).forEach(p => {
+        const k = p.accountId || c.accountId;
+        received.set(k, (received.get(k) || 0) + num(p.amount));
+    });
+    // planned chits: a month that pays out more than it collects takes the difference out of the commission account
+    const shortfall = isPlanned(c) && num(month.commission) < 0 && c.commissionAccountId ? Math.min(toPay, -num(month.commission)) : 0;
+    /** Pay from where the chit's money is: its own accounts first, then common ones, then your own; the rest from collections. */
+    const suggest = () => {
+        let left = toPay - shortfall;
+        const legs = shortfall ? [{ accountId: c.commissionAccountId, amount: shortfall, mode: 'Bank', reference: '' }] : [];
+        for (const s of spots) {
+            if (shortfall && s.accountId === c.commissionAccountId) continue;
+            if (left <= 0) break;
+            const take = Math.min(left, num(s.amount));
+            legs.push({ accountId: s.accountId, amount: take, mode: 'Bank', reference: '' });
+            left -= take;
+        }
+        if (left > 0) {
+            const own = legs.find(l => l.accountId === c.accountId);
+            if (own) own.amount += left;
+            else legs.push({ accountId: c.accountId, amount: left, mode: 'Bank', reference: '' });
+        }
+        return legs;
+    };
+    const s = { legs: books && toPay > 0 ? suggest() : [] };
     let evidence = null;
     openModal({
-        title: `Pay the winner of month ${month.monthNo}`, iconName: 'crown', size: 'lg',
-        body: `
-        <div class="hc-draw">${icon(isAuction(c) ? 'gavel' : 'crown')}<b>${esc(month.winnerName)}</b><small>gets ${money(month.payout)}</small></div>
-        <div class="hc-pay-sum">
-            <span><small>Chit value</small><b>${money(month.chitValue)}</b></span>
-            ${isAuction(c) ? `<span><small>Winning bid</small><b>${money(month.bid)}</b></span>` : ''}
-            <span><small>My commission</small><b class="gold-ink">${money(month.commission)}</b></span>
-            <span><small>Winner gets</small><b class="pos">${money(month.payout)}</b></span>
+        title: `Pay the winner of month ${month.monthNo}`, iconName: 'crown', size: books ? 'xl hc-payout-modal' : 'lg',
+        body: `<div class="hc-payout ${books ? 'two' : ''}"><div class="hc-pay-left">
+        <div class="hc-payout-head">
+            <span class="hc-avatar gold">${icon(isAuction(c) ? 'gavel' : 'crown')}</span>
+            <div class="min-0 grow"><b>${esc(month.winnerName)}</b><small>${isPlanned(c)
+                ? (num(month.commission) < 0 ? `collected ${money(month.chitValue)} + ${money(-num(month.commission))} from my commission` : `collected ${money(month.chitValue)} − commission ${money(month.commission)}`)
+                : `chit value ${money(month.chitValue)} − ${isAuction(c) ? `bid ${money(month.bid)}` : `commission ${money(month.commission)}`}`}</small></div>
+            <div class="hc-payout-amt"><small>Winner gets</small><b>${money(payout)}</b></div>
         </div>
-        ${dues ? `<p class="hc-note warn">${icon('alert')}<span>${plural(owing.length, 'member')} still ${owing.length === 1 ? 'owes' : 'owe'} <b>${money(dues)}</b> for this month (${owing.map(x => esc(x.m.name)).join(', ')}). You can collect it later.</span></p>` : ''}
-        <form class="form-grid two">
-            <label class="field"><span>Paid on</span><input type="date" name="payoutDate" value="${isoDate()}"></label>
-            <div class="field"><span>Paid by</span>${modeChips('Bank')}</div>
-            <label class="field span-2"><span>Transaction reference</span><input type="text" name="reference" maxlength="60" placeholder="UPI ref, cheque or transfer no." data-plain></label>
-            ${c.postToBooks ? `<div class="span-2">${evidenceFieldHtml({ label: 'Evidence', hint: 'Bank credit, cheque copy or a signed voucher' })}</div>` : ''}
-            <div class="span-2 hc-ag-box">
-                <label class="check-line"><input type="checkbox" name="createAgreement" checked> Make a digital agreement for ${esc(month.winnerName)} to accept</label>
-                <small class="muted">It records that the full amount was received and that the remaining installments will be paid. You send it as a link; the member accepts by typing their name.</small>
-                <div class="form-grid two" data-guarantor>
-                    <label class="field"><span>Guarantor <small class="muted">optional</small></span><input type="text" name="guarantorName" maxlength="100" data-plain></label>
-                    <label class="field"><span>Guarantor's phone</span><input type="tel" name="guarantorPhone" maxlength="14" inputmode="numeric" data-plain></label>
-                </div>
-            </div>
+        ${dues ? `<p class="hc-note warn">${icon('alert')}<span>${plural(owing.length, 'member')} still ${owing.length === 1 ? 'owes' : 'owe'} <b>${money(dues)}</b> for this month (${esc(owing.slice(0, 4).map(x => x.m.name).join(', '))}${owing.length > 4 ? ` and ${owing.length - 4} more` : ''}). You can collect it later.</span></p>` : ''}
+        <form class="form-grid two" onsubmit="return false">
+            <label class="field"><span>Paid on</span><input type="date" name="payoutDate" value="${isoDate()}" max="${isoDate()}"></label>
+            <label class="field"><span>Into the winner's account</span><input type="text" name="payoutTo" maxlength="120"
+                value="${esc(winner?.payoutAccount || '')}" placeholder="Bank, A/c no. & IFSC, or UPI ID" data-plain></label>
+            ${books ? '' : `<div class="field"><span>Paid by</span>${modeChips('Bank')}</div>
+                <label class="field"><span>Transaction reference</span><input type="text" name="reference" maxlength="60" placeholder="UPI ref, cheque or transfer no." data-plain></label>`}
         </form>
-        <p class="muted hc-small">${icon('lock')}After this, month ${month.monthNo} is closed. ${c.postToBooks
-            ? `Posts “Chit payout – ${esc(month.winnerName)}” from ${esc(c.accountName || 'Cash in Hand')} and your commission as income${c.commissionAccountName ? ` into ${esc(c.commissionAccountName)}` : ''}.`
-            : 'You can undo it from Months while the agreement is not accepted.'}</p>`,
+        ${books ? `
+        <div class="section-title">${icon('split')}Paid from</div>
+        ${direct ? `<div class="hc-src locked">
+            <span class="chip-icon sm teal">${icon('hand')}</span>
+            <div class="min-0 grow"><b>Already paid to ${esc(month.winnerName)} directly</b>
+                <small class="ellipsis" title="${esc(directList.map(p => `${p.memberName}: ${money(p.amount)}`).join('\n'))}">${esc(directList.map(p => p.memberId === month.winnerMemberId ? `${p.memberName} (own, set off)` : p.memberName).join(', '))}</small></div>
+            <b class="hc-src-amt">${money(direct)}</b></div>` : ''}
+        ${received.size ? `<div class="ca-received"><small>${icon('arrow-in')}Came in this month — tap to pay from it:</small>${[...received].map(([id, v]) =>
+            `<button type="button" class="ca-mchip in clickable" data-add-from="${id}" data-amount="${v}"><span class="ellipsis">${esc(nameOf(id))}</span><b>${money(v)}</b></button>`).join('')}</div>` : ''}
+        <div class="hc-srcs" data-legs></div>
+        <div class="hc-srcs-foot">
+            <button type="button" class="btn sm ghost" data-add-leg>${icon('plus')}Another account</button>
+            <button type="button" class="btn sm ghost" data-suggest title="Split it over the accounts that hold this chit's money">${icon('sparkles')}Suggest</button>
+            <span class="grow"></span>
+            <span class="hc-alloc" data-alloc></span>
+        </div>
+        <i class="hc-alloc-bar"><em data-alloc-bar></em></i>
+        ${shortfall ? `<p class="hc-note">${icon('piggy')}<span>This month pays the winner <b>${money(-num(month.commission))}</b> more than is collected: it is paid from your commission account and booked as commission given back.</span></p>` : ''}
+        ${c.commissionAccountId && num(month.commission) > 0 ? `<label class="field hc-comm-from"><span>Move my commission (${money(month.commission)}) to ${esc(c.commissionAccountName || 'its account')} from</span>
+            <select name="commissionFrom">${moneyAccountOptions(accounts, { chitId: c.id, chitName: c.name, selected: c.accountId, amounts: chitMoney })}</select></label>` : ''}
+        ${evidenceFieldHtml({ label: 'Evidence', hint: 'Bank credit, cheque copy or a signed voucher' })}` : ''}
+        <div class="hc-ag-box">
+            <label class="check-line"><input type="checkbox" name="createAgreement" checked> Make a digital agreement for ${esc(month.winnerName)} to accept</label>
+            <small class="muted">It records the full amount received${direct ? ' (including what members paid directly)' : ''} and that the remaining installments will be paid.</small>
+            <div class="form-grid two" data-guarantor>
+                <label class="field"><span>Guarantor <small class="muted">optional</small></span><input type="text" name="guarantorName" maxlength="100" data-plain></label>
+                <label class="field"><span>Guarantor's phone</span><input type="tel" name="guarantorPhone" maxlength="14" inputmode="numeric" data-plain></label>
+            </div>
+        </div>
+        <p class="muted hc-small">${icon('lock')}This closes month ${month.monthNo}. You can undo it from Months while the agreement is not accepted.</p>
+        </div>
+        ${books ? `<aside class="hc-pay-right">
+            <div class="hc-pr-card">
+                <div class="hc-pr-title">${icon('calendar')}Month ${month.monthNo} · ${monthName(month.dueDate)}</div>
+                <div class="hc-pr-figs"><span><small>Collected</small><b>${money(month.collected)}</b></span><span><small>Expected</small><b>${money(month.expected)}</b></span>
+                    <span><small>${num(month.commission) < 0 ? 'From my commission' : 'My commission'}</small><b class="${num(month.commission) < 0 ? 'neg' : 'gold-ink'}">${money(Math.abs(num(month.commission)))}</b></span></div>
+                <i class="hc-alloc-bar"><em style="width:${num(month.expected) ? Math.min(100, (num(month.collected) / num(month.expected)) * 100) : 0}%"></em></i>
+                <small class="muted">${month.paidCount} of ${d.members.length} members paid in full${direct ? ` · ${money(direct)} went to ${esc(month.winnerName)} directly` : ''}</small>
+            </div>
+            <div class="hc-pr-card"><div class="hc-pr-title">${icon('split')}How ${money(payout)} is paid</div><div class="hc-split" data-split></div><div class="hc-split-legend" data-split-legend></div></div>
+            <div class="hc-pr-card"><div class="hc-pr-title">${icon('wallet')}${esc(c.name)}'s money by account <small>now → after</small></div><div class="hc-after" data-after></div></div>
+            <div class="hc-pr-card"><div class="hc-pr-title">${icon('journal')}Journal entries it posts</div><div data-preview></div></div>
+        </aside>` : ''}
+        </div>`,
         actions: [
             { label: 'Cancel' },
             { label: 'Yes, winner is paid', kind: 'primary', iconName: 'check', onClick: async modal => {
-                const form = modal.el.querySelector('form');
+                const el = modal.el;
+                const legs = s.legs.filter(l => l.accountId || num(l.amount));
+                const paidOn = el.querySelector('[name=payoutDate]').value;
+                if (!paidOn) throw new Error('Enter the date the winner was paid');
+                if (paidOn > isoDate()) throw new Error('The payout date cannot be in the future');
+                if (paidOn < c.startMonth) throw new Error(`The payout date is before the chit starts (${date(c.startMonth)})`);
+                if (el.querySelector('[name=payoutTo]').value.trim().length > 120) throw new Error('The winner’s account can be at most 120 characters');
+                if (books) {
+                    if (legs.some(l => !l.accountId)) throw new Error('Pick the account on every line');
+                    if (legs.some(l => num(l.amount) <= 0)) throw new Error('Enter the amount on every line');
+                    const total = legs.reduce((t, l) => t + num(l.amount), 0);
+                    if (Math.abs(total - toPay) > 0.004) throw new Error(`The accounts add up to ${money(total)}; ${money(toPay)} is left to pay${direct ? ` after the ${money(direct)} paid directly` : ''}`);
+                }
                 let allowDues = false;
                 if (dues) {
                     allowDues = await confirmDialog(`${money(dues)} is still owed for month ${month.monthNo}. Close the month anyway? You can collect it later.`,
                         { title: 'Some members have not paid', confirmLabel: 'Close the month' });
                     if (!allowDues) return true;
                 }
-                const agreement = form.createAgreement.checked;
+                const v = name => el.querySelector(`[name=${name}]`);
+                const agreement = v('createAgreement').checked;
                 let fresh = await api.post(`/hosted-chits/${c.id}/months/${month.monthNo}/payout`, {
-                    payoutDate: form.payoutDate.value || null, mode: chosenMode(modal.el), reference: form.reference.value.trim() || null, allowDues,
-                    createAgreement: agreement, guarantorName: form.guarantorName.value.trim() || null, guarantorPhone: form.guarantorPhone.value.trim() || null,
+                    payoutDate: v('payoutDate').value || null, mode: books ? (legs[0]?.mode || 'Bank') : chosenMode(el),
+                    reference: books ? null : v('reference').value.trim() || null, allowDues,
+                    createAgreement: agreement, guarantorName: v('guarantorName').value.trim() || null, guarantorPhone: v('guarantorPhone').value.trim() || null,
+                    legs: books ? legs.map(l => ({ accountId: Number(l.accountId), amount: num(l.amount), mode: l.mode, reference: (l.reference || '').trim() || null })) : null,
+                    payoutTo: v('payoutTo').value.trim() || null,
+                    commissionFromAccountId: v('commissionFrom')?.value ? Number(v('commissionFrom').value) : null,
                 });
                 const entryId = monthOf(fresh, month.monthNo)?.payoutEntryId;
                 if (evidence?.count && entryId) {
                     await evidence.uploadTo(entryId);
                     fresh = await api.get(`/hosted-chits/${c.id}`);
                 }
-                await afterChange(fresh, `Month ${month.monthNo} done: ${month.winnerName} paid`);
+                await afterChange(fresh, `Month ${month.monthNo} done: ${month.winnerName} paid${legs.length + (direct ? 1 : 0) > 1 ? ` in ${legs.length + (direct ? 1 : 0)} parts` : ''}`);
                 if (agreement) openAgreement(fresh, month.monthNo);
             } },
         ],
         onOpen: modal => {
-            bindModeChips(modal.el);
-            evidence = c.postToBooks ? bindEvidenceField(modal.el) : null;
-            const box = modal.el.querySelector('[name=createAgreement]');
-            box.addEventListener('change', () => { modal.el.querySelector('[data-guarantor]').hidden = !box.checked; });
+            const el = modal.el;
+            if (!books) bindModeChips(el);
+            evidence = books ? bindEvidenceField(el) : null;
+            const box = el.querySelector('[name=createAgreement]');
+            box.addEventListener('change', () => { el.querySelector('[data-guarantor]').hidden = !box.checked; });
+            if (!books) return;
+            const legsEl = el.querySelector('[data-legs]');
+            const left = () => toPay - s.legs.reduce((t, l) => t + num(l.amount), 0);
+            const drawLegs = () => {
+                legsEl.innerHTML = s.legs.length ? s.legs.map((l, i) => `<div class="hc-src" data-i="${i}">
+                    <div class="hc-src-top"><select data-leg-account>${moneyAccountOptions(accounts, { chitId: c.id, chitName: c.name, selected: l.accountId, amounts: chitMoney })}</select>
+                        <button type="button" class="btn sm ghost icon" data-remove title="Remove this part">${icon('x')}</button></div>
+                    <div class="hc-src-bottom">
+                        <label class="hc-src-field amt"><small>Amount</small><input type="number" class="num" step="any" min="0" value="${l.amount}" data-leg-amount data-type="number" inputmode="decimal"></label>
+                        <label class="hc-src-field"><small>Mode</small><select data-leg-mode data-plain>${['Bank', 'UPI', 'Cash'].map(x => `<option ${l.mode === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+                        <label class="hc-src-field grow"><small>UTR / reference</small><input type="text" maxlength="60" value="${esc(l.reference || '')}" data-leg-ref data-plain></label>
+                    </div></div>`).join('')
+                    : `<p class="muted hc-small">${direct >= payout ? 'Members paid the whole amount to the winner directly: nothing more to pay.' : 'Add the account you paid from.'}</p>`;
+            };
+            const PALETTE = ['#0b7cbd', '#13a89a', '#c99a3b', '#5b4fc9', '#d9603c', '#13808f', '#7b8fa3'];
+            const commission = num(month.commission);
+            const separate = c.commissionAccountId && c.commissionAccountId !== c.accountId;
+            /** The right-hand side, live: the split, each account now and after, and every journal entry it posts. */
+            const preview = () => {
+                const legs = s.legs.filter(l => l.accountId && num(l.amount) > 0);
+                const total = legs.reduce((t, l) => t + num(l.amount), 0) + direct;
+                const rest = payout - total;
+                const ok = Math.abs(rest) < 0.005;
+                const alloc = el.querySelector('[data-alloc]');
+                alloc.innerHTML = ok ? `${icon('check')}${money(payout)} covered` : rest > 0 ? `<b>${money(rest)}</b> left to allocate` : `<b>${money(-rest)}</b> too much`;
+                alloc.className = `hc-alloc ${ok ? 'pos' : 'neg'}`;
+                const bar = el.querySelector('[data-alloc-bar]');
+                bar.style.width = `${Math.min(100, payout ? (total / payout) * 100 : 0)}%`;
+                bar.parentElement.classList.toggle('over', rest < -0.004);
+                // how the payout is split, as a bar and a legend
+                const parts = [...(direct ? [{ name: 'Paid directly by members', amount: direct }] : []),
+                    ...legs.map(l => ({ name: nameOf(l.accountId), amount: num(l.amount), mode: l.mode }))];
+                const scale = Math.max(payout, total) || 1;
+                el.querySelector('[data-split]').innerHTML = parts.map((x, i) => `<span style="width:${(x.amount / scale) * 100}%;background:${PALETTE[i % PALETTE.length]}" title="${esc(x.name)}: ${money(x.amount)}"></span>`).join('')
+                    + (rest > 0.004 ? `<span class="gap" style="width:${(rest / scale) * 100}%" title="Not allocated yet"></span>` : '');
+                el.querySelector('[data-split-legend]').innerHTML = parts.map((x, i) => `<span><i style="background:${PALETTE[i % PALETTE.length]}"></i><span class="hc-split-name">${esc(x.name)}</span>
+                    ${x.mode ? `<small>${esc(x.mode)}</small>` : ''}<b>${money(x.amount)}</b></span>`).join('') || '<small class="muted">Add the accounts it is paid from.</small>';
+                // the chit's money in each account now, and after the payout (and the commission's move)
+                const change = new Map();
+                const add = (id, v) => change.set(Number(id), (change.get(Number(id)) || 0) + v);
+                legs.forEach(l => add(l.accountId, -num(l.amount)));
+                const directSpot = (d.money?.spots || []).find(x => x.role === 'DIRECT');
+                if (direct && directSpot) add(directSpot.accountId, -direct);
+                const commissionFrom = Number(el.querySelector('[name=commissionFrom]')?.value || c.accountId);
+                if (commission > 0 && separate) { add(commissionFrom, -commission); add(c.commissionAccountId, commission); }
+                const ids = [...new Set([...(d.money?.spots || []).map(x => x.accountId), ...change.keys()])];
+                el.querySelector('[data-after]').innerHTML = ids.map(id => {
+                    const now = num(chitMoney[id]);
+                    const after = now + (change.get(id) || 0);
+                    if (!now && Math.abs(after) < 0.005) return '';
+                    return `<div class="hc-after-row ${change.get(id) ? 'moved' : ''}"><span class="hc-split-name">${esc(nameOf(id))}</span>
+                        <span>${money(now)}</span>${icon('chevron-right')}<b class="${after < -0.004 ? 'neg' : ''}">${after < 0 ? '−' : ''}${money(Math.abs(after))}</b></div>`;
+                }).join('') || '<small class="muted">No money recorded for this chit yet.</small>';
+                // the journal entries
+                const tag = `<span class="ca-tag">${esc(c.name)}</span>`;
+                const je = (title, rows) => `<table class="ca-je"><thead><tr><th>${title}</th><th class="num">Dr</th><th class="num">Cr</th></tr></thead><tbody>${rows}</tbody></table>`;
+                const dr = (name, v, note = '') => `<tr><td>${name}${note}</td><td class="num">${money(v)}</td><td></td></tr>`;
+                const cr = (name, v, note = '') => `<tr><td class="ca-cr">${name}${note}</td><td></td><td class="num">${money(v)}</td></tr>`;
+                el.querySelector('[data-preview]').innerHTML = je(`Chit payout · ${esc(month.winnerName)}`, dr(`Hosted Chit Funds ${tag}`, payout)
+                        + (direct ? cr('Paid directly to winners', direct, ` <small class="muted">${plural(directList.length, 'member')}</small>`) : '')
+                        + legs.map(l => cr(esc(nameOf(l.accountId)), num(l.amount), ` <small class="muted">${esc(l.mode)}${l.reference ? ' · ' + esc(l.reference) : ''}</small>`)).join('')
+                        + `<tr class="ca-je-total"><td>Total</td><td class="num">${money(payout)}</td><td class="num ${ok ? '' : 'neg'}">${money(total)}</td></tr>`)
+                    + (commission > 0 ? je('Commission (income)', dr(`Hosted Chit Funds ${tag}`, commission) + cr('Income · commission', commission))
+                        + (separate ? je('Commission to its account (transfer)', dr(esc(nameOf(c.commissionAccountId)), commission) + cr(esc(nameOf(commissionFrom)), commission)) : '')
+                    : commission < 0 ? je('Commission given back', dr('Income · commission', -commission) + cr(`Hosted Chit Funds ${tag}`, -commission)) : '');
+            };
+            el.querySelector('[name=commissionFrom]')?.addEventListener('change', () => preview());
+            const redraw = () => { drawLegs(); preview(); };
+            redraw();
+            el.querySelector('[data-add-leg]').addEventListener('click', () => {
+                s.legs.push({ accountId: null, amount: Math.max(0, left()) || '', mode: 'Bank', reference: '' });
+                redraw();
+            });
+            el.querySelector('[data-suggest]').addEventListener('click', () => { s.legs = toPay > 0 ? suggest() : []; redraw(); });
+            el.querySelector('.ca-received')?.addEventListener('click', e => {
+                const chip = e.target.closest('[data-add-from]');
+                if (!chip) return;
+                const id = Number(chip.dataset.addFrom);
+                const existing = s.legs.find(l => l.accountId === id);
+                // replace the suggestion when it does not match what is being built
+                const amount = Math.min(num(chip.dataset.amount), Math.max(0, left() + (existing ? num(existing.amount) : 0)));
+                if (existing) existing.amount = amount || num(chip.dataset.amount);
+                else s.legs.push({ accountId: id, amount: amount || num(chip.dataset.amount), mode: 'Bank', reference: '' });
+                redraw();
+            });
+            legsEl.addEventListener('change', e => {
+                const row = e.target.closest('[data-i]');
+                if (!row) return;
+                const leg = s.legs[Number(row.dataset.i)];
+                if (e.target.matches('[data-leg-account]')) leg.accountId = e.target.value ? Number(e.target.value) : null;
+                if (e.target.matches('[data-leg-mode]')) leg.mode = e.target.value;
+                preview();
+            });
+            legsEl.addEventListener('input', e => {
+                const row = e.target.closest('[data-i]');
+                if (!row) return;
+                const leg = s.legs[Number(row.dataset.i)];
+                if (e.target.matches('[data-leg-amount]')) leg.amount = e.target.value;
+                if (e.target.matches('[data-leg-ref]')) leg.reference = e.target.value;
+                preview();
+            });
+            legsEl.addEventListener('click', e => {
+                const rm = e.target.closest('[data-remove]');
+                if (!rm) return;
+                s.legs.splice(Number(rm.closest('[data-i]').dataset.i), 1);
+                redraw();
+            });
         },
     });
 }
@@ -1970,6 +2765,8 @@ function openMember(d, m) {
             <label class="field"><span>Name</span><input type="text" name="name" value="${esc(m.name)}" maxlength="100" required></label>
             <label class="field"><span>Phone</span><input type="tel" name="phone" value="${esc(m.phone || '')}" inputmode="numeric" maxlength="14" placeholder="10 digits, for WhatsApp reminders"></label>
             <label class="field"><span>E-mail</span><input type="email" name="email" value="${esc(m.email || '')}" maxlength="120" placeholder="for e-mailed reminders and receipts" data-plain></label>
+            <label class="field"><span>Payout to</span><input type="text" name="payoutAccount" value="${esc(m.payoutAccount || '')}" maxlength="120" placeholder="Bank, account no. and IFSC, or UPI ID" data-plain>
+                <small>Filled in when you pay this member the chit</small></label>
         </form>`,
         actions: [
             { label: 'Cancel' },
@@ -1981,10 +2778,56 @@ function openMember(d, m) {
                 if (phone && !/^\d{10}$/.test(phone)) throw new Error('The phone number should have 10 digits');
                 if (email && !EMAIL.test(email)) throw new Error('The e-mail address does not look right');
                 if (d.members.some(x => x.id !== m.id && x.name.trim().toLowerCase() === name.toLowerCase())) throw new Error(`Another member is already called ${name}`);
-                await afterChange(await api.put(`/hosted-chits/${d.chit.id}/members/${m.id}`, { name, phone: phone || null, email: email || null }), 'Saved');
+                const payoutAccount = modal.el.querySelector('[name=payoutAccount]').value.trim();
+                await afterChange(await api.put(`/hosted-chits/${d.chit.id}/members/${m.id}`, { name, phone: phone || null, email: email || null,
+                    payoutAccount: payoutAccount || null }), 'Saved');
             } },
         ],
     });
+}
+
+/**
+ * Checks the settings form before saving: the name, UPI ID and texts always; the amounts while the chit has not started
+ * (installment, chit value, commission below it, the monthly rise, the winner extra, bids, late interest, grace days,
+ * the payment day); and that an account is picked wherever "an account I have" is chosen.
+ */
+function checkSettings(form, c, s, fixed) {
+    const v = name => form[name]?.value ?? '';
+    const n = name => Number(v(name));
+    const name = v('name').trim();
+    if (!name) return 'Give the chit a name';
+    if (name.length > 100) return 'The name can be at most 100 characters';
+    const upi = v('upiId').trim();
+    if (upi && !/^[\w.\-]{2,}@[A-Za-z][\w.]{1,}$/.test(upi)) return 'The UPI ID should look like name@bank';
+    if (v('payeeName').trim().length > 100) return 'The name shown to members can be at most 100 characters';
+    if (v('notes').trim().length > 255) return 'Notes can be at most 255 characters';
+    if (!fixed) {
+        const due = n('dueDay');
+        if (!Number.isInteger(due) || due < 1 || due > 28) return 'Members pay by a day between 1 and 28';
+        for (const field of ['baseValue', 'commission', 'installment', 'monthlyIncrement', 'lateFeePercent', 'lateGraceDays', 'maxBidPercent', 'winnerExtraValue']) {
+            if (form[field] && (v(field) === '' ? field === 'baseValue' || field === 'installment' : !(n(field) >= 0))) return 'Amounts and percentages must be numbers, zero or more';
+        }
+        if (isAuction(c)) {
+            if (!(n('baseValue') > 0)) return 'Enter the chit value';
+            if (!(n('maxBidPercent') >= 1 && n('maxBidPercent') <= 40)) return 'The highest bid must be between 1% and 40%';
+            if (n('commission') >= n('baseValue') * n('maxBidPercent') / 100) return 'The commission must be less than the highest bid';
+        } else if (!isPlanned(c)) {
+            if (!(n('installment') > 0)) return 'Enter how much each member pays a month';
+            if (!(n('baseValue') > 0)) return 'Enter the chit value for month 1';
+            if (n('commission') >= n('baseValue')) return 'The commission must be less than the chit value';
+            if (form.winnerExtraType?.value === 'PERCENT' && n('winnerExtraValue') > 100) return 'The winner extra can be at most 100% of the chit value';
+            if (form.winnerExtraType && form.winnerExtraType.value !== 'NONE' && !(n('winnerExtraValue') > 0)) return 'Enter how much extra winners pay (or choose “Nothing extra”)';
+        }
+        if (n('lateFeePercent') > 10) return 'Late payment interest can be at most 10% a month';
+        if (!Number.isInteger(n('lateGraceDays')) || n('lateGraceDays') > 60) return 'Grace days must be a whole number up to 60';
+    }
+    if (s.postToBooks) {
+        if (s.collection === 'EXISTING' && !s.accountId) return 'Pick the account members’ payments go into';
+        if (s.commissionTo === 'EXISTING' && !s.commissionAccountId) return 'Pick the account your commission goes to';
+        if (s.lateTo === 'EXISTING' && !s.lateFeeAccountId) return 'Pick the account late interest goes to';
+        if (s.commissionTo === 'EXISTING' && s.commissionAccountId && s.commissionAccountId === s.accountId) return 'Pick “Same as payments” to keep the commission with the payments';
+    }
+    return null;
 }
 
 async function openSettings(d) {
@@ -1992,28 +2835,32 @@ async function openSettings(d) {
     const [accounts, categories] = await Promise.all([loadAccounts().catch(() => []), categoriesOf('INCOME', c.commissionCategoryId).catch(() => [])]);
     const auction = isAuction(c);
     const s = {
-        name: c.name, postToBooks: c.postToBooks, collection: 'EXISTING', accountId: c.accountId,
+        chitId: c.id, name: c.name, postToBooks: c.postToBooks, collection: 'EXISTING', accountId: c.accountId,
         commissionTo: c.commissionAccountId ? 'EXISTING' : 'SAME', commissionAccountId: c.commissionAccountId,
         commissionCategoryId: c.commissionCategoryId || categories.find(x => x.name === 'Chit Commission Income')?.id || null,
         winnerExtraType: c.winnerExtraType, winnerExtraValue: c.winnerExtraValue, locked: c.postToBooks,
         lateTo: c.lateFeeAccountId ? 'EXISTING' : 'SAME', lateFeeAccountId: c.lateFeeAccountId,
     };
+    // once the chit has started its amounts, percentages and dates are fixed: only names, UPI details and accounts change
+    const fixed = !!c.termsLocked;
     const f = (label, name, value, hint = '', attrs = '') => `<label class="field"><span>${label}</span>
-        <input type="number" name="${name}" value="${value}" step="any" min="0" class="num" data-type="number" ${attrs}>${hint ? `<small>${hint}</small>` : ''}</label>`;
+        <input type="number" name="${name}" value="${value}" step="any" min="0" class="num" data-type="number" ${attrs} ${fixed ? 'disabled' : ''}>${hint && !fixed ? `<small>${hint}</small>` : ''}</label>`;
     openModal({
         title: 'Chit settings', iconName: 'settings', size: 'xl',
         body: `<form class="hc-two" onsubmit="return false">
             <div class="hc-col">
-                <div class="section-title">${icon('edit')}${auction ? 'Auction chit' : 'Fixed chit'}</div>
+                <div class="section-title">${icon('edit')}${auction ? 'Auction chit' : isPlanned(c) ? 'Planned chit' : 'Fixed chit'}</div>
                 <div class="form-grid two">
                     <label class="field span-2"><span>Chit name</span><input type="text" name="name" value="${esc(c.name)}" maxlength="100" required></label>
-                    <label class="field"><span>Starts in</span><input type="month" name="startMonth" value="${c.startMonth.slice(0, 7)}" ${c.structureLocked ? 'disabled' : ''}>
+                    <label class="field"><span>Starts in</span><input type="month" name="startMonth" value="${c.startMonth.slice(0, 7)}" ${c.structureLocked || fixed ? 'disabled' : ''}>
                         ${c.structureLocked ? '<small>fixed once payments are recorded</small>' : ''}</label>
                     ${f('Members pay by day', 'dueDay', c.dueDay, 'of every month', 'min="1" max="28"')}
                     ${auction ? `
                         ${f('Chit value', 'baseValue', num(c.baseValue), `each member pays chit value ÷ ${c.memberCount}`)}
                         ${f('Your commission each month (₹)', 'commission', num(c.commission), 'also the lowest bid')}
                         ${f('Highest bid allowed (%)', 'maxBidPercent', num(c.maxBidPercent), 'at most 40%', 'max="40"')}`
+                    : isPlanned(c) ? `<p class="book-note span-2">${icon('calendar')}<span>What members pay and what each winner gets are set month by month in the
+                        <b>chit table</b> (Months → Edit chit table).</span></p>`
                     : `
                         ${f('Each member pays a month', 'installment', num(c.installment))}
                         ${f('Chit value in month 1', 'baseValue', num(c.baseValue))}
@@ -2026,7 +2873,8 @@ async function openSettings(d) {
                     <label class="field"><span>Name shown to members</span><input type="text" name="payeeName" value="${esc(c.payeeName || '')}" maxlength="100" data-plain></label>
                     <label class="field span-2"><span>Notes</span><input type="text" name="notes" value="${esc(c.notes || '')}" maxlength="255"></label>
                 </div>
-                <p class="muted hc-small">${c.memberCount} members can’t be changed. To change it, delete this chit and host a new one.</p>
+                ${fixed ? `<p class="hc-note">${icon('lock')}<span>${esc(c.name)} has started: its amounts, percentages and dates are what the members agreed to and cannot change. You can still edit the name, notes, UPI details and the accounts.</span></p>`
+                    : `<p class="muted hc-small">${c.memberCount} members can’t be changed. To change it, delete this chit and host a new one.</p>`}
             </div>
             <div class="hc-col">
                 <div class="section-title">${icon('journal')}My accounts</div>
@@ -2040,14 +2888,16 @@ async function openSettings(d) {
             { label: 'Save', kind: 'primary', iconName: 'check', onClick: async modal => {
                 const form = modal.el.querySelector('form');
                 const v = name => form[name]?.value;
-                if (!v('name').trim()) throw new Error('Give the chit a name');
+                const err = checkSettings(form, c, s, fixed);
+                if (err) throw new Error(err);
                 await afterChange(await api.put(`/hosted-chits/${c.id}`, {
                     name: v('name').trim(), chitType: c.chitType, startMonth: `${c.structureLocked ? c.startMonth.slice(0, 7) : v('startMonth')}-01`, dueDay: Number(v('dueDay')),
                     memberCount: c.memberCount, months: c.months,
-                    installment: auction ? num(c.installment) : Number(v('installment')), baseValue: Number(v('baseValue')),
-                    monthlyIncrement: auction ? 0 : Number(v('monthlyIncrement')), commission: Number(v('commission')),
+                    installment: auction || isPlanned(c) ? num(c.installment) : Number(v('installment')), baseValue: isPlanned(c) ? num(c.baseValue) : Number(v('baseValue')),
+                    monthlyIncrement: auction || isPlanned(c) ? 0 : Number(v('monthlyIncrement')), commission: isPlanned(c) ? 0 : Number(v('commission')),
+                    installmentIncrement: isPlanned(c) ? num(c.installmentIncrement) : null,
                     maxBidPercent: auction ? Number(v('maxBidPercent')) : null,
-                    winnerExtraType: auction ? 'NONE' : v('winnerExtraType'), winnerExtraValue: auction ? 0 : Number(v('winnerExtraValue') || 0),
+                    winnerExtraType: auction || isPlanned(c) ? 'NONE' : v('winnerExtraType'), winnerExtraValue: auction || isPlanned(c) ? 0 : Number(v('winnerExtraValue') || 0),
                     lateFeePercent: Number(v('lateFeePercent') || 0), lateGraceDays: Number(v('lateGraceDays') || 0),
                     upiId: v('upiId').trim() || null, payeeName: v('payeeName').trim() || null,
                     notes: v('notes').trim() || null, postToBooks: s.postToBooks,
@@ -2062,6 +2912,7 @@ async function openSettings(d) {
         ],
         onOpen: modal => {
             const form = modal.el.querySelector('form');
+            if (fixed) ['winnerExtraType', 'winnerExtraValue'].forEach(n => { if (form[n]) form[n].disabled = true; });
             form.winnerExtraType?.addEventListener('change', () => {
                 form.winnerExtraValue.value = form.winnerExtraType.value === 'NONE' ? ''
                     : defaultExtra(form.winnerExtraType.value, Number(form.monthlyIncrement.value || 0), Number(form.baseValue.value || 0));

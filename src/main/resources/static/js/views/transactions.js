@@ -39,7 +39,7 @@ export async function render(container, _params, isCurrent) {
                     ${field({ label: 'From', name: 'from', type: 'date', value: filters.from })}
                     ${field({ label: 'To', name: 'to', type: 'date', value: filters.to })}
                     ${field({ label: 'Type', name: 'voucherType', type: 'select', value: filters.voucherType, options: voucherOptions })}
-                    ${field({ label: 'Account', name: 'accountId', type: 'select', options: accountOptions(accounts, () => true, filters.accountId, 'All accounts') })}
+                    ${field({ label: 'Account', name: 'accountId', type: 'select', options: accountOptions(accounts, () => true, filters.accountId, 'All accounts', { chitBook: true }) })}
                     ${field({ label: 'Search', name: 'q', value: filters.q, placeholder: 'Description, party, ref, entry no. or #id' })}
                     <button class="btn primary" type="submit">${icon('search')}Apply</button>
                     <button class="btn ghost" type="button" id="clear-filters" ${isFiltered() ? '' : 'hidden'} title="Back to the last 3 months, every type and account">${icon('x')}Clear</button>

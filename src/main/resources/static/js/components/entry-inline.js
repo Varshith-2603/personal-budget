@@ -17,7 +17,7 @@ import { money, date, dateTime } from '../core/format.js';
 import { openJournalEditor } from './transaction-forms.js';
 import { claimEntryRole, claimFiguresHtml, claimBadge, KIND_META } from './claim-panel.js';
 
-const MANAGE_LABEL = { expenses: 'Open Expenses', chits: 'Open Chits', 'host-chits': 'Open Host a Chit', accounts: 'Open Accounts' };
+const MANAGE_LABEL = { expenses: 'Open Expenses', chits: 'Open Chits', 'host-chits': 'Open Host a Chit', 'host-chits/accounts': 'Open Chit accounts', accounts: 'Open Accounts' };
 
 /**
  * Toggles the detail row under `row`.

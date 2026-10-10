@@ -52,6 +52,10 @@ public class HostedChitMember implements TenantOwned {
     @Column(length = 120)
     private String email;
 
+    /** Where the member takes the payout: bank, account number and IFSC, or a UPI ID. */
+    @Column(length = 120)
+    private String payoutAccount;
+
     @Version
     private Long version;
 }

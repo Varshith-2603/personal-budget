@@ -138,6 +138,20 @@ public class HostedChitController {
         return service.collectAll(id, monthNo, request);
     }
 
+    /** Planned chits: changes the chit table (what members pay and what the winner gets, month by month). */
+    @PutMapping("/hosted-chits/{id}/plan")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail updatePlan(@PathVariable Long id, @Valid @RequestBody HostedChitService.PlanRequest request) {
+        return service.updatePlan(id, request);
+    }
+
+    /** Undoes the payments recorded together by "Everyone has paid". */
+    @DeleteMapping("/hosted-chits/{id}/months/{monthNo}/batches/{batchId}")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail revertBatch(@PathVariable Long id, @PathVariable int monthNo, @PathVariable String batchId) {
+        return service.revertBatch(id, monthNo, batchId);
+    }
+
     // ---------------------------------------------------------------- winner and payout
 
     @PostMapping("/hosted-chits/{id}/months/{monthNo}/winner")

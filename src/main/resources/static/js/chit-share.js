@@ -77,31 +77,41 @@ function planPage(main, encoded) {
     const dueOf = no => new Date(y, mo - 1 + no - 1, Math.min(Number(p.d) || 1, 28));
     const fmtDay = d => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' });
     const short = v => { const a = Math.abs(v); return a >= 1e5 ? `₹${(v / 1e5).toFixed(2).replace(/\.?0+$/, '')}L` : a >= 1e3 ? `₹${(v / 1e3).toFixed(1).replace(/\.0$/, '')}K` : money(v); };
+    // links made since v2 carry each month's payout (and, for planned chits, installment) instead of the commission
+    const planned = p.t === 'PLANNED';
+    const lowBid = Number(p.lb ?? p.c) || 0;
     const rows = [];
     for (let no = 1; no <= n; no++) {
-        const value = auction ? p.b : p.b + (no - 1) * p.inc;
-        rows.push({ no, due: dueOf(no), value, collect: auction ? p.b : n * p.i + (no - 1) * p.x, payout: value - p.c });
+        const value = auction ? p.b : p.b + (no - 1) * (p.inc || 0);
+        const each = p.e ? Number(p.e[no - 1]) : Number(p.i);
+        rows.push({ no, due: dueOf(no), value, each, payout: p.p ? Number(p.p[no - 1]) : value - (Number(p.c) || 0) });
     }
     const maxBid = Math.round(p.b * (Number(p.mb) || 0) / 100);
-    const minPay = p.i - Math.floor((maxBid - p.c) / Math.max(1, n));
-    const table = auction ? `<table class="st-table cs-plan"><thead><tr><th>Month</th><th>Pay by</th><th class="r">Winning bid</th><th class="r">Each pays</th><th class="r">Winner gets</th></tr></thead>
-        <tbody>${rows.map(x => x.no === n
-            ? `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${money(p.c)}</td><td class="r">${money(p.i)}</td><td class="r"><b>${money(p.b - p.c)}</b></td></tr>`
-            : `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${short(p.c)} – ${short(maxBid)}</td><td class="r">${short(minPay)} – ${short(p.i)}</td><td class="r"><b>${short(p.b - maxBid)} – ${short(p.b - p.c)}</b></td></tr>`).join('')}</tbody></table>`
+    const scenario = (label, bid) => {
+        const dividend = Math.floor((bid - lowBid) / Math.max(1, n));
+        return `<div class="cs-ag"><small>${label}</small><b>${money(bid)}</b><span>winning bid</span>
+            <dl><dt>Winner gets</dt><dd>${money(p.b - bid)}</dd><dt>Dividend each</dt><dd>${money(dividend)}</dd><dt>Everyone pays</dt><dd>${money(p.i - dividend)}</dd></dl></div>`;
+    };
+    const table = auction ? `<p class="cs-plan-meta">The amounts change every month with the winning bid. This is what a month looks like:</p>
+        <div class="cs-ags">${scenario('Lowest bid', lowBid)}${scenario('A middle bid', Math.round((lowBid + maxBid) / 2 / 1000) * 1000)}${scenario('Highest bid allowed', maxBid)}</div>
+        <p class="cs-plan-meta">The last member left takes the chit at the lowest bid: ${money(p.b - lowBid)}.</p>`
+        : planned ? `<table class="st-table cs-plan"><thead><tr><th>Month</th><th>Pay by</th><th class="r">Each member pays</th><th class="r">Winner gets</th></tr></thead>
+        <tbody>${rows.map(x => `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${money(x.each)}</td><td class="r"><b>${money(x.payout)}</b></td></tr>`).join('')}</tbody></table>`
         : `<table class="st-table cs-plan"><thead><tr><th>Month</th><th>Pay by</th><th class="r">Members pay</th><th class="r">Past winners pay</th><th class="r">Chit value</th><th class="r">Winner gets</th></tr></thead>
-        <tbody>${rows.map(x => `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${money(p.i)}</td><td class="r">${x.no > 1 ? money(p.i + p.x) : '—'}</td>
+        <tbody>${rows.map(x => `<tr><td>${x.no}</td><td>${fmtDay(x.due)}</td><td class="r">${money(p.i)}</td><td class="r">${x.no > 1 ? money(p.i + (p.x || 0)) : '—'}</td>
             <td class="r">${money(x.value)}</td><td class="r"><b>${money(x.payout)}</b></td></tr>`).join('')}</tbody></table>`;
     main.innerHTML = `
         <section class="sh-card st-hero">
-            <div class="sh-head"><div><small>${esc(p.h || '')}${p.h ? ' · ' : ''}chit table${auction ? ' · auction chit' : ''}</small><h1>${esc(p.n)}</h1></div></div>
+            <div class="sh-head"><div><small>${esc(p.h || '')}${p.h ? ' · ' : ''}chit table${auction ? ' · auction chit' : planned ? ' · planned chit' : ''}</small><h1>${esc(p.n)}</h1></div></div>
             <p class="cs-plan-meta">${n} members · ${n} months · ${fmtDay(rows[0].due)} – ${fmtDay(rows.at(-1).due)}${p.o ? ` · run by ${esc(p.o)}` : ''}</p>
             <div class="st-total">
-                <div><span>Each member pays</span><b>${money(p.i)}</b><small>${auction ? 'a month, less that month’s dividend' : `a month${p.x ? `; ${money(p.i + p.x)} after winning` : ''}`}</small></div>
-                <div class="st-side"><span>Chit value</span><b>${money(p.b)}</b><small>${auction ? `bids ${money(p.c)} – ${money(maxBid)}` : p.inc ? `rising ${money(p.inc)} a month` : 'every month'}</small></div>
+                <div><span>Each member pays</span><b>${money(p.i)}</b><small>${auction ? 'a month, less that month’s dividend' : planned ? (p.e ? 'in month 1; see each month' : 'every month') : `a month${p.x ? `; ${money(p.i + p.x)} after winning` : ''}`}</small></div>
+                ${planned ? `<div class="st-side"><span>Winners get</span><b>${money(rows[0].payout)}</b><small>in month 1, up to ${money(Math.max(...rows.map(x => x.payout)))}</small></div>`
+                    : `<div class="st-side"><span>Chit value</span><b>${money(p.b)}</b><small>${auction ? `bids ${money(lowBid)} – ${money(maxBid)}` : p.inc ? `rising ${money(p.inc)} a month` : 'every month'}</small></div>`}
                 <div class="st-side"><span>Pay by</span><b>${Number(p.d)}${['th', 'st', 'nd', 'rd'][(Number(p.d) % 10 > 3 || Math.floor(Number(p.d) % 100 / 10) === 1) ? 0 : Number(p.d) % 10]}</b><small>of every month${Number(p.l) ? ` · ${p.l}% a month if late (after ${p.g} days)` : ''}</small></div>
             </div>
         </section>
-        <section class="sh-card st-section"><h2>Every month</h2><div class="st-scroll">${table}</div>
+        <section class="sh-card st-section"><h2>${auction ? 'How the auction works' : 'Every month'}</h2><div class="st-scroll">${table}</div>
             <button class="cs-print" onclick="window.print()">Print or save as PDF</button></section>
         <p class="sh-meta hc-share-note">A proposed chit table shared by the organiser before the chit starts. The final figures are those of the chit once it runs.</p>`;
 }
@@ -223,7 +233,7 @@ function chitHtml() {
             <div class="st-fig"><span>Members</span><b>${ch.memberCount}</b><small>${ch.months} months</small></div>
             ${ch.showEarnings ? `<div class="st-fig"><span>Money held</span><b>${money(ch.held)}</b><small>collected, not yet paid out</small></div>` : ''}
         </div>
-        <section class="sh-card st-section"><h2>Every month</h2>
+        <section class="sh-card st-section"><h2>${auction ? 'How the auction works' : 'Every month'}</h2>
             <div class="st-scroll"><table class="st-table"><thead><tr><th>Month</th><th>Pay by</th>${auction ? '<th class="r">Bid</th><th class="r">Dividend</th>' : '<th class="r">Chit value</th>'}
                 <th class="r">Winner gets</th><th>Winner</th><th class="r">Collected</th><th>Status</th></tr></thead>
             <tbody>${ch.schedule.map(x => `<tr><td>${x.monthNo}</td><td>${day(x.dueDate)}</td>

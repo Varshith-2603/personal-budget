@@ -26,6 +26,12 @@ import com.aditya.personalbudget.repository.AttachmentRepository;
 import com.aditya.personalbudget.domain.entity.HostedChitAgreement;
 import com.aditya.personalbudget.domain.entity.HostedChitShare;
 import com.aditya.personalbudget.dto.PlanningDtos.CategoryRequest;
+import com.aditya.personalbudget.domain.entity.HostedChitLeg;
+import com.aditya.personalbudget.repository.HostedChitLegRepository;
+import com.aditya.personalbudget.service.HostedChitBookService.ChitMoney;
+import com.aditya.personalbudget.service.HostedChitBookService.LegInput;
+import com.aditya.personalbudget.service.HostedChitBookService.LegView;
+import com.aditya.personalbudget.service.HostedChitBookService.TransferView;
 import com.aditya.personalbudget.repository.JournalEntryRepository;
 import com.aditya.personalbudget.security.UserContext;
 import com.aditya.personalbudget.storage.ConcurrentUpdateException;
@@ -85,7 +91,6 @@ public class HostedChitService {
     public static final String SOURCE_COLLECTION = "HOSTED_CHIT_COLLECTION";
     public static final String SOURCE_PAYOUT = "HOSTED_CHIT_PAYOUT";
     public static final String SOURCE_COMMISSION = "HOSTED_CHIT_COMMISSION";
-    static final String FUNDS_ACCOUNT = "Hosted Chit Funds";
     static final String COMMISSION_CATEGORY = "Chit Commission Income";
     static final String LATE_FEE_CATEGORY = "Chit Late Payment Interest";
     private static final String AREA = "Host a Chit";
@@ -96,8 +101,10 @@ public class HostedChitService {
 
     // ================================================================== requests
 
+    /** payoutAccount: where the member takes the payout (bank, account number and IFSC, or a UPI ID). */
     public record MemberInput(@NotBlank @Size(max = 100) String name, @Size(max = 20) String phone,
-                              @jakarta.validation.constraints.Email @Size(max = 120) String email) {
+                              @jakarta.validation.constraints.Email @Size(max = 120) String email,
+                              @Size(max = 120) String payoutAccount) {
     }
 
     /** The organiser's signature for receipts (an SVG path in a 1000 x 300 box) and the name under it; blank removes it. */
@@ -142,7 +149,17 @@ public class HostedChitService {
             @Size(max = 255) String notes,
             /* only when creating: the members, in order */
             List<@Valid MemberInput> members,
-            Long version) {
+            Long version,
+            /* planned chits: how much the installment rises each month (0: the same), and the chit table */
+            @PositiveOrZero BigDecimal installmentIncrement,
+            List<@Valid PlanMonth> plan) {
+    }
+
+    /** One month of a planned chit's table: what each member pays and what the winner gets. */
+    public record PlanMonth(@NotNull @Min(1) Integer monthNo, @PositiveOrZero BigDecimal installment, @NotNull @Positive BigDecimal payout) {
+    }
+
+    public record PlanRequest(@NotNull List<@Valid PlanMonth> months) {
     }
 
     /** amount: towards the installment; lateFee: late interest collected; lateFeeWaived: late interest let off. */
@@ -151,21 +168,35 @@ public class HostedChitService {
                                  @Size(max = 60) String reference,
                                  LocalDate paidDate, String mode, @Size(max = 255) String note,
                                  /* the user confirmed a payment above the installment */
-                                 Boolean allowExcess, Long version) {
+                                 Boolean allowExcess, Long version,
+                                 /* the account the money came into (empty: the chit's collections account) */
+                                 Long accountId,
+                                 /* the member paid this month's winner directly (the winner: set off against the payout) */
+                                 Long paidToMemberId) {
     }
 
-    public record CollectAllRequest(LocalDate paidDate, String mode) {
+    /** direct: everyone left paid the month's winner directly (the winner's own: set off against the payout). */
+    public record CollectAllRequest(LocalDate paidDate, String mode, Long accountId, Boolean direct) {
     }
 
     /** bid: auction chits, the winning bid (the discount the winner gives up). */
     public record WinnerRequest(@NotNull Long memberId, Boolean random, @PositiveOrZero BigDecimal bid) {
     }
 
+    /**
+     * legs: the accounts the payout is paid from, each with its amount, mode and reference (they add up to the
+     * payout); empty means all of it from the chit's collections account by {@code mode}.
+     */
     public record PayoutRequest(LocalDate payoutDate, String mode, @Size(max = 60) String reference,
                                 /* the user confirmed closing the month with unpaid dues */
                                 Boolean allowDues,
                                 /* also make the winner's digital agreement */
-                                Boolean createAgreement, @Size(max = 100) String guarantorName, @Size(max = 20) String guarantorPhone) {
+                                Boolean createAgreement, @Size(max = 100) String guarantorName, @Size(max = 20) String guarantorPhone,
+                                List<@Valid LegInput> legs,
+                                /* the winner's bank account or UPI ID it went to */
+                                @Size(max = 120) String payoutTo,
+                                /* where the commission is moved out of (empty: the collections account) */
+                                Long commissionFromAccountId) {
     }
 
     public record AgreementRequest(@Size(max = 100) String guarantorName, @Size(max = 20) String guarantorPhone,
@@ -189,10 +220,14 @@ public class HostedChitService {
                            BigDecimal collectedThisMonth, BigDecimal expectedThisMonth, int paidThisMonth,
                            BigDecimal totalCollected, BigDecimal totalPaidOut, BigDecimal commissionEarned,
                            BigDecimal pendingDues, int pendingCount, BigDecimal held, LocalDate nextDueDate,
-                           boolean structureLocked, String createdBy, LocalDateTime createdAt, Long version) {
+                           boolean structureLocked, String createdBy, LocalDateTime createdAt, Long version,
+                           /* planned chits: the installment's monthly rise when the table was made */
+                           BigDecimal installmentIncrement,
+                           /* started: amounts, percentages, dates and the chit table no longer change */
+                           boolean termsLocked) {
     }
 
-    public record MemberView(Long id, int slot, String name, String phone, String email, Integer wonMonth,
+    public record MemberView(Long id, int slot, String name, String phone, String email, String payoutAccount, Integer wonMonth,
                              BigDecimal totalPaid, BigDecimal balanceDue, BigDecimal lateFeeDue, Long version) {
     }
 
@@ -205,13 +240,15 @@ public class HostedChitService {
                             BigDecimal commission, Long winnerMemberId, String winnerName, String drawMethod,
                             String status, boolean due, BigDecimal collected, BigDecimal expected, int paidCount,
                             LocalDate payoutDate, String payoutMode, String payoutReference, String payoutEntryNo,
-                            Long payoutEntryId, Long version) {
+                            Long payoutEntryId, String payoutTo, List<LegView> legs, Long version) {
     }
 
+    /** accountId / accountName: where the money came into. */
     public record PaymentView(Long id, Long memberId, String memberName, int monthNo, BigDecimal amount, BigDecimal lateFee,
                               BigDecimal lateFeeWaived, String reference, String receiptNo, LocalDate paidDate,
                               String mode, String note, String entryNo, Long journalEntryId, int attachmentCount,
-                              String createdBy, LocalDateTime createdAt, Long version) {
+                              String createdBy, LocalDateTime createdAt, Long version, Long accountId, String accountName,
+                              Long paidToMemberId, String paidToName, String batchId) {
     }
 
     /** Late interest on one member's month: accrued so far, collected or let off, still due. */
@@ -232,12 +269,15 @@ public class HostedChitService {
      * kind: COLLECTION (paymentId set), PAYOUT or COMMISSION; held is the running balance (collected - paid out -
      * commission).
      */
+    /** account: the account the money came into or went out of. */
     public record LedgerRow(LocalDate date, String kind, int monthNo, String party, String mode, BigDecimal moneyIn,
-                            BigDecimal moneyOut, BigDecimal held, String entryNo, String note, Long paymentId) {
+                            BigDecimal moneyOut, BigDecimal held, String entryNo, String note, Long paymentId, String account) {
     }
 
+    /** money: where the chit's money is (by account); transfers: money moved in, out of or between its accounts. */
     public record Detail(ChitView chit, List<MemberView> members, List<MonthView> schedule, List<PaymentView> payments,
-                         List<LedgerRow> ledger, List<LateFeeView> lateFees, List<AgreementView> agreements) {
+                         List<LedgerRow> ledger, List<LateFeeView> lateFees, List<AgreementView> agreements,
+                         ChitMoney money, List<TransferView> transfers) {
     }
 
     /** The dashboard line: dues still to collect across the running hosted chits. */
@@ -261,14 +301,19 @@ public class HostedChitService {
     private final LedgerService ledger;
     private final ActivityService activity;
     private final JournalLineRepository lines;
+    private final HostedChitBookService book;
+    private final HostedChitLegRepository legs;
 
     public HostedChitService(HostedChitRepository chits, HostedChitMemberRepository members, HostedChitMonthRepository months,
                              HostedChitPaymentRepository payments, HostedChitShareRepository shares,
                              HostedChitAgreementRepository agreements, AttachmentRepository attachments,
                              AccountRepository accounts, CategoryRepository categoryRepository,
                              JournalEntryRepository entries, AccountService accountService, CategoryService categoryService,
-                             LedgerService ledger, ActivityService activity, JournalLineRepository lines) {
+                             LedgerService ledger, ActivityService activity, JournalLineRepository lines,
+                             HostedChitBookService book, HostedChitLegRepository legs) {
         this.lines = lines;
+        this.book = book;
+        this.legs = legs;
         this.chits = chits;
         this.members = members;
         this.months = months;
@@ -331,12 +376,17 @@ public class HostedChitService {
         c.setStartMonth(r.startMonth().withDayOfMonth(1));
         c.setMemberCount(r.memberCount());
         c.setMonths(r.months());
-        c.setChitType(HostedChit.TYPE_AUCTION.equalsIgnoreCase(r.chitType()) ? HostedChit.TYPE_AUCTION : HostedChit.TYPE_FIXED);
+        c.setChitType(HostedChit.TYPE_AUCTION.equalsIgnoreCase(r.chitType()) ? HostedChit.TYPE_AUCTION
+                : HostedChit.TYPE_PLANNED.equalsIgnoreCase(r.chitType()) ? HostedChit.TYPE_PLANNED : HostedChit.TYPE_FIXED);
         c.setPostToBooks(true);   // a new chit is always recorded in the accounts
-        apply(c, r);
+        apply(c, r, false);
         c = chits.save(c);
+        book.claimAccounts(c);   // its new accounts were made before it had an id
         addMembersAndMonths(c, list);
-        activity.record("ADDED", AREA, "Started a hosted chit · " + c.getName() + " · " + (auction(c) ? "auction · " : "")
+        if (planned(c)) {
+            writePlan(c, r.plan() == null ? List.of() : r.plan(), true);
+        }
+        activity.record("ADDED", AREA, "Started a hosted chit · " + c.getName() + " · " + (auction(c) ? "auction · " : planned(c) ? "planned · " : "")
                 + ActivityService.money(c.getBaseValue()) + " · " + c.getMemberCount() + " members");
         return detail(c.getId());
     }
@@ -355,9 +405,18 @@ public class HostedChitService {
         if (!locked && (!r.memberCount().equals(c.getMemberCount()) || !r.months().equals(c.getMonths()))) {
             throw new BusinessException("To change the number of members or months, delete this chit and host it again");
         }
+        boolean started = started(c);
+        if (started) {
+            List<String> changed = changedTerms(c, r);
+            if (!changed.isEmpty()) {
+                throw new BusinessException(c.getName() + " has started, so its " + String.join(", ", changed)
+                        + " cannot change. Only the name, notes, UPI details and accounts can be edited");
+            }
+        }
         c.setStartMonth(start);
-        apply(c, r);
+        apply(c, r, started);
         chits.save(c);
+        book.claimAccounts(c);
         activity.record("CHANGED", AREA, "Edited a hosted chit · " + c.getName()
                 + (Boolean.TRUE.equals(c.getPostToBooks()) ? " · posts to the books" : " · tracked here only"));
         return detail(id);
@@ -379,13 +438,15 @@ public class HostedChitService {
         }
         List<HostedChitPayment> paid = payments.findByChitId(id);
         long payouts = months.findByChitId(id).stream().filter(m -> m.getPayoutDate() != null).count();
-        long entries = paid.stream().filter(p -> p.getJournalEntryId() != null).count()
+        int moves = book.transfersOf(id).size();
+        long entries = paid.stream().filter(p -> p.getJournalEntryId() != null).count() + moves
                 + months.findByChitId(id).stream().mapToLong(m -> (m.getPayoutEntryId() != null ? 1 : 0) + (m.getCommissionEntryId() != null ? 1 : 0)
                         + (m.getCommissionTransferEntryId() != null ? 1 : 0)).sum();
-        boolean recorded = !paid.isEmpty() || payouts > 0;
+        boolean recorded = !paid.isEmpty() || payouts > 0 || moves > 0;
         if (recorded && !revert) {
-            throw new BusinessException(name + " has " + paid.size() + " payment" + (paid.size() == 1 ? "" : "s") + " and " + payouts
-                    + " payout" + (payouts == 1 ? "" : "s") + " recorded. Revert them before deleting the chit.");
+            throw new BusinessException(name + " has " + paid.size() + " payment" + (paid.size() == 1 ? "" : "s") + ", " + payouts
+                    + " payout" + (payouts == 1 ? "" : "s") + (moves > 0 ? " and " + moves + " transfer" + (moves == 1 ? "" : "s") : "")
+                    + " recorded. Revert them before deleting the chit.");
         }
         if (recorded && (confirm == null || !confirm.trim().equalsIgnoreCase(name.trim()))) {
             throw new BusinessException("Type the chit's name, " + name + ", to confirm");
@@ -395,59 +456,13 @@ public class HostedChitService {
                 + payouts + " payout(s) and " + entries + " journal entr" + (entries == 1 ? "y" : "ies") : ""));
     }
 
-    private void apply(HostedChit c, ChitRequest r) {
+    /** termsLocked: the chit has started, so only the name, notes, UPI details and accounts change. */
+    private void apply(HostedChit c, ChitRequest r, boolean termsLocked) {
         c.setName(r.name().trim());
-        c.setDueDay(r.dueDay() == null ? 5 : r.dueDay());
-        c.setBaseValue(Money.round(r.baseValue()));
-        c.setCommission(Money.round(r.commission()));
-        if (auction(c)) {
-            // the chit value is fixed and shared equally: installment = chit value / members
-            c.setInstallment(Money.round(c.getBaseValue().divide(BigDecimal.valueOf(c.getMemberCount()), 2, java.math.RoundingMode.HALF_UP)));
-            c.setMonthlyIncrement(Money.ZERO);
-            BigDecimal max = r.maxBidPercent() == null ? BigDecimal.valueOf(40) : r.maxBidPercent();
-            if (max.signum() <= 0 || max.compareTo(BigDecimal.valueOf(40)) > 0) {
-                throw new BusinessException("The highest bid must be between 1% and 40% of the chit value");
-            }
-            c.setMaxBidPercent(max);
-            if (c.getCommission().compareTo(maxBid(c)) >= 0) {
-                throw new BusinessException("The commission must be less than the highest bid (" + ActivityService.money(maxBid(c)) + ")");
-            }
-        } else {
-            if (r.installment() == null || r.installment().signum() <= 0) {
-                throw new BusinessException("Enter how much each member pays a month");
-            }
-            c.setInstallment(Money.round(r.installment()));
-            c.setMonthlyIncrement(Money.round(r.monthlyIncrement()));
-            c.setMaxBidPercent(null);
+        if (!termsLocked) {
+            applyTerms(c, r);
         }
-        BigDecimal lastValue = c.getBaseValue().add(c.getMonthlyIncrement().multiply(BigDecimal.valueOf(c.getMonths() - 1L)));
-        if (c.getCommission().compareTo(c.getBaseValue()) >= 0) {
-            throw new BusinessException("The commission must be less than the chit value (" + ActivityService.money(c.getBaseValue()) + ")");
-        }
-        if (lastValue.signum() <= 0) {
-            throw new BusinessException("The chit value must stay above zero");
-        }
-        String extraType = auction(c) || r.winnerExtraType() == null || r.winnerExtraType().isBlank() ? EXTRA_NONE
-                : r.winnerExtraType().trim().toUpperCase();
-        if (!Set.of(EXTRA_NONE, EXTRA_PERCENT, EXTRA_FIXED).contains(extraType)) {
-            throw new BusinessException("Winner extra must be none, a percent or a fixed amount");
-        }
-        BigDecimal extraValue = EXTRA_NONE.equals(extraType) ? Money.ZERO : Money.nz(r.winnerExtraValue());
-        if (!EXTRA_NONE.equals(extraType) && extraValue.signum() <= 0) {
-            throw new BusinessException("Enter how much extra winners pay");
-        }
-        if (EXTRA_PERCENT.equals(extraType) && extraValue.compareTo(Money.HUNDRED) > 0) {
-            throw new BusinessException("The winner extra can be at most 100% of the chit value");
-        }
-        c.setWinnerExtraType(extraType);
-        c.setWinnerExtraValue(extraValue);
         c.setNotes(blank(r.notes()));
-        BigDecimal late = Money.nz(r.lateFeePercent());
-        if (late.compareTo(BigDecimal.TEN) > 0) {
-            throw new BusinessException("Late payment interest can be at most 10% a month");
-        }
-        c.setLateFeePercent(late.signum() > 0 ? late : null);
-        c.setLateGraceDays(r.lateGraceDays() == null ? 0 : r.lateGraceDays());
         String upi = blank(r.upiId());
         if (upi != null && !upi.matches("[\\w.\\-]{2,}@[A-Za-z][\\w.]{1,}")) {
             throw new BusinessException("The UPI ID should look like name@bank");
@@ -457,28 +472,21 @@ public class HostedChitService {
         // once recorded in the accounts, always: turning it off would leave half the chit in the books
         c.setPostToBooks(Boolean.TRUE.equals(c.getPostToBooks()) || Boolean.TRUE.equals(r.postToBooks()));
         if (c.getPostToBooks()) {
+            // each chit has its own accounts in the chit book (Chit accounts); a common chit account or one of
+            // the user's own accounts can be picked instead
             Account account = Boolean.TRUE.equals(r.separateCollectionAccount())
-                    ? accountService.createInternal(ActivityService.cut(c.getName() + " - collections", 100), AccountType.CASH,
-                        "Members' installments for the chit " + c.getName() + " (Host a Chit)", false)
-                    : r.accountId() != null ? accountService.require(r.accountId())
-                    : accountService.systemAccount(DefaultChartOfAccounts.CASH);
-            requireCashLike(account, "Collect into a cash, bank or wallet account");
+                    ? book.newChitAccount(c.getName(), c.getId(), Account.ROLE_COLLECTION)
+                    : r.accountId() != null ? book.requireMoneyAccount(r.accountId(), c.getId(), "Collections")
+                    : c.getAccountId() != null ? accountService.require(c.getAccountId())
+                    : book.newChitAccount(c.getName(), c.getId(), Account.ROLE_COLLECTION);
             c.setAccountId(account.getId());
             Account commission = Boolean.TRUE.equals(r.separateCommissionAccount())
-                    ? accountService.createInternal(ActivityService.cut(c.getName() + " - commission", 100), AccountType.CASH,
-                        "My commission from the chit " + c.getName() + " (Host a Chit)", false)
-                    : r.commissionAccountId() != null ? accountService.require(r.commissionAccountId()) : null;
-            if (commission != null) {
-                requireCashLike(commission, "Keep the commission in a cash, bank or wallet account");
-            }
+                    ? book.newChitAccount(c.getName(), c.getId(), Account.ROLE_COMMISSION)
+                    : r.commissionAccountId() != null ? book.requireMoneyAccount(r.commissionAccountId(), c.getId(), "Commission") : null;
             c.setCommissionAccountId(commission == null || commission.getId().equals(account.getId()) ? null : commission.getId());
             Account lateAccount = Boolean.TRUE.equals(r.separateLateFeeAccount())
-                    ? accountService.createInternal(ActivityService.cut(c.getName() + " - late interest", 100), AccountType.CASH,
-                        "Late payment interest from the chit " + c.getName() + " (Host a Chit)", false)
-                    : r.lateFeeAccountId() != null ? accountService.require(r.lateFeeAccountId()) : null;
-            if (lateAccount != null) {
-                requireCashLike(lateAccount, "Keep late interest in a cash, bank or wallet account");
-            }
+                    ? book.newChitAccount(c.getName(), c.getId(), Account.ROLE_LATE_FEE)
+                    : r.lateFeeAccountId() != null ? book.requireMoneyAccount(r.lateFeeAccountId(), c.getId(), "Late interest") : null;
             c.setLateFeeAccountId(lateAccount == null ? null : lateAccount.getId());
             c.setCommissionCategoryId(r.commissionCategoryId() != null
                     ? categoryService.require(r.commissionCategoryId(), CategoryKind.INCOME).getId()
@@ -491,10 +499,60 @@ public class HostedChitService {
         }
     }
 
-    private static void requireCashLike(Account a, String message) {
-        if (a.getAccountClass() != AccountClass.ASSET || a.getAccountType() == AccountType.CHIT_FUND) {
-            throw new BusinessException(message);
+
+    /**
+     * Planned chits: changes the chit table. A month already paid out keeps its figures; what members pay in a month
+     * stays once payments are recorded for it.
+     */
+    @Transactional
+    public Detail updatePlan(Long chitId, PlanRequest r) {
+        HostedChit c = require(chitId);
+        if (!planned(c)) {
+            throw new BusinessException("Only a planned chit has a chit table to edit");
         }
+        if (started(c)) {
+            throw new BusinessException(c.getName() + " has started: its chit table is what the members agreed to and cannot change");
+        }
+        int changed = writePlan(c, r.months(), false);
+        activity.record("CHANGED", AREA, "Edited the chit table · " + c.getName() + " · " + changed + " month" + (changed == 1 ? "" : "s"));
+        return detail(chitId);
+    }
+
+    /** Writes a planned chit's table; on create every month needs its payout. Returns how many months changed. */
+    private int writePlan(HostedChit c, List<PlanMonth> plan, boolean creating) {
+        Map<Integer, PlanMonth> byNo = new HashMap<>();
+        for (PlanMonth p : plan) {
+            if (p.monthNo() < 1 || p.monthNo() > c.getMonths()) {
+                throw new BusinessException("Month must be between 1 and " + c.getMonths());
+            }
+            byNo.put(p.monthNo(), p);
+        }
+        Set<Integer> paidMonths = payments.findByChitId(c.getId()).stream().map(HostedChitPayment::getMonthNo).collect(Collectors.toSet());
+        int changed = 0;
+        List<HostedChitMonth> rows = months.findByChitId(c.getId()).stream().sorted(Comparator.comparing(HostedChitMonth::getMonthNo)).toList();
+        for (HostedChitMonth m : rows) {
+            PlanMonth p = byNo.get(m.getMonthNo());
+            if (p == null) {
+                if (creating) throw new BusinessException("Set what the winner gets in month " + m.getMonthNo());
+                continue;
+            }
+            BigDecimal installment = p.installment() != null && p.installment().signum() > 0 ? Money.round(p.installment())
+                    : c.getInstallment().add(Money.nz(c.getInstallmentIncrement()).multiply(BigDecimal.valueOf(m.getMonthNo() - 1L)));
+            BigDecimal payout = Money.round(p.payout());
+            boolean same = installment.compareTo(Money.nz(m.getPlannedInstallment())) == 0 && payout.compareTo(Money.nz(m.getPlannedPayout())) == 0;
+            if (same) continue;
+            if (m.getPayoutDate() != null) {
+                throw new BusinessException("Month " + m.getMonthNo() + " is paid out; its figures cannot change");
+            }
+            if (m.getPlannedInstallment() != null && installment.compareTo(m.getPlannedInstallment()) != 0 && paidMonths.contains(m.getMonthNo())) {
+                throw new BusinessException("Payments are recorded for month " + m.getMonthNo() + "; what members pay that month cannot change");
+            }
+            m.setPlannedInstallment(installment);
+            m.setPlannedPayout(payout);
+            months.save(m);
+            changed++;
+        }
+        return changed;
     }
 
     private void addMembersAndMonths(HostedChit c, List<MemberInput> list) {
@@ -507,6 +565,7 @@ public class HostedChitService {
             m.setName(ActivityService.cut(list.get(i).name().trim(), 100));
             m.setPhone(blank(list.get(i).phone()));
             m.setEmail(blank(list.get(i).email()));
+            m.setPayoutAccount(blank(list.get(i).payoutAccount()));
             rows.add(m);
         }
         members.saveAll(rows);
@@ -521,7 +580,10 @@ public class HostedChitService {
         months.saveAll(schedule);
     }
 
-    /** Removes a chit with everything under it, and the journal entries it posted. */
+    /**
+     * Removes a chit with everything under it: the journal entries it posted, its transfers, and its own accounts
+     * (an account that still has other postings stays in the chit book, without a chit).
+     */
     private void removeChit(HostedChit c) {
         List<Long> journal = new ArrayList<>();
         for (HostedChitPayment p : payments.findByChitId(c.getId())) {
@@ -534,11 +596,18 @@ public class HostedChitService {
         }
         shares.deleteAll(shares.findByChitId(c.getId()));
         agreements.deleteAll(agreements.findByChitId(c.getId()));
+        legs.deleteAll(legs.findByChitId(c.getId()));
+        book.removeTransfers(c.getId());
         payments.deleteAll(payments.findByChitId(c.getId()));
         months.deleteAll(months.findByChitId(c.getId()));
         members.deleteAll(members.findByChitId(c.getId()));
+        journal.forEach(ledger::delete);   // the lines carry the chit, so they go before it
+        c.setAccountId(null);
+        c.setCommissionAccountId(null);
+        c.setLateFeeAccountId(null);
+        chits.save(c);
+        book.releaseAccounts(c.getId());
         chits.deleteById(c.getId());
-        journal.forEach(ledger::delete);
     }
 
     @Transactional
@@ -553,6 +622,7 @@ public class HostedChitService {
         m.setName(ActivityService.cut(name, 100));
         m.setPhone(cleanPhone(r.phone(), name));
         m.setEmail(blank(r.email()));
+        m.setPayoutAccount(blank(r.payoutAccount()));
         members.save(m);
         activity.record("CHANGED", AREA, "Edited a member · " + c.getName() + " · " + before
                 + (before.equals(m.getName()) ? "" : " → " + m.getName()));
@@ -591,6 +661,7 @@ public class HostedChitService {
         if (amount.add(lateFee).add(waived).signum() <= 0) {
             throw new BusinessException("Enter the amount received");
         }
+        HostedChitMember paidTo = checkDirect(c, calc, member, r.monthNo(), r.paidToMemberId(), lateFee, amount, null);
 
         HostedChitPayment p = new HostedChitPayment();
         p.setTenantId(c.getTenantId());
@@ -604,6 +675,8 @@ public class HostedChitService {
         p.setPaidDate(r.paidDate() != null ? r.paidDate() : LocalDate.now());
         p.setMode(mode(r.mode()));
         p.setNote(blank(r.note()));
+        p.setPaidToMemberId(paidTo == null ? null : paidTo.getId());
+        p.setAccountId(paidTo != null && Boolean.TRUE.equals(c.getPostToBooks()) ? book.directAccount().getId() : receivedInto(c, r.accountId()));
         p.setCreatedBy(UserContext.username());
         p.setCreatedAt(LocalDateTime.now());
         p = payments.save(p);
@@ -614,7 +687,179 @@ public class HostedChitService {
         payments.save(p);
         activity.record("POSTED", AREA, "Collected · " + member.getName() + " · " + c.getName() + " month " + p.getMonthNo()
                 + " · " + ActivityService.money(amount) + (lateFee.signum() > 0 ? " + late interest " + ActivityService.money(lateFee) : "")
-                + " · " + p.getMode() + " · " + p.getReceiptNo());
+                + " · " + p.getMode() + (paidTo != null ? directWords(member, paidTo) : "") + " · " + p.getReceiptNo());
+        return detail(chitId);
+    }
+
+    private static String directWords(HostedChitMember member, HostedChitMember winner) {
+        return member.getId().equals(winner.getId()) ? " · set off against the payout" : " · paid directly to " + winner.getName();
+    }
+
+    /**
+     * A payment made straight to the month's winner instead of to the organiser: allowed only to the month's winner,
+     * before the month is paid out, without late interest (that is the organiser's), and only while the payments made
+     * directly stay within what the winner gets (the commission must still reach the organiser). Returns the winner,
+     * or null for an ordinary payment.
+     */
+    private HostedChitMember checkDirect(HostedChit c, Calc calc, HostedChitMember member, int monthNo, Long paidToMemberId,
+                                         BigDecimal lateFee, BigDecimal amount, Long ignorePaymentId) {
+        if (paidToMemberId == null) return null;
+        HostedChitMonth month = calc.month(monthNo);
+        if (month.getWinnerMemberId() == null) {
+            throw new BusinessException("Choose the winner of month " + monthNo + " first: members pay the winner directly");
+        }
+        if (!month.getWinnerMemberId().equals(paidToMemberId)) {
+            throw new BusinessException("Members can pay directly only to the winner of month " + monthNo);
+        }
+        if (month.getPayoutDate() != null) {
+            throw new BusinessException("Month " + monthNo + " is already paid out; undo the payout to add payments made to the winner");
+        }
+        if (lateFee.signum() > 0) {
+            throw new BusinessException("Late interest is yours: record it as a separate payment to you");
+        }
+        BigDecimal already = calc.paymentList.stream()
+                .filter(p -> p.getMonthNo() == monthNo && paidToMemberId.equals(p.getPaidToMemberId()) && !p.getId().equals(ignorePaymentId))
+                .map(HostedChitPayment::getAmount).reduce(Money.ZERO, BigDecimal::add);
+        BigDecimal payout = payoutOf(c, calc, month);
+        if (already.add(amount).compareTo(payout) > 0) {
+            throw new BusinessException("Paid directly, the winner would get " + ActivityService.money(already.add(amount)) + ", more than the "
+                    + ActivityService.money(payout) + " due to them; the rest (your commission) has to come to you");
+        }
+        return requireMember(c, paidToMemberId);
+    }
+
+    /** What the month's winner gets: planned chits, the chit table's figure. */
+    private static BigDecimal payoutOf(HostedChit c, Calc calc, HostedChitMonth month) {
+        if (planned(c)) return Money.nz(month.getPlannedPayout());
+        BigDecimal value = calc.chitValue(month.getMonthNo());
+        return auction(c) ? value.subtract(Money.nz(month.getBidAmount())) : value.subtract(c.getCommission().min(value));
+    }
+
+    /** Payments made directly to the winner cannot change once the payout that cleared them is recorded. */
+    /** The money terms: payment day, amounts, commission, winner extra, bids and late interest (checked). */
+    private void applyTerms(HostedChit c, ChitRequest r) {
+        c.setDueDay(r.dueDay() == null ? 5 : r.dueDay());
+        c.setBaseValue(Money.round(r.baseValue()));
+        c.setCommission(Money.round(r.commission()));
+        if (planned(c)) {
+            // what is collected and paid out comes from the chit table, month by month
+            if (r.installment() == null || r.installment().signum() <= 0) {
+                throw new BusinessException("Enter how much each member pays a month");
+            }
+            c.setInstallment(Money.round(r.installment()));
+            c.setInstallmentIncrement(Money.round(Money.nz(r.installmentIncrement())));
+            c.setBaseValue(c.getInstallment().multiply(BigDecimal.valueOf(c.getMemberCount())));
+            c.setMonthlyIncrement(Money.ZERO);
+            c.setCommission(Money.ZERO);
+            c.setMaxBidPercent(null);
+        } else if (auction(c)) {
+            // the chit value is fixed and shared equally: installment = chit value / members
+            c.setInstallment(Money.round(c.getBaseValue().divide(BigDecimal.valueOf(c.getMemberCount()), 2, java.math.RoundingMode.HALF_UP)));
+            c.setMonthlyIncrement(Money.ZERO);
+            BigDecimal max = r.maxBidPercent() == null ? BigDecimal.valueOf(40) : r.maxBidPercent();
+            if (max.signum() <= 0 || max.compareTo(BigDecimal.valueOf(40)) > 0) {
+                throw new BusinessException("The highest bid must be between 1% and 40% of the chit value");
+            }
+            c.setMaxBidPercent(max);
+            if (c.getCommission().compareTo(maxBid(c)) >= 0) {
+                throw new BusinessException("The commission must be less than the highest bid (" + ActivityService.money(maxBid(c)) + ")");
+            }
+        } else {
+            if (r.installment() == null || r.installment().signum() <= 0) {
+                throw new BusinessException("Enter how much each member pays a month");
+            }
+            c.setInstallment(Money.round(r.installment()));
+            c.setMonthlyIncrement(Money.round(r.monthlyIncrement()));
+            c.setMaxBidPercent(null);
+        }
+        BigDecimal lastValue = c.getBaseValue().add(c.getMonthlyIncrement().multiply(BigDecimal.valueOf(c.getMonths() - 1L)));
+        if (c.getCommission().compareTo(c.getBaseValue()) >= 0) {
+            throw new BusinessException("The commission must be less than the chit value (" + ActivityService.money(c.getBaseValue()) + ")");
+        }
+        if (lastValue.signum() <= 0) {
+            throw new BusinessException("The chit value must stay above zero");
+        }
+        String extraType = auction(c) || planned(c) || r.winnerExtraType() == null || r.winnerExtraType().isBlank() ? EXTRA_NONE
+                : r.winnerExtraType().trim().toUpperCase();
+        if (!Set.of(EXTRA_NONE, EXTRA_PERCENT, EXTRA_FIXED).contains(extraType)) {
+            throw new BusinessException("Winner extra must be none, a percent or a fixed amount");
+        }
+        BigDecimal extraValue = EXTRA_NONE.equals(extraType) ? Money.ZERO : Money.nz(r.winnerExtraValue());
+        if (!EXTRA_NONE.equals(extraType) && extraValue.signum() <= 0) {
+            throw new BusinessException("Enter how much extra winners pay");
+        }
+        if (EXTRA_PERCENT.equals(extraType) && extraValue.compareTo(Money.HUNDRED) > 0) {
+            throw new BusinessException("The winner extra can be at most 100% of the chit value");
+        }
+        c.setWinnerExtraType(extraType);
+        c.setWinnerExtraValue(extraValue);
+        BigDecimal late = Money.nz(r.lateFeePercent());
+        if (late.compareTo(BigDecimal.TEN) > 0) {
+            throw new BusinessException("Late payment interest can be at most 10% a month");
+        }
+        c.setLateFeePercent(late.signum() > 0 ? late : null);
+        c.setLateGraceDays(r.lateGraceDays() == null ? 0 : r.lateGraceDays());
+    }
+
+    /**
+     * A chit has started once its first month has come or anything is recorded (a payment or a winner): from then on
+     * its terms (amounts, percentages, dates and, for planned chits, the chit table) are what the members agreed to.
+     */
+    boolean started(HostedChit c) {
+        return !LocalDate.now().isBefore(c.getStartMonth()) || structureLocked(c);
+    }
+
+    /** The terms the request would change, in words ("the commission", "late interest" ...). */
+    private List<String> changedTerms(HostedChit c, ChitRequest r) {
+        List<String> out = new ArrayList<>();
+        java.util.function.BiPredicate<BigDecimal, BigDecimal> differs = (a, b) -> Money.nz(a).compareTo(Money.nz(b)) != 0;
+        if (!r.startMonth().withDayOfMonth(1).equals(c.getStartMonth())) out.add("start month");
+        if (r.dueDay() != null && !r.dueDay().equals(c.getDueDay())) out.add("payment day");
+        if (differs.test(r.lateFeePercent(), c.getLateFeePercent())) out.add("late interest");
+        if ((r.lateGraceDays() == null ? 0 : r.lateGraceDays()) != (c.getLateGraceDays() == null ? 0 : c.getLateGraceDays())) out.add("grace days");
+        if (auction(c)) {
+            if (differs.test(r.baseValue(), c.getBaseValue())) out.add("chit value");
+            if (differs.test(r.commission(), c.getCommission())) out.add("commission");
+            if (differs.test(r.maxBidPercent(), c.getMaxBidPercent())) out.add("highest bid");
+        } else if (!planned(c)) {
+            if (differs.test(r.installment(), c.getInstallment())) out.add("monthly installment");
+            if (differs.test(r.baseValue(), c.getBaseValue())) out.add("chit value");
+            if (differs.test(r.monthlyIncrement(), c.getMonthlyIncrement())) out.add("monthly rise");
+            if (differs.test(r.commission(), c.getCommission())) out.add("commission");
+            String type = r.winnerExtraType() == null || r.winnerExtraType().isBlank() ? EXTRA_NONE : r.winnerExtraType().trim().toUpperCase();
+            if (!type.equals(extraType(c)) || differs.test(EXTRA_NONE.equals(type) ? Money.ZERO : r.winnerExtraValue(), c.getWinnerExtraValue())) out.add("winner extra");
+        }
+        return out;
+    }
+
+    private static void requireDirectOpen(Calc calc, HostedChitPayment p) {
+        if (p.getPaidToMemberId() != null && calc.month(p.getMonthNo()).getPayoutDate() != null) {
+            throw new BusinessException("This was paid directly to the winner and is part of the month " + p.getMonthNo()
+                    + " payout; undo the payout first");
+        }
+    }
+
+    /** Reverts payments recorded together ("Everyone has paid"), with their journal entries. */
+    @Transactional
+    public Detail revertBatch(Long chitId, int monthNo, String batchId) {
+        HostedChit c = require(chitId);
+        Calc calc = new Calc(c);
+        List<HostedChitPayment> list = calc.paymentList.stream()
+                .filter(p -> batchId.equals(p.getBatchId()) && p.getMonthNo() == monthNo).toList();
+        if (list.isEmpty()) {
+            throw new BusinessException("Those payments were already undone");
+        }
+        list.forEach(p -> requireDirectOpen(calc, p));
+        BigDecimal total = Money.ZERO;
+        for (HostedChitPayment p : list) {
+            Long entryId = p.getJournalEntryId();
+            shares.deleteAll(shares.findByChitId(c.getId()).stream().filter(x -> p.getId().equals(x.getPaymentId())).toList());
+            payments.deleteById(p.getId());
+            if (entryId != null) ledger.delete(entryId);
+            total = total.add(p.getAmount());
+        }
+        activity.record("DELETED", AREA, "Reverted \"everyone has paid\" · " + c.getName() + " month " + monthNo + " · "
+                + list.size() + " payment" + (list.size() == 1 ? "" : "s") + " · " + ActivityService.money(total));
         return detail(chitId);
     }
 
@@ -636,6 +881,8 @@ public class HostedChitService {
         if (amount.add(lateFee).add(waived).signum() <= 0) {
             throw new BusinessException("Enter the amount received");
         }
+        requireDirectOpen(calc, p);
+        HostedChitMember paidTo = checkDirect(c, calc, member, p.getMonthNo(), r.paidToMemberId(), lateFee, amount, p.getId());
         BigDecimal before = p.getAmount();
         p.setAmount(amount);
         p.setLateFee(lateFee.signum() > 0 ? lateFee : null);
@@ -644,6 +891,9 @@ public class HostedChitService {
         if (r.paidDate() != null) p.setPaidDate(r.paidDate());
         p.setMode(mode(r.mode()));
         p.setNote(blank(r.note()));
+        p.setPaidToMemberId(paidTo == null ? null : paidTo.getId());
+        p.setAccountId(paidTo != null && Boolean.TRUE.equals(c.getPostToBooks()) ? book.directAccount().getId()
+                : receivedInto(c, r.accountId() != null ? r.accountId() : directAccountId(p.getAccountId()) ? null : p.getAccountId()));
         boolean post = amount.add(lateFee).signum() > 0;
         if (p.getJournalEntryId() != null && post) {
             ledger.repost(p.getJournalEntryId(), collectionDraft(c, member, p));
@@ -667,6 +917,7 @@ public class HostedChitService {
         HostedChit c = require(chitId);
         HostedChitPayment p = requirePayment(c, paymentId);
         HostedChitMember member = requireMember(c, p.getMemberId());
+        requireDirectOpen(new Calc(c), p);
         Long entryId = p.getJournalEntryId();
         shares.deleteAll(shares.findByChitId(c.getId()).stream().filter(x -> p.getId().equals(x.getPaymentId())).toList());
         payments.deleteById(p.getId());
@@ -688,6 +939,15 @@ public class HostedChitService {
         LocalDate date = r != null && r.paidDate() != null ? r.paidDate() : LocalDate.now();
         checkPaidDate(c, date);
         String mode = mode(r == null ? null : r.mode());
+        boolean direct = r != null && Boolean.TRUE.equals(r.direct());
+        HostedChitMonth month = calc.month(monthNo);
+        Long into = direct && Boolean.TRUE.equals(c.getPostToBooks()) ? book.directAccount().getId() : receivedInto(c, r == null ? null : r.accountId());
+        if (direct) {
+            BigDecimal owing = calc.memberList.stream().map(m -> calc.due(m.getId(), monthNo).subtract(calc.paid(m.getId(), monthNo)).max(Money.ZERO))
+                    .reduce(Money.ZERO, BigDecimal::add);
+            checkDirect(c, calc, null, monthNo, month.getWinnerMemberId() == null ? -1L : month.getWinnerMemberId(), Money.ZERO, owing, null);
+        }
+        String batch = java.util.UUID.randomUUID().toString();
         int count = 0;
         BigDecimal total = Money.ZERO;
         for (HostedChitMember m : calc.memberList) {
@@ -701,10 +961,15 @@ public class HostedChitService {
             p.setAmount(rest);
             p.setPaidDate(date);
             p.setMode(mode);
-            p.setNote("Marked paid for the month");
+            p.setAccountId(into);
+            p.setPaidToMemberId(direct ? month.getWinnerMemberId() : null);
+            p.setBatchId(batch);
+            p.setNote(direct ? "Paid the winner directly (everyone at once)" : "Marked paid for the month");
             p.setCreatedBy(UserContext.username());
             p.setCreatedAt(LocalDateTime.now());
             p = payments.save(p);
+            p.setReceiptNo(String.format("RC-%06d", p.getId()));
+            payments.save(p);
             if (Boolean.TRUE.equals(c.getPostToBooks())) {
                 p.setJournalEntryId(ledger.post(collectionDraft(c, m, p)).getId());
                 payments.save(p);
@@ -716,7 +981,7 @@ public class HostedChitService {
             throw new BusinessException("Everyone has already paid month " + monthNo);
         }
         activity.record("POSTED", AREA, "Marked all paid · " + c.getName() + " month " + monthNo + " · " + count
-                + " member" + (count == 1 ? "" : "s") + " · " + ActivityService.money(total));
+                + " member" + (count == 1 ? "" : "s") + " · " + ActivityService.money(total) + (direct ? " · paid the winner directly" : ""));
         return detail(chitId);
     }
 
@@ -755,22 +1020,39 @@ public class HostedChitService {
     }
 
     /**
-     * The installment goes into the collection account and is owed to the members (Hosted Chit Funds); late interest
-     * is the organiser's income (commission category), kept in the commission account when there is one.
+     * The account a payment came into: the one given (checked), else the chit's collections account. Only when the
+     * chit posts to the books; otherwise nothing is recorded against an account.
      */
-    private JournalDraft collectionDraft(HostedChit c, HostedChitMember m, HostedChitPayment p) {
+    private Long receivedInto(HostedChit c, Long accountId) {
+        if (!Boolean.TRUE.equals(c.getPostToBooks())) return null;
+        if (accountId == null || accountId.equals(c.getAccountId())) return c.getAccountId();
+        return book.requireMoneyAccount(accountId, c.getId(), "Received into").getId();
+    }
+
+    /**
+     * The installment goes into the account it was received in (the chit's collections account unless another was
+     * picked, a personal bank account included) and is owed to the members (Hosted Chit Funds); every line carries
+     * the chit. Late interest is the organiser's income: kept in the chit's late interest (or commission) account, or,
+     * when the member paid into a personal account, left there as the organiser's own money.
+     */
+    JournalDraft collectionDraft(HostedChit c, HostedChitMember m, HostedChitPayment p) {
         BigDecimal late = Money.nz(p.getLateFee());
+        Long into = p.getAccountId() != null ? p.getAccountId() : c.getAccountId();
+        String direct = p.getPaidToMemberId() == null ? "" : p.getPaidToMemberId().equals(m.getId()) ? " (set off against the payout)"
+                : " (paid directly to " + members.findById(p.getPaidToMemberId()).map(HostedChitMember::getName).orElse("the winner") + ")";
         JournalDraft draft = JournalDraft.of(p.getPaidDate(), VoucherType.HOSTED_CHIT_COLLECTION,
-                        "Chit collection - " + m.getName() + " - " + c.getName() + " month " + p.getMonthNo() + "/" + c.getMonths()
-                                + (late.signum() > 0 ? " (with late interest)" : ""))
-                .debit(c.getAccountId(), p.getAmount(), p.getMode())
-                .credit(fundsAccount().getId(), p.getAmount());
+                        ActivityService.cut("Chit collection - " + m.getName() + " - " + c.getName() + " month " + p.getMonthNo() + "/" + c.getMonths()
+                                + direct + (late.signum() > 0 ? " (with late interest)" : ""), 255))
+                .debit(into, p.getAmount(), HostedChitBookService.legMemo(p.getMode(), p.getReference())).hostedChit(c.getId())
+                .credit(fundsAccount().getId(), p.getAmount()).hostedChit(c.getId());
         if (late.signum() > 0) {
-            Long into = c.getLateFeeAccountId() != null ? c.getLateFeeAccountId()
-                    : c.getCommissionAccountId() != null ? c.getCommissionAccountId() : c.getAccountId();
-            draft.debit(into, late, "Late payment interest")
+            boolean intoBook = accounts.findById(into).map(Account::isChitBook).orElse(true);
+            Long lateInto = !intoBook ? into
+                    : c.getLateFeeAccountId() != null ? c.getLateFeeAccountId()
+                    : c.getCommissionAccountId() != null ? c.getCommissionAccountId() : into;
+            draft.debit(lateInto, late, "Late payment interest").hostedChit(book.tag(lateInto, c.getId(), false))
                     .credit(accountService.systemAccount(DefaultChartOfAccounts.INCOME).getId(), late, "Late payment interest")
-                    .category(lateFeeCategory().getId());
+                    .category(lateFeeCategory().getId()).hostedChit(c.getId());
         }
         return draft.party(m.getName())
                 .reference(p.getReference() == null ? p.getReceiptNo() : ActivityService.cut(p.getReference(), 60))
@@ -781,22 +1063,68 @@ public class HostedChitService {
      * The commission earned: two lines only (Hosted Chit Funds → income), so the journal shows the amount once. When
      * the commission has its own account, moving the money there is a separate transfer ({@link #commissionTransferDraft}).
      */
-    private JournalDraft commissionDraft(HostedChit c, HostedChitMonth month, LocalDate date, BigDecimal commission) {
+    JournalDraft commissionDraft(HostedChit c, HostedChitMonth month, LocalDate date, BigDecimal commission) {
         Long categoryId = c.getCommissionCategoryId() != null ? c.getCommissionCategoryId() : commissionCategory(c).getId();
         return JournalDraft.of(date, VoucherType.INCOME, "Chit commission - " + c.getName() + " month " + month.getMonthNo())
-                .debit(fundsAccount().getId(), commission)
+                .debit(fundsAccount().getId(), commission).hostedChit(c.getId())
                 .credit(accountService.systemAccount(DefaultChartOfAccounts.INCOME).getId(), commission, "Organiser commission")
-                .category(categoryId)
+                .category(categoryId).hostedChit(c.getId())
                 .party(c.getName())
                 .source(SOURCE_COMMISSION, month.getId());
     }
 
-    private JournalDraft commissionTransferDraft(HostedChit c, HostedChitMonth month, LocalDate date, BigDecimal commission) {
-        return JournalDraft.of(date, VoucherType.TRANSFER, "Chit commission to its account - " + c.getName() + " month " + month.getMonthNo())
-                .debit(c.getCommissionAccountId(), commission, "Commission kept")
-                .credit(c.getAccountId(), commission)
+    /** The month's commission entry: income when positive, a reversal of commission income when negative. */
+    JournalDraft commissionEntryDraft(HostedChit c, HostedChitMonth month, LocalDate date, BigDecimal commission) {
+        return commission.signum() >= 0 ? commissionDraft(c, month, date, commission) : negativeCommissionDraft(c, month, date, commission.negate());
+    }
+
+    /**
+     * A planned chit's month that pays the winner more than was collected: the organiser gives back that much of the
+     * commission (Dr commission income / Cr Hosted Chit Funds), so the members' funds come back to zero and the
+     * commission over the chit is the true net. The money itself went to the winner as a payout part, by default
+     * from the commission account.
+     */
+    JournalDraft negativeCommissionDraft(HostedChit c, HostedChitMonth month, LocalDate date, BigDecimal shortfall) {
+        Long categoryId = c.getCommissionCategoryId() != null ? c.getCommissionCategoryId() : commissionCategory(c).getId();
+        return JournalDraft.of(date, VoucherType.JOURNAL, "Chit commission given back - " + c.getName() + " month " + month.getMonthNo()
+                        + " (the payout is more than the collection)")
+                .debit(accountService.systemAccount(DefaultChartOfAccounts.INCOME).getId(), shortfall, "Commission paid out to the winner")
+                .category(categoryId).hostedChit(c.getId())
+                .credit(fundsAccount().getId(), shortfall).hostedChit(c.getId())
                 .party(c.getName())
                 .source(SOURCE_COMMISSION, month.getId());
+    }
+
+    /**
+     * Moves the commission into its account, out of the collections account (or the account picked at the payout).
+     * The money leaving is the chit's; on arrival it is the organiser's (untagged when that is a personal account).
+     */
+    JournalDraft commissionTransferDraft(HostedChit c, HostedChitMonth month, LocalDate date, BigDecimal commission) {
+        Long from = month.getCommissionFromAccountId() != null ? month.getCommissionFromAccountId() : c.getAccountId();
+        return JournalDraft.of(date, VoucherType.TRANSFER, "Chit commission to its account - " + c.getName() + " month " + month.getMonthNo())
+                .debit(c.getCommissionAccountId(), commission, "Commission kept").hostedChit(book.tag(c.getCommissionAccountId(), c.getId(), false))
+                .credit(from, commission).hostedChit(c.getId())
+                .party(c.getName())
+                .source(SOURCE_COMMISSION, month.getId());
+    }
+
+    /**
+     * The payout: Hosted Chit Funds down by the payout, and each account it was paid from down by its part (the
+     * chit's money, whichever account it is in). One entry, one credit line per account with its mode and reference.
+     */
+    JournalDraft payoutDraft(HostedChit c, HostedChitMonth month, HostedChitMember winner, List<HostedChitLeg> parts) {
+        String of = " (" + c.getName() + " month " + month.getMonthNo() + "/" + c.getMonths() + ")";
+        JournalDraft draft = JournalDraft.of(month.getPayoutDate(), VoucherType.HOSTED_CHIT_PAYOUT, "Chit payout - " + winner.getName() + of
+                        + (parts.size() > 1 ? " from " + parts.size() + " accounts" : ""))
+                .debit(fundsAccount().getId(), month.getPayoutAmount(), month.getPayoutTo() == null ? null : "To " + month.getPayoutTo())
+                .hostedChit(c.getId());
+        for (HostedChitLeg leg : parts) {
+            draft.credit(leg.getAccountId(), leg.getAmount(), HostedChitBookService.legMemo(leg.getMode(), leg.getReference()))
+                    .hostedChit(c.getId());
+        }
+        return draft.party(winner.getName())
+                .reference(month.getPayoutReference())
+                .source(SOURCE_PAYOUT, month.getId());
     }
 
     private static boolean separateCommission(HostedChit c) {
@@ -825,6 +1153,77 @@ public class HostedChitService {
             repaired++;
         }
         return repaired;
+    }
+
+    /**
+     * Brings one chit's records into the chit book (idempotent, run at startup): payments get the account they came
+     * into, payouts their leg (all of it from the collections account), and the journal entries posted before lines
+     * carried the chit are posted again with it (same numbers). Returns how many records changed.
+     */
+    @Transactional
+    public int migrateChit(Long chitId) {
+        HostedChit c = require(chitId);
+        if (!Boolean.TRUE.equals(c.getPostToBooks())) return 0;
+        int changed = 0;
+        Map<Long, HostedChitMember> memberById = members.findByChitId(chitId).stream()
+                .collect(Collectors.toMap(HostedChitMember::getId, Function.identity()));
+        for (HostedChitPayment p : payments.findByChitId(chitId)) {
+            boolean dirty = false;
+            if (p.getAccountId() == null && c.getAccountId() != null && p.getJournalEntryId() != null) {
+                p.setAccountId(lines.findByJournalEntryId(p.getJournalEntryId()).stream().filter(l -> l.getDebit().signum() > 0)
+                        .map(com.aditya.personalbudget.domain.entity.JournalLine::getAccountId).findFirst().orElse(c.getAccountId()));
+                dirty = true;
+            }
+            if (p.getJournalEntryId() != null && !tagged(p.getJournalEntryId())) {
+                ledger.repost(p.getJournalEntryId(), collectionDraft(c, memberById.get(p.getMemberId()), p));
+                dirty = true;
+            }
+            if (dirty) {
+                payments.save(p);
+                changed++;
+            }
+        }
+        for (HostedChitMonth m : months.findByChitId(chitId)) {
+            if (m.getPayoutDate() == null) continue;
+            List<HostedChitLeg> parts = legs.findByMonthId(m.getId());
+            if (parts.isEmpty() && Money.isPositive(m.getPayoutAmount()) && m.getPayoutEntryId() != null) {
+                Long from = lines.findByJournalEntryId(m.getPayoutEntryId()).stream().filter(l -> l.getCredit().signum() > 0)
+                        .map(com.aditya.personalbudget.domain.entity.JournalLine::getAccountId).findFirst().orElse(c.getAccountId());
+                HostedChitLeg leg = new HostedChitLeg();
+                leg.setTenantId(c.getTenantId());
+                leg.setChitId(c.getId());
+                leg.setMonthId(m.getId());
+                leg.setAccountId(from);
+                leg.setAmount(m.getPayoutAmount());
+                leg.setMode(m.getPayoutMode() != null ? m.getPayoutMode() : "Bank");
+                leg.setReference(m.getPayoutReference());
+                leg.setPosition(1);
+                parts = List.of(legs.save(leg));
+                changed++;
+            }
+            if (m.getPayoutEntryId() != null && !tagged(m.getPayoutEntryId()) && m.getWinnerMemberId() != null) {
+                ledger.repost(m.getPayoutEntryId(), payoutDraft(c, m, memberById.get(m.getWinnerMemberId()), parts));
+                changed++;
+            }
+            if (m.getCommissionEntryId() != null && !tagged(m.getCommissionEntryId()) && Money.nz(m.getCommissionAmount()).signum() != 0) {
+                ledger.repost(m.getCommissionEntryId(), commissionEntryDraft(c, m, m.getPayoutDate(), m.getCommissionAmount()));
+                changed++;
+            }
+            if (m.getCommissionTransferEntryId() != null && !tagged(m.getCommissionTransferEntryId()) && separateCommission(c)) {
+                ledger.repost(m.getCommissionTransferEntryId(), commissionTransferDraft(c, m, m.getPayoutDate(), m.getCommissionAmount()));
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /** Ids of the tenant's hosted chits (for the startup migration). */
+    public List<Long> chitIds() {
+        return chits.findByTenantId(UserContext.tenantId()).stream().map(HostedChit::getId).toList();
+    }
+
+    private boolean tagged(Long entryId) {
+        return lines.findByJournalEntryId(entryId).stream().anyMatch(l -> l.getHostedChitId() != null);
     }
 
     /** Late interest settled (collected or let off) must not exceed what has accrued, unless confirmed. */
@@ -858,6 +1257,7 @@ public class HostedChitService {
         if (auction(c) && month.getBidAmount() != null && hasPayments(calc, monthNo)) {
             throw new BusinessException("Payments for month " + monthNo + " were collected with the dividend of this auction; undo them before changing the auction");
         }
+        requireNoDirect(calc, month, member.getId());
         month.setWinnerMemberId(member.getId());
         if (auction(c)) {
             long left = calc.memberList.stream().filter(m -> calc.wonMonth(m.getId()) == null || calc.wonMonth(m.getId()) == monthNo).count();
@@ -892,6 +1292,7 @@ public class HostedChitService {
         if (auction(c) && hasPayments(calc, monthNo)) {
             throw new BusinessException("Payments for month " + monthNo + " were collected with this auction's dividend; undo them before removing the auction");
         }
+        requireNoDirect(calc, month, null);
         month.setWinnerMemberId(null);
         month.setDrawMethod(null);
         month.setBidAmount(null);
@@ -935,26 +1336,37 @@ public class HostedChitService {
             throw new BusinessException("The payout date is before the chit starts (" + c.getStartMonth() + ")");
         }
         BigDecimal value = calc.chitValue(monthNo);
-        BigDecimal commission = c.getCommission().min(value);
-        BigDecimal payout = auction(c) ? value.subtract(Money.nz(month.getBidAmount())) : value.subtract(commission);
+        BigDecimal payout = payoutOf(c, calc, month);
+        // planned chits: what was collected less the payout, negative when the payout is more than the collection
+        BigDecimal commission = planned(c) ? value.subtract(payout) : c.getCommission().min(value);
         LocalDate date = r.payoutDate() != null ? r.payoutDate() : LocalDate.now();
+        List<HostedChitLeg> parts = payoutLegs(c, month, payout, r, commission);
         month.setPayoutAmount(payout);
         month.setCommissionAmount(commission);
         month.setPayoutDate(date);
-        month.setPayoutMode(mode(r.mode()));
-        month.setPayoutReference(blank(r.reference()));
+        month.setPayoutMode(parts.stream().map(HostedChitLeg::getMode).filter(m -> !DIRECT_MODE.equals(m)).findFirst()
+                .orElse(parts.isEmpty() ? mode(r.mode()) : DIRECT_MODE));
+        month.setPayoutReference(payoutReference(r.reference(), parts));
+        month.setPayoutTo(blank(r.payoutTo()) != null ? ActivityService.cut(r.payoutTo().trim(), 120) : winner.getPayoutAccount());
+        month.setCommissionFromAccountId(null);
+        if (Boolean.TRUE.equals(c.getPostToBooks()) && separateCommission(c) && r.commissionFromAccountId() != null
+                && !r.commissionFromAccountId().equals(c.getAccountId())) {
+            Long from = book.requireMoneyAccount(r.commissionFromAccountId(), c.getId(), "Commission from").getId();
+            if (from.equals(c.getCommissionAccountId())) {
+                throw new BusinessException("The commission is already in its own account; move it from the account that holds the collections");
+            }
+            month.setCommissionFromAccountId(from);
+        }
+        months.save(month);
+        if (!parts.isEmpty()) {
+            legs.saveAll(parts);
+        }
         if (Boolean.TRUE.equals(c.getPostToBooks())) {
-            Long funds = fundsAccount().getId();
-            String of = " (" + c.getName() + " month " + monthNo + "/" + c.getMonths() + ")";
-            JournalEntry paid = ledger.post(JournalDraft.of(date, VoucherType.HOSTED_CHIT_PAYOUT, "Chit payout - " + winner.getName() + of)
-                    .debit(funds, payout)
-                    .credit(c.getAccountId(), payout, month.getPayoutMode())
-                    .party(winner.getName())
-                    .source(SOURCE_PAYOUT, month.getId()));
+            JournalEntry paid = ledger.post(payoutDraft(c, month, winner, parts));
             month.setPayoutEntryId(paid.getId());
-            if (commission.signum() > 0) {
-                month.setCommissionEntryId(ledger.post(commissionDraft(c, month, date, commission)).getId());
-                if (separateCommission(c)) {
+            if (commission.signum() != 0) {
+                month.setCommissionEntryId(ledger.post(commissionEntryDraft(c, month, date, commission)).getId());
+                if (commission.signum() > 0 && separateCommission(c)) {
                     month.setCommissionTransferEntryId(ledger.post(commissionTransferDraft(c, month, date, commission)).getId());
                 }
             }
@@ -968,9 +1380,81 @@ public class HostedChitService {
             makeAgreement(c, month, winner, r.guarantorName(), r.guarantorPhone(), null);
         }
         activity.record("POSTED", AREA, "Paid out · " + winner.getName() + " · " + c.getName() + " month " + monthNo + " · "
-                + ActivityService.money(payout) + " · commission " + ActivityService.money(commission)
+                + ActivityService.money(payout) + (parts.size() > 1 ? " from " + parts.size() + " accounts" : "")
+                + " · commission " + ActivityService.money(commission)
                 + (unpaid > 0 ? " · closed with " + ActivityService.money(dues) + " due" : ""));
         return detail(chitId);
+    }
+
+    /**
+     * The accounts the payout comes from (not yet saved). Without legs in the request: all of it from the chit's
+     * collections account. With legs: each account once, and together exactly the payout.
+     */
+    private List<HostedChitLeg> payoutLegs(HostedChit c, HostedChitMonth month, BigDecimal payout, PayoutRequest r, BigDecimal commission) {
+        if (!Boolean.TRUE.equals(c.getPostToBooks())) return List.of();
+        // what members paid the winner directly is already with the winner: that part comes out of the clearing account
+        List<HostedChitPayment> direct = payments.findByChitId(c.getId()).stream()
+                .filter(p -> p.getMonthNo().equals(month.getMonthNo()) && month.getWinnerMemberId().equals(p.getPaidToMemberId())).toList();
+        BigDecimal directTotal = direct.stream().map(HostedChitPayment::getAmount).reduce(Money.ZERO, BigDecimal::add);
+        BigDecimal rest = payout.subtract(directTotal);
+        // a negative commission (planned chits): the part above the collection comes out of the commission account
+        BigDecimal shortfall = commission.signum() < 0 && c.getCommissionAccountId() != null ? commission.negate().min(rest) : Money.ZERO;
+        List<LegInput> defaults = new ArrayList<>();
+        if (rest.subtract(shortfall).signum() > 0) defaults.add(new LegInput(c.getAccountId(), rest.subtract(shortfall), r.mode(), r.reference()));
+        if (shortfall.signum() > 0) defaults.add(new LegInput(c.getCommissionAccountId(), shortfall, r.mode(), null));
+        List<LegInput> input = r.legs() == null || r.legs().isEmpty() ? defaults : r.legs();
+        List<HostedChitLeg> out = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        BigDecimal total = Money.ZERO;
+        if (directTotal.signum() > 0) {
+            HostedChitLeg leg = new HostedChitLeg();
+            leg.setTenantId(c.getTenantId());
+            leg.setChitId(c.getId());
+            leg.setMonthId(month.getId());
+            leg.setAccountId(book.directAccount().getId());
+            leg.setAmount(directTotal);
+            leg.setMode(DIRECT_MODE);
+            leg.setReference(ActivityService.cut(direct.size() + " member payment" + (direct.size() == 1 ? "" : "s") + " made to the winner", 60));
+            leg.setPosition(1);
+            seen.add(leg.getAccountId());
+            total = total.add(directTotal);
+            out.add(leg);
+        }
+        for (LegInput l : input) {
+            Account a = book.requireMoneyAccount(l.accountId(), c.getId(), "Paid from");
+            if (!seen.add(a.getId())) {
+                throw new BusinessException(a.getName() + " is listed twice; put its whole part on one line");
+            }
+            HostedChitLeg leg = new HostedChitLeg();
+            leg.setTenantId(c.getTenantId());
+            leg.setChitId(c.getId());
+            leg.setMonthId(month.getId());
+            leg.setAccountId(a.getId());
+            leg.setAmount(Money.round(l.amount()));
+            leg.setMode(mode(l.mode() != null ? l.mode() : r.mode()));
+            leg.setReference(blank(l.reference()));
+            leg.setPosition(out.size() + 1);
+            total = total.add(leg.getAmount());
+            out.add(leg);
+        }
+        if (total.compareTo(payout) != 0) {
+            throw new BusinessException((directTotal.signum() > 0 ? "With the " + ActivityService.money(directTotal) + " members paid the winner directly, the accounts add up to "
+                    : "The accounts add up to ") + ActivityService.money(total) + ", but the winner gets "
+                    + ActivityService.money(payout) + (total.compareTo(payout) < 0 ? " (" + ActivityService.money(payout.subtract(total)) + " short)"
+                    : " (" + ActivityService.money(total.subtract(payout)) + " too much)"));
+        }
+        return out;
+    }
+
+    /** The mode of the payout part members paid the winner directly. */
+    static final String DIRECT_MODE = "Direct";
+
+    /** The payout's reference: the one given, else the parts' references ("UTR1, UTR2"). */
+    private static String payoutReference(String given, List<HostedChitLeg> parts) {
+        if (blank(given) != null) return ActivityService.cut(given.trim(), 60);
+        String joined = parts.stream().filter(l -> !DIRECT_MODE.equals(l.getMode())).map(HostedChitLeg::getReference)
+                .filter(Objects::nonNull).collect(Collectors.joining(", "));
+        return joined.isEmpty() ? null : ActivityService.cut(joined, 60);
     }
 
     /** Undoes the payout of the last closed month (and the journal entries it posted). */
@@ -1001,10 +1485,13 @@ public class HostedChitService {
         month.setPayoutDate(null);
         month.setPayoutMode(null);
         month.setPayoutReference(null);
+        month.setPayoutTo(null);
+        month.setCommissionFromAccountId(null);
         month.setPayoutEntryId(null);
         month.setCommissionEntryId(null);
         month.setCommissionTransferEntryId(null);
         months.save(month);   // release the foreign keys before deleting the journal
+        legs.deleteAll(legs.findByMonthId(month.getId()));
         journal.forEach(ledger::delete);
         if (HostedChit.COMPLETED.equals(c.getStatus())) {
             c.setStatus(HostedChit.ACTIVE);
@@ -1079,7 +1566,7 @@ public class HostedChitService {
         BigDecimal remainingAmount = Money.ZERO;
         for (int no = month.getMonthNo() + 1; no <= c.getMonths(); no++) {
             // the extra a winner pays counts from the next month; auction months not yet held count in full
-            remainingAmount = remainingAmount.add(auction(c) ? c.getInstallment() : c.getInstallment().add(winnerExtra(c)));
+            remainingAmount = remainingAmount.add(planned(c) ? calc.installmentOf(no) : auction(c) ? c.getInstallment() : c.getInstallment().add(winnerExtra(c)));
         }
         a.setMemberId(winner.getId());
         a.setChitValue(calc.chitValue(month.getMonthNo()));
@@ -1114,16 +1601,26 @@ public class HostedChitService {
                 .append(") run by ").append(organiser).append(" (").append(household).append("), confirm that I won month ")
                 .append(a.getMonthNo()).append(" of ").append(c.getMonths()).append(auction(c) ? " in the auction with a bid of "
                         + ActivityService.money(a.getDeduction()) : "").append(".\n");
+        HostedChitMonth paidMonth = months.findByChitId(c.getId()).stream().filter(m -> m.getMonthNo().equals(a.getMonthNo())).findFirst().orElse(null);
+        List<HostedChitLeg> parts = paidMonth == null ? List.of() : legs.findByMonthId(paidMonth.getId()).stream()
+                .sorted(Comparator.comparing(HostedChitLeg::getPosition)).toList();
         t.append("2. I have received ").append(rupees).append(" (").append(inWords(a.getPayoutAmount())).append(")")
                 .append(a.getPayoutDate() != null ? " on " + a.getPayoutDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")) : "")
-                .append(a.getPayoutMode() != null ? " by " + a.getPayoutMode() : "")
-                .append(a.getPayoutReference() != null ? " (reference " + a.getPayoutReference() + ")" : "")
-                .append(" as my prize amount in full, being the chit value less ")
-                .append(auction(c) ? "my winning bid" : "the organiser's commission").append(".\n");
+                .append(parts.size() > 1
+                        ? " in " + parts.size() + " parts (" + parts.stream().map(l -> DIRECT_MODE.equals(l.getMode())
+                            ? ActivityService.money(l.getAmount()) + " paid to me directly by the other members"
+                            : ActivityService.money(l.getAmount()) + " by " + l.getMode()
+                            + (l.getReference() != null ? ", reference " + l.getReference() : "")).collect(Collectors.joining("; ")) + ")"
+                        : (a.getPayoutMode() != null ? " by " + a.getPayoutMode() : "")
+                            + (a.getPayoutReference() != null ? " (reference " + a.getPayoutReference() + ")" : ""))
+                .append(paidMonth != null && paidMonth.getPayoutTo() != null ? " into " + paidMonth.getPayoutTo() : "")
+                .append(planned(c) ? " as my prize amount for month " + a.getMonthNo() + " in full, as set in the chit table"
+                        : " as my prize amount in full, being the chit value less " + (auction(c) ? "my winning bid" : "the organiser's commission")).append(".\n");
         if (a.getRemainingInstallments() > 0) {
             t.append("3. I agree to keep paying my monthly installment for the remaining ").append(a.getRemainingInstallments())
                     .append(" month(s), up to the end of the chit, by the ").append(ordinal(c.getDueDay())).append(" of every month: ")
-                    .append(auction(c) ? ActivityService.money(c.getInstallment()) + " less that month's dividend"
+                    .append(planned(c) ? "as set in the chit table"
+                            : auction(c) ? ActivityService.money(c.getInstallment()) + " less that month's dividend"
                             : ActivityService.money(c.getInstallment().add(winnerExtra(c))) + (winnerExtra(c).signum() > 0
                                 ? " (" + ActivityService.money(c.getInstallment()) + " plus " + ActivityService.money(winnerExtra(c)) + " as a past winner)" : ""))
                     .append(", about ").append(ActivityService.money(a.getRemainingAmount())).append(" in all.\n");
@@ -1330,6 +1827,21 @@ public class HostedChitService {
                 .orElseThrow(() -> new NotFoundException("Payment", paymentId));
     }
 
+    /** The winner cannot change while members have paid the current winner directly. */
+    private static void requireNoDirect(Calc calc, HostedChitMonth month, Long keepWinner) {
+        if (month.getWinnerMemberId() == null || month.getWinnerMemberId().equals(keepWinner)) return;
+        long direct = calc.paymentList.stream().filter(p -> p.getMonthNo().equals(month.getMonthNo())
+                && month.getWinnerMemberId().equals(p.getPaidToMemberId())).count();
+        if (direct > 0) {
+            throw new BusinessException(direct + " payment" + (direct == 1 ? " was" : "s were") + " made directly to the winner of month "
+                    + month.getMonthNo() + "; undo " + (direct == 1 ? "it" : "them") + " before changing the winner");
+        }
+    }
+
+    private boolean directAccountId(Long accountId) {
+        return accountId != null && accounts.findById(accountId).map(a -> Account.ROLE_DIRECT.equals(a.getChitRole())).orElse(false);
+    }
+
     private static boolean hasPayments(Calc calc, int monthNo) {
         return calc.paymentList.stream().anyMatch(p -> p.getMonthNo() == monthNo);
     }
@@ -1347,7 +1859,8 @@ public class HostedChitService {
             if (!seen.add(name.toLowerCase(java.util.Locale.ROOT))) {
                 throw new BusinessException("Two members are called \"" + name + "\"; add a surname or an initial");
             }
-            out.add(new MemberInput(name, cleanPhone(m.phone(), name), m.email() == null || m.email().isBlank() ? null : m.email().trim()));
+            out.add(new MemberInput(name, cleanPhone(m.phone(), name), m.email() == null || m.email().isBlank() ? null : m.email().trim(),
+                    m.payoutAccount() == null || m.payoutAccount().isBlank() ? null : m.payoutAccount().trim()));
         }
         return out;
     }
@@ -1405,13 +1918,7 @@ public class HostedChitService {
 
     /** The liability that holds the members' money between collection and payout (created on first use). */
     private Account fundsAccount() {
-        Long tenantId = UserContext.tenantId();
-        return accounts.findByTenantId(tenantId).stream()
-                .filter(a -> Boolean.TRUE.equals(a.getSystemAccount()) && a.getAccountClass() == AccountClass.LIABILITY
-                        && FUNDS_ACCOUNT.equals(a.getName()))
-                .findFirst()
-                .orElseGet(() -> accountService.createInternal(FUNDS_ACCOUNT, AccountType.OTHER_LIABILITY,
-                        "Members' money collected in chits you run, until it is paid out", true));
+        return book.fundsAccount();
     }
 
     /**
@@ -1437,6 +1944,15 @@ public class HostedChitService {
 
     static boolean auction(HostedChit c) {
         return HostedChit.TYPE_AUCTION.equals(c.getChitType());
+    }
+
+    static boolean planned(HostedChit c) {
+        return HostedChit.TYPE_PLANNED.equals(c.getChitType());
+    }
+
+    /** FIXED, AUCTION or PLANNED (older chits without a type are fixed). */
+    static String typeOf(HostedChit c) {
+        return auction(c) ? HostedChit.TYPE_AUCTION : planned(c) ? HostedChit.TYPE_PLANNED : HostedChit.TYPE_FIXED;
     }
 
     /** Auction chits: the highest bid allowed (maxBidPercent of the chit value). */
@@ -1484,8 +2000,22 @@ public class HostedChitService {
             return won.get(memberId);
         }
 
+        /** Planned chits: what each member pays in a month (the chit table). */
+        BigDecimal installmentOf(int monthNo) {
+            HostedChitMonth m = monthList.stream().filter(x -> x.getMonthNo() == monthNo).findFirst().orElse(null);
+            if (m != null && m.getPlannedInstallment() != null) return m.getPlannedInstallment();
+            return c.getInstallment().add(Money.nz(c.getInstallmentIncrement()).multiply(BigDecimal.valueOf(monthNo - 1L)));
+        }
+
+        /** Planned chits: the month's commission (collected less the payout; negative when it pays out more). */
+        BigDecimal plannedCommission(int monthNo) {
+            HostedChitMonth m = month(monthNo);
+            return chitValue(monthNo).subtract(Money.nz(m.getPlannedPayout()));
+        }
+
         /** What a member owes for a month: the installment, plus the winner extra in months after their win. */
         BigDecimal due(Long memberId, int monthNo) {
+            if (planned(c)) return installmentOf(monthNo);
             if (auction(c)) return c.getInstallment().subtract(dividend(monthNo));
             Integer w = won.get(memberId);
             return w != null && w < monthNo ? c.getInstallment().add(winnerExtra(c)) : c.getInstallment();
@@ -1545,6 +2075,7 @@ public class HostedChitService {
         }
 
         BigDecimal chitValue(int monthNo) {
+            if (planned(c)) return installmentOf(monthNo).multiply(BigDecimal.valueOf(c.getMemberCount()));
             return auction(c) ? c.getBaseValue() : c.getBaseValue().add(c.getMonthlyIncrement().multiply(BigDecimal.valueOf(monthNo - 1L)));
         }
 
@@ -1618,8 +2149,9 @@ public class HostedChitService {
                     }
                 }
             }
-            return new ChitView(c.getId(), c.getName(), auction(c) ? HostedChit.TYPE_AUCTION : HostedChit.TYPE_FIXED, c.getStartMonth(), c.getDueDay(), c.getMemberCount(), c.getMonths(),
-                    c.getInstallment(), c.getBaseValue(), c.getMonthlyIncrement(), c.getCommission(),
+            return new ChitView(c.getId(), c.getName(), typeOf(c), c.getStartMonth(), c.getDueDay(), c.getMemberCount(), c.getMonths(),
+                    planned(c) ? installmentOf(shown) : c.getInstallment(), c.getBaseValue(), c.getMonthlyIncrement(),
+                    planned(c) ? plannedCommission(shown) : c.getCommission(),
                     extraType(c), Money.nz(c.getWinnerExtraValue()), winnerExtra(c),
                     auction(c) ? c.getMaxBidPercent() : null, auction(c) ? c.getCommission() : null, auction(c) ? maxBid(c) : null,
                     c.getLateFeePercent(), c.getLateGraceDays() == null ? 0 : c.getLateGraceDays(), c.getUpiId(), c.getPayeeName(),
@@ -1634,7 +2166,8 @@ public class HostedChitService {
                     (int) memberList.stream().filter(m -> paid(m.getId(), shown).compareTo(due(m.getId(), shown)) >= 0).count(),
                     totalCollected, paidOut, commission, pending, pendingCount,
                     totalCollected.subtract(paidOut).subtract(commission), next, locked,
-                    c.getCreatedBy(), c.getCreatedAt(), c.getVersion());
+                    c.getCreatedBy(), c.getCreatedAt(), c.getVersion(), Money.nz(c.getInstallmentIncrement()),
+                    !today.isBefore(c.getStartMonth()) || locked);
         }
 
         Detail detail() {
@@ -1649,26 +2182,30 @@ public class HostedChitService {
             entries.findAllById(entryIds).forEach(e -> entryNos.put(e.getId(), e.getEntryNo()));
 
             List<MemberView> memberViews = memberList.stream().map(m -> new MemberView(m.getId(), m.getSlot(), m.getName(), m.getPhone(), m.getEmail(),
-                    wonMonth(m.getId()),
+                    m.getPayoutAccount(), wonMonth(m.getId()),
                     paid.getOrDefault(m.getId(), Map.of()).values().stream().reduce(Money.ZERO, BigDecimal::add),
                     dues(m.getId()), lateDueOf(m.getId()), m.getVersion())).toList();
 
+            Map<Long, List<LegView>> legsByMonth = book.legsByMonth(c.getId());
+            Map<Long, String> accountNames = new HashMap<>();
+            accounts.findByTenantId(c.getTenantId()).forEach(a -> accountNames.put(a.getId(), a.getName()));
             List<MonthView> schedule = monthList.stream().map(m -> {
                 int no = m.getMonthNo();
                 BigDecimal value = chitValue(no);
                 boolean done = m.getPayoutDate() != null;
-                BigDecimal commission = done ? Money.nz(m.getCommissionAmount()) : c.getCommission();
+                BigDecimal commission = done ? Money.nz(m.getCommissionAmount()) : planned(c) ? plannedCommission(no) : c.getCommission();
                 boolean bidKnown = m.getBidAmount() != null;
-                BigDecimal payout = done ? Money.nz(m.getPayoutAmount())
+                BigDecimal payout = done ? Money.nz(m.getPayoutAmount()) : planned(c) ? Money.nz(m.getPlannedPayout())
                         : auction(c) ? value.subtract(bidKnown ? m.getBidAmount() : c.getCommission()) : value.subtract(c.getCommission());
                 boolean estimated = auction(c) && !done && !bidKnown;
                 int paidCount = (int) memberList.stream().filter(x -> paid(x.getId(), no).compareTo(due(x.getId(), no)) >= 0).count();
                 String status = done ? "COMPLETED" : no == currentMonth ? "ONGOING" : "UPCOMING";
-                return new MonthView(m.getId(), no, dueDate(c, no), c.getInstallment(), value, payout, estimated,
+                return new MonthView(m.getId(), no, dueDate(c, no), planned(c) ? installmentOf(no) : c.getInstallment(), value, payout, estimated,
                         m.getBidAmount(), dividend(no), commission,
                         m.getWinnerMemberId(), names.get(m.getWinnerMemberId()), m.getDrawMethod(), status, due(no),
                         collected(no), expected(no), paidCount, m.getPayoutDate(), m.getPayoutMode(), m.getPayoutReference(),
-                        entryNos.get(m.getPayoutEntryId()), m.getPayoutEntryId(), m.getVersion());
+                        entryNos.get(m.getPayoutEntryId()), m.getPayoutEntryId(), m.getPayoutTo(),
+                        legsByMonth.getOrDefault(m.getId(), List.of()), m.getVersion());
             }).toList();
 
             Map<Long, Integer> files = entryIds.isEmpty() ? Map.of() : attachments.countsByEntry(c.getTenantId());
@@ -1676,7 +2213,8 @@ public class HostedChitService {
                     names.get(p.getMemberId()), p.getMonthNo(), p.getAmount(), p.getLateFee(), p.getLateFeeWaived(), p.getReference(),
                     p.getReceiptNo(), p.getPaidDate(), p.getMode(), p.getNote(), entryNos.get(p.getJournalEntryId()), p.getJournalEntryId(),
                     p.getJournalEntryId() == null ? 0 : files.getOrDefault(p.getJournalEntryId(), 0), p.getCreatedBy(), p.getCreatedAt(),
-                    p.getVersion())).toList();
+                    p.getVersion(), accountOf(p), accountNames.get(accountOf(p)), p.getPaidToMemberId(), names.get(p.getPaidToMemberId()),
+                    p.getBatchId())).toList();
             List<LateFeeView> lateFees = new ArrayList<>();
             if (Money.isPositive(c.getLateFeePercent())) {
                 for (HostedChitMember m : memberList) {
@@ -1693,26 +2231,34 @@ public class HostedChitService {
 
             // the ledger: every collection, payout and commission by date, with what is held after each
             record Line(LocalDate date, int order, String kind, int monthNo, String party, String mode, BigDecimal in, BigDecimal out,
-                        String entryNo, String note, Long paymentId) {
+                        String entryNo, String note, Long paymentId, String account) {
             }
             List<Line> lines = new ArrayList<>();
             paymentList.forEach(p -> {
+                String into = accountNames.get(accountOf(p));
                 if (Money.isPositive(p.getAmount())) {
+                    String direct = p.getPaidToMemberId() == null ? null : p.getPaidToMemberId().equals(p.getMemberId())
+                            ? "Set off against the payout" : "Paid " + names.get(p.getPaidToMemberId()) + " directly";
                     lines.add(new Line(p.getPaidDate(), 0, "COLLECTION", p.getMonthNo(), names.get(p.getMemberId()), p.getMode(), p.getAmount(),
-                            Money.ZERO, entryNos.get(p.getJournalEntryId()), p.getReference() != null ? p.getReference() : p.getNote(), p.getId()));
+                            Money.ZERO, entryNos.get(p.getJournalEntryId()), direct != null ? direct
+                            : p.getReference() != null ? p.getReference() : p.getNote(), p.getId(), into));
                 }
                 if (Money.isPositive(p.getLateFee())) {
                     // late interest is the organiser's: shown, but not part of the members' money held
                     lines.add(new Line(p.getPaidDate(), 0, "LATE_FEE", p.getMonthNo(), names.get(p.getMemberId()), p.getMode(), Money.ZERO,
-                            Money.ZERO, entryNos.get(p.getJournalEntryId()), "Late payment interest " + ActivityService.money(p.getLateFee()), p.getId()));
+                            Money.ZERO, entryNos.get(p.getJournalEntryId()), "Late payment interest " + ActivityService.money(p.getLateFee()), p.getId(), into));
                 }
             });
             monthList.stream().filter(m -> m.getPayoutDate() != null).forEach(m -> {
+                List<LegView> parts = legsByMonth.getOrDefault(m.getId(), List.of());
+                String from = parts.isEmpty() ? accountNames.get(c.getAccountId())
+                        : parts.stream().map(LegView::accountName).collect(Collectors.joining(" + "));
                 lines.add(new Line(m.getPayoutDate(), 1, "PAYOUT", m.getMonthNo(), names.get(m.getWinnerMemberId()), m.getPayoutMode(),
-                        Money.ZERO, Money.nz(m.getPayoutAmount()), entryNos.get(m.getPayoutEntryId()), m.getDrawMethod(), null));
+                        Money.ZERO, Money.nz(m.getPayoutAmount()), entryNos.get(m.getPayoutEntryId()), m.getDrawMethod(), null, from));
                 if (Money.isPositive(m.getCommissionAmount())) {
                     lines.add(new Line(m.getPayoutDate(), 2, "COMMISSION", m.getMonthNo(), "Organiser commission", null,
-                            Money.ZERO, m.getCommissionAmount(), entryNos.get(m.getCommissionEntryId()), null, null));
+                            Money.ZERO, m.getCommissionAmount(), entryNos.get(m.getCommissionEntryId()), null, null,
+                            accountNames.get(c.getCommissionAccountId() != null ? c.getCommissionAccountId() : c.getAccountId())));
                 }
             });
             lines.sort(Comparator.comparing(Line::date).thenComparing(Line::order).thenComparing(Line::monthNo));
@@ -1721,9 +2267,15 @@ public class HostedChitService {
             for (Line l : lines) {
                 held = held.add(l.in()).subtract(l.out());
                 ledgerRows.add(new LedgerRow(l.date(), l.kind(), l.monthNo(), l.party(), l.mode(), l.in(), l.out(), held, l.entryNo(),
-                        l.note(), l.paymentId()));
+                        l.note(), l.paymentId(), l.account()));
             }
-            return new Detail(view(), memberViews, schedule, paymentViews, ledgerRows, lateFees, agreementViews);
+            return new Detail(view(), memberViews, schedule, paymentViews, ledgerRows, lateFees, agreementViews,
+                    book.money(c), book.transfersOf(c.getId()));
+        }
+
+        /** Where a payment came into (older payments: the chit's collections account). */
+        Long accountOf(HostedChitPayment p) {
+            return p.getAccountId() != null ? p.getAccountId() : c.getAccountId();
         }
 
         BigDecimal lateDueOf(Long memberId) {

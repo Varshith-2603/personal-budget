@@ -68,6 +68,10 @@ public final class AccountDtos {
             long transactionCount,
             /* Month-end balances of the last five months plus today's balance (oldest first). */
             List<BigDecimal> trend,
-            Long version) {
+            Long version,
+            /* part of the hosted-chit book (Host a Chit, Chit accounts), not a personal account */
+            boolean chitBook,
+            Long hostedChitId,
+            String chitRole) {
     }
 }

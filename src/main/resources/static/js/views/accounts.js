@@ -6,7 +6,7 @@
  * metrics and its statement (named for the kind of account) shown as a plain list or as a timeline.
  */
 import { api } from '../core/api.js';
-import { loadAccounts, can, state } from '../core/store.js';
+import { loadAccounts, can, state, hasFeature } from '../core/store.js';
 import { panel, esc, field, readForm, openModal, toast, confirmDialog, accountChip, emptyState, loading, table } from '../core/ui.js';
 import { kindChip, entryKind } from '../core/entry-kind.js';
 import { exportButton, bindExport } from '../core/export.js';
@@ -62,8 +62,12 @@ const savePrefs = () => setPref('statement', prefs);
 const toneOf = a => BUCKET_TONE[a.bucket] || (a.accountClass === 'INCOME' ? 'green' : a.accountClass === 'EXPENSE' ? 'coral' : 'slate');
 
 export async function render(container, _params, isCurrent) {
-    const accounts = await loadAccounts(true);
+    const everything = await loadAccounts(true);
     if (!isCurrent()) return;
+    // the hosted-chit book (members' money, Host a Chit) has its own page: only its net counts here, in net worth
+    const accounts = everything.filter(a => !a.chitBook);
+    const chitBook = everything.filter(a => a.chitBook);
+    const bookNet = chitBook.reduce((s, a) => s + (a.accountClass === 'ASSET' ? 1 : a.accountClass === 'LIABILITY' ? -1 : 0) * Number(a.balance), 0);
     Object.assign(prefs, getPref('statement', { grouped: false, groupBy: 'month' }));
 
     const of = cls => accounts.filter(a => a.accountClass === cls);
@@ -103,11 +107,11 @@ export async function render(container, _params, isCurrent) {
             <div class="min-0"><span class="ov-label">${label}</span><b>${value}</b><small>${sub}</small>
                 ${meter !== null ? `<i class="ov-meter"><em style="width:${Math.max(2, Math.min(100, meter))}%"></em></i>` : ''}</div>
         </div>`;
-    const netWorth = assets - liabilities;
+    const netWorth = assets - liabilities + bookNet;
     const topMix = [...mix].sort((a, b) => b.value - a.value).slice(0, 3);
     // net worth at each of the last month-ends (from every account's trend), and the 6-month change
-    const points = Math.max(0, ...accounts.map(a => (a.trend || []).length));
-    const nwTrend = Array.from({ length: points }, (_, i) => accounts.reduce((s, a) => {
+    const points = Math.max(0, ...everything.map(a => (a.trend || []).length));
+    const nwTrend = Array.from({ length: points }, (_, i) => everything.reduce((s, a) => {
         const v = Number((a.trend || [])[i] ?? 0);
         return s + (a.accountClass === 'ASSET' ? v : a.accountClass === 'LIABILITY' ? -v : 0);
     }, 0));
@@ -130,6 +134,7 @@ export async function render(container, _params, isCurrent) {
                 <span title="Cash, bank and wallets">${icon('droplet')}Liquid <b>${moneyShort(liquid)}</b></span>
                 <span title="Funds, chits, gold">${icon('trending')}Invested <b>${moneyShort(invested)}</b></span>
                 <span title="Net worth change over the last 6 months" class="${sixChange >= 0 ? 'up' : 'down'}">${icon('history')}6 mo <b>${sixChange >= 0 ? '+' : '−'}${moneyShort(Math.abs(sixChange))}</b></span>
+                ${chitBook.length && Math.round(bookNet) ? `<span title="Your own money in the hosted chit accounts (commission, late interest, advances); the members' money is not yours and is left out">${icon('hand-coins')}Hosted chits <b>${bookNet >= 0 ? '' : '−'}${moneyShort(Math.abs(bookNet))}</b></span>` : ''}
             </div>
         </section>
         <div class="ov-cards">
@@ -167,7 +172,8 @@ export async function render(container, _params, isCurrent) {
                         `<button class="cf-chip ${view.tab === t.value ? 'active' : ''}" data-tab="${t.value}">${t.value === 'ALL' ? 'All' : t.label}<i>${t.value === 'ALL' ? accounts.filter(a => LISTED.has(a.accountClass)).length : of(t.value).length}</i></button>`).join('')}
                         <label class="switch sm list-group-switch" title="Group the list by assets / liabilities and account type"><input type="checkbox" id="acct-grouped" ${listPrefs.grouped ? 'checked' : ''}><span></span>Group</label></div>
                 </div>
-                <div class="scroll account-list" id="account-list" tabindex="0" aria-label="Accounts, use the arrow keys to move"></div>`,
+                <div class="scroll account-list" id="account-list" tabindex="0" aria-label="Accounts, use the arrow keys to move"></div>
+                ${chitBook.length && hasFeature('CHITS') ? chitBookLink(chitBook) : ''}`,
         })}
         <div class="account-detail" id="account-detail"></div>
     </div>`;
@@ -269,6 +275,19 @@ export async function render(container, _params, isCurrent) {
     const initial = visible().find(a => a.id === view.selectedId) || visible()[0];
     if (initial) select(initial.id);
     else container.querySelector('#account-detail').innerHTML = panel({ title: 'Account', iconName: 'wallet', body: emptyState('Select an account') });
+}
+
+/**
+ * The way to the hosted chits' accounts, under the list: they are kept on their own page (Host a Chit, Chit accounts)
+ * because the money in them is mostly the members'.
+ */
+function chitBookLink(book) {
+    const held = book.filter(a => a.accountClass === 'ASSET').reduce((s, a) => s + Number(a.balance), 0);
+    const owed = book.filter(a => a.accountClass === 'LIABILITY').reduce((s, a) => s + Number(a.balance), 0);
+    return `<a class="chit-book-link" href="#/host-chits/accounts" title="The accounts of the chits you host are kept on their own page">
+        <span class="chip-icon sm gold">${icon('hand-coins')}</span>
+        <span class="min-0 grow"><b>Hosted chit accounts</b><small>${book.filter(a => a.accountClass === 'ASSET').length} accounts · ${moneyShort(held)} held · ${moneyShort(owed)} owed to members</small></span>
+        ${icon('chevron-right')}</a>`;
 }
 
 /** "today", "3d ago", "5w ago", "4mo ago" */

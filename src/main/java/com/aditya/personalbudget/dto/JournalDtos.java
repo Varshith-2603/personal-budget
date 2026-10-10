@@ -30,7 +30,9 @@ public final class JournalDtos {
      */
     public record LineView(Long id, Integer lineNo, Long accountId, String accountCode, String accountName,
                            AccountClass accountClass, BigDecimal debit, BigDecimal credit, String memo,
-                           Long categoryId, Long chitId, String ledgerAccountName) {
+                           Long categoryId, Long chitId, String ledgerAccountName,
+                           /* the hosted chit whose money the line moves (Host a Chit) */
+                           Long hostedChitId) {
     }
 
     /** A full journal entry with its lines. */

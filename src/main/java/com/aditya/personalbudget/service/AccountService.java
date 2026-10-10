@@ -308,6 +308,6 @@ public class AccountService {
                 a.getOpeningDate(), a.getInterestRate(), a.getCreditLimit(), a.getMaturityDate(), a.getQuantity(),
                 a.getDescription(), Boolean.TRUE.equals(a.getSystemAccount()), Boolean.TRUE.equals(a.getActive()),
                 balance, monthMove, in, out, change30, utilization, available, daysToMaturity,
-                ReportService.bucket(a.getAccountType()), last, count, trend, a.getVersion());
+                ReportService.bucket(a), last, count, trend, a.getVersion(), a.isChitBook(), a.getHostedChitId(), a.getChitRole());
     }
 }

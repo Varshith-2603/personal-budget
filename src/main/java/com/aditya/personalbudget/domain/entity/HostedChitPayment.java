@@ -77,6 +77,25 @@ public class HostedChitPayment implements TenantOwned {
     @Column(nullable = false, length = 10)
     private String mode;
 
+    /**
+     * The account the money came into: the chit's collections account, a common chit account or a personal bank
+     * account the member paid into. Empty (older payments): the chit's collections account.
+     */
+    @References(Account.class)
+    private Long accountId;
+
+    /**
+     * The member paid this month's winner directly instead of the organiser (the winner's own installment: set off
+     * against the payout). The money goes through the "Paid directly to winners" clearing account, which the payout
+     * clears.
+     */
+    @References(HostedChitMember.class)
+    private Long paidToMemberId;
+
+    /** Payments recorded together ("Everyone has paid") share an id, so they can be reverted together. */
+    @Column(length = 36)
+    private String batchId;
+
     @Column(length = 255)
     private String note;
 

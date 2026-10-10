@@ -61,8 +61,16 @@ public class HostedChitMonth implements TenantOwned {
     @PositiveOrZero
     private BigDecimal payoutAmount;
 
-    @PositiveOrZero
+    /** The organiser's commission of the month: chit value − payout. Planned chits: negative when the payout is more than is collected. */
     private BigDecimal commissionAmount;
+
+    /** Planned chits: what each member pays this month (the chit table, editable until payments are recorded). */
+    @PositiveOrZero
+    private BigDecimal plannedInstallment;
+
+    /** Planned chits: what this month's winner gets (the chit table, editable until the month is paid out). */
+    @PositiveOrZero
+    private BigDecimal plannedPayout;
 
     private LocalDate payoutDate;
 
@@ -73,6 +81,14 @@ public class HostedChitMonth implements TenantOwned {
     /** UPI reference, cheque or bank transfer number of the payout. */
     @Column(length = 60)
     private String payoutReference;
+
+    /** Where the winner received it: their bank account or UPI ID. The accounts it was paid from are its legs. */
+    @Column(length = 120)
+    private String payoutTo;
+
+    /** The account the commission was moved out of into the commission account (empty: the collections account). */
+    @References(Account.class)
+    private Long commissionFromAccountId;
 
     @References(JournalEntry.class)
     private Long payoutEntryId;

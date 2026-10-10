@@ -17,6 +17,7 @@ import com.aditya.personalbudget.exception.NotFoundException;
 import com.aditya.personalbudget.domain.entity.ClaimRepayment;
 import com.aditya.personalbudget.repository.AccountRepository;
 import com.aditya.personalbudget.repository.ClaimRepaymentRepository;
+import com.aditya.personalbudget.repository.HostedChitRepository;
 import com.aditya.personalbudget.repository.JournalEntryRepository;
 import com.aditya.personalbudget.repository.JournalLineRepository;
 import com.aditya.personalbudget.security.UserContext;
@@ -73,11 +74,14 @@ public class LedgerService {
     private final com.aditya.personalbudget.repository.ClaimInterestPostingRepository interestPostings;
     private final CategoryRepository categories;
     private final ChitRepository chits;
+    private final HostedChitRepository hostedChits;
 
     public LedgerService(AccountRepository accounts, JournalEntryRepository entries, JournalLineRepository lines,
                          ClaimRepaymentRepository repayments, CategoryRepository categories, ChitRepository chits,
                          com.aditya.personalbudget.repository.ClaimInterestPostingRepository interestPostings,
-                         com.aditya.personalbudget.repository.AttachmentRepository attachments, AttachmentService attachmentService) {
+                         com.aditya.personalbudget.repository.AttachmentRepository attachments, AttachmentService attachmentService,
+                         HostedChitRepository hostedChits) {
+        this.hostedChits = hostedChits;
         this.attachments = attachments;
         this.attachmentService = attachmentService;
         this.interestPostings = interestPostings;
@@ -209,7 +213,7 @@ public class LedgerService {
                                 : l.getChitId() != null ? chitName.getOrDefault(l.getChitId(), a.getName()) : a.getName();
                         return new LineView(l.getId(), l.getLineNo(), l.getAccountId(), a.getCode(), shown,
                                 a.getAccountClass(), l.getDebit(), l.getCredit(), l.getMemo(),
-                                l.getCategoryId(), l.getChitId(), a.getName());
+                                l.getCategoryId(), l.getChitId(), a.getName(), l.getHostedChitId());
                     })
                     .toList();
             Lock lock = lockOf(e, reversals, numbers);
@@ -244,6 +248,8 @@ public class LedgerService {
                     new Lock("Chit posting. Undo it from the Chits screen.", "chits", false, reversedBy, null);
             case HostedChitService.SOURCE_COLLECTION, HostedChitService.SOURCE_PAYOUT, HostedChitService.SOURCE_COMMISSION ->
                     new Lock("Posted from a chit you host. Edit or undo it on Host a Chit.", "host-chits", false, reversedBy, null);
+            case HostedChitBookService.SOURCE_TRANSFER ->
+                    new Lock("A chit transfer. Edit or undo it on Host a Chit, Chit accounts.", "host-chits/accounts", false, reversedBy, null);
             case SOURCE_CLAIM, SOURCE_CLAIM_REPAYMENT, SOURCE_CLAIM_INTEREST ->
                     new Lock("Money lent, borrowed or its interest. Manage it from Expenses.", "expenses", false, reversedBy, null);
             case SOURCE_REFUND ->
@@ -302,7 +308,8 @@ public class LedgerService {
                 .reference(original.getReference())
                 .source(SOURCE_REVERSAL, original.getId());
         for (JournalLine l : lines.findByJournalEntryId(original.getId())) {
-            draft.line(new JournalDraft.Line(l.getAccountId(), l.getCategoryId(), l.getChitId(), l.getCredit(), l.getDebit(), l.getMemo()));
+            draft.line(new JournalDraft.Line(l.getAccountId(), l.getCategoryId(), l.getChitId(), l.getCredit(), l.getDebit(), l.getMemo(),
+                    l.getHostedChitId()));
         }
         return post(draft);
     }
@@ -362,10 +369,14 @@ public class LedgerService {
                 chitId = chits.findByIdAndTenantId(line.chitId(), tenantId)
                         .orElseThrow(() -> new NotFoundException("Chit", line.chitId())).getId();
             }
+            if (line.hostedChitId() != null && hostedChits.findByIdAndTenantId(line.hostedChitId(), tenantId).isEmpty()) {
+                throw new NotFoundException("Hosted chit", line.hostedChitId());
+            }
             distinct.add(account.getId() + "/" + categoryId + "/" + chitId);
             debit = debit.add(Money.nz(line.debit()));
             credit = credit.add(Money.nz(line.credit()));
-            resolved.add(new JournalDraft.Line(account.getId(), categoryId, chitId, line.debit(), line.credit(), line.memo()));
+            resolved.add(new JournalDraft.Line(account.getId(), categoryId, chitId, line.debit(), line.credit(), line.memo(),
+                    line.hostedChitId()));
         }
         if (distinct.size() < 2) {
             throw new BusinessException("Debit and credit must use different accounts");
@@ -404,6 +415,7 @@ public class LedgerService {
             row.setAccountId(l.accountId());
             row.setCategoryId(l.categoryId());
             row.setChitId(l.chitId());
+            row.setHostedChitId(l.hostedChitId());
             row.setDebit(Money.round(l.debit()));
             row.setCredit(Money.round(l.credit()));
             row.setMemo(l.memo());
