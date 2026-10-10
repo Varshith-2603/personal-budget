@@ -54,8 +54,11 @@ function draw() {
         tip.classList.add('cs-flash');
     }));
     main.querySelector('[data-copy-upi]')?.addEventListener('click', async e => {
-        try { await navigator.clipboard.writeText(ch.upiId); e.target.textContent = 'Copied'; } catch { /* not allowed */ }
+        try { await navigator.clipboard.writeText(payUpi()); e.target.textContent = 'Copied'; } catch { /* not allowed */ }
     });
+    main.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy'; }, 1500); } catch { /* not allowed */ }
+    }));
 }
 
 // ---------------------------------------------------------------- a chit table shared before the chit starts
@@ -118,9 +121,18 @@ function planPage(main, encoded) {
 
 // ---------------------------------------------------------------- member statement (with the payment link)
 
+/** The UPI ID the member pays: the account the organiser picked for them (or the chit), else the chit's own UPI ID. */
+function payUpi() {
+    return ch.payTo ? ch.payTo.upiId : ch.upiId;
+}
+
+function payeeName() {
+    return ch.payTo?.payeeName || ch.payeeName || payUpi();
+}
+
 /** The UPI payment's query string (payee, name, amount, note). */
 function upiQuery(amount) {
-    const params = [['pa', ch.upiId], ['pn', ch.payeeName || ch.upiId], ['am', Number(amount).toFixed(2)], ['cu', 'INR'],
+    const params = [['pa', payUpi()], ['pn', payeeName()], ['am', Number(amount).toFixed(2)], ['cu', 'INR'],
         ['tn', `${ch.name} - ${ch.member.name}`.slice(0, 50)]];
     return params.map(([k, v]) => `${k}=${encodeURIComponent(v).replace(/%40/g, '@')}`).join('&');
 }
@@ -159,21 +171,25 @@ function memberHtml() {
     const overdue = late.reduce((s, x) => s + Number(x.due) - Number(x.paid), 0) + Number(m.lateFeeDue || 0);
     const payNow = Number(m.payNow || 0);
     const phone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    const pay = ch.upiId && payNow > 0 ? `
+    const to = ch.payTo;
+    const bank = to && to.accountNumber ? bankHtml(to, payNow, m) : '';
+    const pay = payUpi() && payNow > 0 ? `
         <section class="sh-card cs-pay">
             <div class="cs-pay-main"><span>Pay now</span><b>${money(payNow)}</b>
-                <small>${Number(m.lateFeeDue) ? `includes ${money(m.lateFeeDue)} late interest · ` : ''}to ${esc(ch.payeeName || ch.upiId)}</small>
+                <small>${Number(m.lateFeeDue) ? `includes ${money(m.lateFeeDue)} late interest · ` : ''}to ${esc(payeeName())}</small>
                 <div class="cs-apps">${UPI_APPS.map(app => {
                     const href = appLink(app, payNow);
                     return href ? `<a class="cs-app ${app.cls}" href="${esc(href)}"><i>${app.short.slice(0, 1)}</i>Pay with ${app.name}</a>`
                         : `<button type="button" class="cs-app ${app.cls}" data-desktop><i>${app.short.slice(0, 1)}</i>${app.name}</button>`;
                 }).join('')}</div>
                 <a class="cs-pay-btn" href="${upiLink(payNow)}">Any UPI app</a>
-                <div class="cs-upi-id"><span>UPI ID <b>${esc(ch.upiId)}</b></span><button type="button" data-copy-upi>Copy</button></div>
+                <div class="cs-upi-id"><span>UPI ID <b>${esc(payUpi())}</b></span><button type="button" data-copy-upi>Copy</button></div>
                 <small id="cs-pay-tip">${phone ? 'Tap your app: the amount and note are filled in. Check the name before you pay.'
-                    : 'On a computer: scan the code with your phone’s UPI app, or open this link on your phone.'}</small></div>
+                    : 'On a computer: scan the code with your phone’s UPI app, or open this link on your phone.'}</small>
+                ${to?.seal ? `<small class="cs-pay-seal">✓ Sealed by ${esc(to.signer || 'the organiser')} · <code>${esc(to.seal.slice(0, 16))}</code></small>` : ''}</div>
             <div class="cs-qr">${qrSvg(upiLink(payNow), { size: 170 })}<small>Scan to pay ${money(payNow)}</small></div>
-        </section>` : '';
+            ${bank ? `<details class="cs-bank-alt"><summary>Pay by bank transfer instead</summary>${bank}</details>` : ''}
+        </section>` : bank ? `<section class="sh-card cs-bank-card">${bank}</section>` : '';
     return `
         <section class="sh-card st-hero">
             ${head(m.name, ch.name)}
@@ -270,6 +286,35 @@ function receiptHtml() {
                 <button class="cs-print" onclick="window.print()">Print</button>
             </div>
         </section>`;
+}
+
+/**
+ * The organiser's bank details for a transfer (NEFT / IMPS / RTGS): each with a copy button, the amount and the
+ * reference to write, signed by the organiser, stamped and sealed (the seal covers every detail and the signature).
+ */
+function bankHtml(to, payNow, m) {
+    const ref = `${ch.name} - ${m.name}`.slice(0, 40);
+    const row = (label, value, copy = value) => `<div class="cs-bank-row"><span>${label}</span><b>${esc(value)}</b>${copy ? `<button type="button" data-copy="${esc(copy)}">Copy</button>` : '<i></i>'}</div>`;
+    return `<div class="cs-bank">
+        <div class="cs-bank-head"><span>${payNow > 0 ? 'Pay by bank transfer' : 'Where to pay'}</span>
+            ${payNow > 0 ? `<b>${money(payNow)}</b>` : ''}<small>NEFT, IMPS or RTGS from any bank account · add these details as a payee</small></div>
+        <div class="cs-bank-rows">
+            ${row('Account holder', to.holderName || to.payeeName || '')}
+            ${to.bankName ? row('Bank', to.bankName, '') : ''}
+            ${row('Account number', to.accountNumber, to.accountNumber.replace(/\s+/g, ''))}
+            ${row('IFSC', to.ifsc)}
+            ${payNow > 0 ? row('Amount', money(payNow), Number(payNow).toFixed(2)) : ''}
+            ${row('Remarks / reference', ref)}
+        </div>
+        <div class="cs-rc-sign cs-bank-sign">
+            <div class="cs-rc-seal"><b>✓ Digitally sealed by the organiser</b>
+                <small>These are the only details to pay this chit into. The seal is worked out from them and the organiser's signature with
+                    the organiser's secret key on ${when(to.sealedAt)}; if anyone sends you different details, or a copy whose seal differs, do not pay: ask the organiser.</small>
+                <code>${esc(to.seal || '')}</code></div>
+            <div class="cs-stamp" aria-hidden="true"><span>${esc((to.stampName || ch.household || '').slice(0, 26))}</span><b>VERIFIED</b><small>${day(String(to.sealedAt).slice(0, 10))}</small></div>
+            <div class="cs-rc-signer">${to.signature ? signatureSvg(to.signature) : ''}<b>${esc(to.signer || ch.sharedBy || '')}</b><small>${to.signature ? 'Digitally signed · organiser' : 'Organiser'}</small></div>
+        </div>
+    </div>`;
 }
 
 // ---------------------------------------------------------------- agreement

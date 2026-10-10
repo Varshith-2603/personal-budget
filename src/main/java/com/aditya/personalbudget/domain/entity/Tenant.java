@@ -55,6 +55,10 @@ public class Tenant implements Identifiable {
     @Column(length = 10)
     private String approvalMode;
 
+    /** Host a Chit: the name the household runs its chits under ("Aditya Chitfunds"); new chits are named after it. */
+    @Column(length = 60)
+    private String chitCompanyName;
+
     /** Optimistic locking: a save based on an older version is rejected. */
     @jakarta.persistence.Version
     private Long version;

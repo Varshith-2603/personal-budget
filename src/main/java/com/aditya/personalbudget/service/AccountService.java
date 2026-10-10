@@ -220,6 +220,7 @@ public class AccountService {
         account.setMaturityDate(r.maturityDate());
         account.setQuantity(r.quantity());
         account.setDescription(r.description());
+        applyBankDetails(account, r);
         account.setActive(r.active() == null || r.active());
 
         boolean balanceSheet = type.getAccountClass() == AccountClass.ASSET
@@ -231,6 +232,52 @@ public class AccountService {
             account.setOpeningBalance(null);
             account.setOpeningDate(r.openingDate());
         }
+    }
+
+    /**
+     * Bank and wallet accounts carry the details chit members pay into: the holder's name, IFSC (banks) and UPI ID,
+     * checked for their form; other kinds of account have none.
+     */
+    private static void applyBankDetails(Account account, AccountRequest r) {
+        boolean bank = account.getAccountType() == AccountType.BANK;
+        boolean wallet = account.getAccountType() == AccountType.WALLET;
+        String holder = clean(r.holderName());
+        String ifsc = clean(r.ifsc()) == null ? null : r.ifsc().trim().toUpperCase();
+        String upi = clean(r.upiId());
+        if (ifsc != null && !ifsc.matches("[A-Z]{4}0[A-Z0-9]{6}")) {
+            throw new BusinessException("The IFSC should look like ICIC0000598 (4 letters, 0, then 6 letters or digits)");
+        }
+        if (upi != null && !upi.matches("[\\w.\\-]{2,}@[A-Za-z][\\w.]{1,}")) {
+            throw new BusinessException("The UPI ID should look like name@bank");
+        }
+        if (r.accountNumber() != null && !r.accountNumber().isBlank() && bank && !r.accountNumber().trim().matches("[A-Za-z0-9 \\-]{4,40}")) {
+            throw new BusinessException("The account number can have letters, digits, spaces and dashes");
+        }
+        account.setHolderName(bank || wallet ? holder : null);
+        account.setIfsc(bank ? ifsc : null);
+        account.setUpiId(bank || wallet ? upi : null);
+    }
+
+    /** Updates only the bank details of a bank or wallet account (e.g. when it is picked for chit members to pay into). */
+    @Transactional
+    public AccountView updateBankDetails(Long id, com.aditya.personalbudget.dto.AccountDtos.BankDetailsRequest r) {
+        Account account = require(id);
+        if (account.getAccountType() != AccountType.BANK && account.getAccountType() != AccountType.WALLET) {
+            throw new BusinessException(account.getName() + " is not a bank or wallet account");
+        }
+        if (r.version() != null && !r.version().equals(account.getVersion())) {
+            throw new BusinessException(account.getName() + " was changed by someone else; reopen it and try again");
+        }
+        account.setInstitution(clean(r.institution()));
+        account.setAccountNumber(clean(r.accountNumber()));
+        applyBankDetails(account, new AccountRequest(account.getCode(), account.getName(), account.getAccountType(), account.getInstitution(),
+                account.getAccountNumber(), null, null, null, null, null, null, null, null, null, r.holderName(), r.ifsc(), r.upiId()));
+        accounts.save(account);
+        return get(id);
+    }
+
+    private static String clean(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     /**
@@ -308,6 +355,7 @@ public class AccountService {
                 a.getOpeningDate(), a.getInterestRate(), a.getCreditLimit(), a.getMaturityDate(), a.getQuantity(),
                 a.getDescription(), Boolean.TRUE.equals(a.getSystemAccount()), Boolean.TRUE.equals(a.getActive()),
                 balance, monthMove, in, out, change30, utilization, available, daysToMaturity,
-                ReportService.bucket(a), last, count, trend, a.getVersion(), a.isChitBook(), a.getHostedChitId(), a.getChitRole());
+                ReportService.bucket(a), last, count, trend, a.getVersion(), a.isChitBook(), a.getHostedChitId(), a.getChitRole(),
+                a.getHolderName(), a.getIfsc(), a.getUpiId());
     }
 }

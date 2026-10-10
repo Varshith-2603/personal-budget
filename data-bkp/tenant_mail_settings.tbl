@@ -1,0 +1,2 @@
+id	tenantId	enabled	host	port	security	username	passwordEnc	fromAddress	fromName	replyTo	updatedBy	updatedAt	testedAt	testResult	version
+1	1	true	smtp.gmail.com	587	STARTTLS	maheshreddy.chinnala@gmail.com	gpf/nKHNVejgTlcYdkuLMSlKv3I5MFx27iyJiRMoQrncc91Q	maheshreddy.chinnala@gmail.com	My Household		admin	2026-10-09T15:18:55.251239100			1

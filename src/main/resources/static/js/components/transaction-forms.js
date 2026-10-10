@@ -6,7 +6,7 @@
  */
 import { api, newRequestKey } from '../core/api.js';
 import { loadAccounts, invalidateAccounts, can, categoriesOf, loadCategories } from '../core/store.js';
-import { openModal, field, readForm, accountOptions, categoryOptions, esc, toast, confirmDialog, table } from '../core/ui.js';
+import { openModal, field, readForm, accountOptions, categoryOptions, esc, toast, confirmDialog, table, narrativeHtml } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, isoDate, date } from '../core/format.js';
 import { evidenceFieldHtml, bindEvidenceField } from './evidence.js';
@@ -272,7 +272,7 @@ export async function openEntryDetail(entryId, { onChanged } = {}) {
             l.ledgerAccountName && l.ledgerAccountName !== l.accountName ? ' · ' + esc(l.ledgerAccountName) : ''}</span>` },
         { label: 'Debit', align: 'r', render: l => Number(l.debit) ? money(l.debit, { decimals: 2 }) : '' },
         { label: 'Credit', align: 'r', render: l => Number(l.credit) ? money(l.credit, { decimals: 2 }) : '' },
-        { label: 'Memo', render: l => esc(l.memo || ''), cls: 'muted' },
+        { label: 'Memo', render: l => narrativeHtml(l.memo || ''), cls: 'muted' },
     ], entry.lines, {
         footer: `<tr class="total"><td>Total</td><td class="r">${money(entry.amount, { decimals: 2 })}</td>
                  <td class="r">${money(entry.amount, { decimals: 2 })}</td><td></td></tr>`,

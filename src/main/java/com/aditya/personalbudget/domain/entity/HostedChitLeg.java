@@ -63,6 +63,14 @@ public class HostedChitLeg implements TenantOwned {
     @Column(length = 60)
     private String reference;
 
+    /** The members' payments this part carries (comma separated ids): where they came in, and on to the payout. */
+    @Column(length = 1000)
+    private String paymentIds;
+
+    /** The narrative: whose payments these are, their receipts and references. */
+    @Column(length = 2000)
+    private String note;
+
     /** Order within the payout or transfer. */
     @Positive
     @Column(nullable = false)

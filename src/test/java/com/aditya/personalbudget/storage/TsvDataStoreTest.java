@@ -71,7 +71,7 @@ class TsvDataStoreTest {
         assertThat(saved.getId()).isEqualTo(1L);
 
         List<String> lines = Files.readAllLines(dataDir.resolve("tenants.tbl"));
-        assertThat(lines.getFirst()).isEqualTo("id\tcode\tname\tcurrency\tactive\tcreatedAt\tapprovalMode\tversion");
+        assertThat(lines.getFirst()).isEqualTo("id\tcode\tname\tcurrency\tactive\tcreatedAt\tapprovalMode\tchitCompanyName\tversion");
         assertThat(lines.get(1)).startsWith("1\thome\tTenant home\tINR\ttrue\t");
 
         open(); // a fresh store reads the file back

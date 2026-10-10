@@ -52,6 +52,10 @@ public class HostedChitMember implements TenantOwned {
     @Column(length = 120)
     private String email;
 
+    /** The organiser's account this member pays into (instead of the chit's): its UPI ID or bank details are on their link. */
+    @References(Account.class)
+    private Long payToAccountId;
+
     /** Where the member takes the payout: bank, account number and IFSC, or a UPI ID. */
     @Column(length = 120)
     private String payoutAccount;

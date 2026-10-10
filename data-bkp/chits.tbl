@@ -1,0 +1,4 @@
+id	tenantId	name	organizer	organizerUpi	upiNote	defaultPaymentAccountId	ticketNo	maturityAmount	monthlyInstallment	numberOfInstallments	startDate	endDate	interestRate	commissionPercent	status	accountId	payoutAmount	payoutDate	closedAt	notes	createdAt	version
+1	1	Surender Chitti(April-2023-October-2025)	Surendar Anna			8		970000.00	25000.00	31	2023-04-10	2025-10-10		5	CLOSED	3	970000.00	2025-10-11	2026-10-09T00:57:29.532405900		2026-10-07T18:31:15.168543	15
+2	1	Surender Chitti(June-2024-December-2026)	Surendar Anna			8		970000.00	25000.00	31	2024-06-10	2026-12-10		0	CLOSED	3	970000.00	2026-10-09	2026-10-09T00:57:58.406925600		2026-10-07T18:36:37.105390100	4
+3	1	Surender Chitti(November-2025-June-2028)	Surendar Anna					970000.00	25000.00	31	2025-11-10	2028-05-10		0	ACTIVE	3					2026-10-07T18:50:55.820161200	2

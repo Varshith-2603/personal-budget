@@ -403,7 +403,8 @@ async function drawDetail(target, account, reload, all = []) {
     const actions = quickActions(account).map(([act, iconName, label, title]) =>
         `<button class="btn sm on-dark" data-act="${act}" title="${esc(title)}">${icon(iconName)}${label}</button>`).join('')
         + (can('MANAGE_ACCOUNTS') ? `<button class="btn sm on-dark icon" data-act="edit" title="Edit account">${icon('edit')}</button>` : '');
-    const meta = [account.institution, account.typeLabel, account.code, account.accountNumber ? maskNumber(account.accountNumber) : '']
+    const meta = [account.institution, account.typeLabel, account.code, account.accountNumber ? maskNumber(account.accountNumber) : '',
+        account.ifsc ? `IFSC ${account.ifsc}` : '', account.upiId ? `UPI ${account.upiId}` : '']
         .filter(Boolean).filter((v, i, list) => list.indexOf(v) === i);
 
     target.innerHTML = `
@@ -832,7 +833,11 @@ function quickActions(a) {
 
 // ===================================================================== create / edit form
 
-export function openAccountForm(account, onSaved) {
+/**
+ * The account form. opts.note: a message on top (e.g. why the bank details are needed); bank and wallet accounts carry
+ * the holder's name, IFSC and UPI ID, which go on chit members' payment links.
+ */
+export function openAccountForm(account, onSaved, opts = {}) {
     const types = state.options.accountTypes;
     // expense / income are categories and chits live on the Chits page: neither is a new account
     const classLabels = { ASSET: 'Assets', LIABILITY: 'Liabilities', EQUITY: 'Equity' };
@@ -870,7 +875,7 @@ export function openAccountForm(account, onSaved) {
 
     openModal({
         title: account ? `Edit ${account.name}` : 'New account', iconName: 'wallet', size: 'lg', actions,
-        body: `<form class="form-grid three">
+        body: `${opts.note ? `<p class="hc-note warn acc-form-note">${icon('alert')}<span>${esc(opts.note)}</span></p>` : ''}<form class="form-grid three">
             ${field({ label: 'Account name', name: 'name', value: a.name, required: true, span: 'span-2' })}
             ${field({ label: 'Type', name: 'accountType', type: 'select', options: typeOptions, required: true })}
             ${field({ label: 'Institution', name: 'institution', value: a.institution, placeholder: 'Bank, issuer, lender…' })}
@@ -885,6 +890,22 @@ export function openAccountForm(account, onSaved) {
             ${field({ label: 'Quantity (g / units)', name: 'quantity', type: 'number', value: a.quantity, hint: 'For gold, silver, shares…' })}
             ${field({ label: 'Description', name: 'description', value: a.description, span: 'span-2' })}
             ${field({ label: 'Active', name: 'active', type: 'checkbox', value: a.active })}
+            <div class="acc-bank-head span-3" data-bank>${icon('bank')}<b>Bank details</b><small>for receiving money: chit members pay into these (UPI ID, or account number and IFSC)</small></div>
+            ${field({ label: 'Account holder name', name: 'holderName', value: a.holderName, placeholder: 'As printed on the passbook', attrs: 'maxlength="100" data-bank', span: 'acc-bank' })}
+            ${field({ label: 'IFSC', name: 'ifsc', value: a.ifsc, placeholder: 'e.g. ICIC0001234', attrs: 'maxlength="11" pattern="[A-Za-z]{4}0[A-Za-z0-9]{6}" title="4 letters, a zero, then 6 letters or digits" data-bank data-bank-only style="text-transform:uppercase"', span: 'acc-bank acc-bank-only' })}
+            ${field({ label: 'UPI ID', name: 'upiId', value: a.upiId, placeholder: 'name@okicici', attrs: 'maxlength="60" pattern="[\\w.\\-]{2,}@[A-Za-z][\\w.]{1,}" title="Like name@bank" data-bank', span: 'acc-bank' })}
         </form>`,
+        onOpen: m => {
+            const type = m.el.querySelector('[name=accountType]');
+            const sync = () => {
+                const t = type.value;
+                m.el.querySelectorAll('.acc-bank, [data-bank].acc-bank-head').forEach(x => {
+                    x.hidden = !(t === 'BANK' || t === 'WALLET') || (x.classList.contains('acc-bank-only') && t !== 'BANK');
+                });
+            };
+            type.addEventListener('change', sync);
+            sync();
+            if (opts.focusBank) setTimeout(() => m.el.querySelector(a.upiId ? '[name=ifsc]' : '[name=upiId]')?.focus(), 80);
+        },
     });
 }

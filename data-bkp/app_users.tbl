@@ -1,0 +1,2 @@
+id	tenantId	username	fullName	email	passwordHash	role	active	createdAt	lastLoginAt	failedLogins	lockedUntil	features	mobileAccess	mobileFeatures	approval	mustChangePassword	version
+1	1	admin	Administrator		$2a$10$8/W1qazXv/C1TgB7uFAas.4VLicY2NehjVyy0pPl/AaRWLnZUcCPq	SUPER_ADMIN	true	2026-10-09T00:37:01.347621	2026-10-10T17:00:08.108398100	0						false	17

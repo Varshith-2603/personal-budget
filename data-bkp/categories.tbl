@@ -1,0 +1,34 @@
+id	tenantId	kind	code	name	description	systemKey	active	createdAt	version
+1	1	INCOME	4010	Salary	Salary and wages		true	2026-10-07T18:25:09.597777700	0
+2	1	INCOME	4020	Business / Freelance			true	2026-10-07T18:25:09.597777700	0
+3	1	INCOME	4030	Interest	Savings, FD, bond and lending interest	INTEREST	true	2026-10-07T18:25:09.597777700	0
+4	1	INCOME	4040	Dividends & Capital Gains			true	2026-10-07T18:25:09.597777700	0
+5	1	INCOME	4050	Chit Gains	Chit dividends and gain on chit payout	CHIT_GAINS	true	2026-10-07T18:25:09.597777700	0
+6	1	INCOME	4060	Rental Income			true	2026-10-07T18:25:09.597777700	0
+7	1	INCOME	4070	Gifts Received			true	2026-10-07T18:25:09.597777700	0
+8	1	INCOME	4990	Other Income		OTHER_INCOME	true	2026-10-07T18:25:09.597777700	0
+9	1	EXPENSE	5010	Groceries	Food and household supplies		true	2026-10-07T18:25:09.597777700	0
+10	1	EXPENSE	5020	Rent			true	2026-10-07T18:25:09.597777700	0
+11	1	EXPENSE	5030	Utilities	Electricity, water, gas		true	2026-10-07T18:25:09.597777700	0
+12	1	EXPENSE	5040	Mobile & Internet			true	2026-10-07T18:25:09.597777700	0
+13	1	EXPENSE	5050	Fuel & Transport			true	2026-10-07T18:25:09.597777700	0
+14	1	EXPENSE	5060	Dining Out			true	2026-10-07T18:25:09.597777700	0
+15	1	EXPENSE	5070	Medical & Health			true	2026-10-07T18:25:09.597777700	0
+16	1	EXPENSE	5080	Education			true	2026-10-07T18:25:09.597777700	0
+17	1	EXPENSE	5090	Entertainment	Movies, OTT, outings		true	2026-10-07T18:25:09.597777700	0
+18	1	EXPENSE	5100	Shopping & Clothing			true	2026-10-07T18:25:09.597777700	0
+19	1	EXPENSE	5110	Insurance Premiums			true	2026-10-07T18:25:09.597777700	0
+20	1	EXPENSE	5120	Loan Interest	Interest part of EMIs and borrowing	LOAN_INTEREST	true	2026-10-07T18:25:09.597777700	0
+21	1	EXPENSE	5130	Bank Charges & Fees			true	2026-10-07T18:25:09.597777700	0
+22	1	EXPENSE	5140	Chit Commission & Discount	Foreman commission and auction discount on chit payout	CHIT_DISCOUNT	true	2026-10-07T18:25:09.597777700	0
+23	1	EXPENSE	5150	Travel & Vacation			true	2026-10-07T18:25:09.597777700	0
+24	1	EXPENSE	5160	Home Maintenance			true	2026-10-07T18:25:09.597777700	0
+25	1	EXPENSE	5170	Personal Care			true	2026-10-07T18:25:09.597777700	0
+26	1	EXPENSE	5180	Gifts & Donations			true	2026-10-07T18:25:09.597777700	0
+27	1	EXPENSE	5190	Taxes			true	2026-10-07T18:25:09.597777700	0
+28	1	EXPENSE	5200	Kids & Family			true	2026-10-07T18:25:09.597777700	0
+29	1	EXPENSE	5990	Miscellaneous		MISC_EXPENSE	true	2026-10-07T18:25:09.597777700	0
+30	1	EXPENSE	5210	Electricity Bill			true	2026-10-08T00:11:37.149789900	0
+31	1	EXPENSE	5220	Dance & Music	Dance and Music class fee for Mahanya		true	2026-10-08T00:11:57.457926900	1
+32	1	EXPENSE	5145	Chit Payments	Chit installments paid (budget only: recorded from the Chits page, kept as savings in the books)	CHIT_PAYMENTS	true	2026-10-09T02:06:47.718139400	0
+33	1	INCOME	4080	Chit Commission Income	Commission and late payment interest from the chits I run (Host a Chit)		true	2026-10-09T13:54:22.575762700	0

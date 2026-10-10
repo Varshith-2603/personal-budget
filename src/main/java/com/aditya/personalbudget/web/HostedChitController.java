@@ -72,6 +72,13 @@ public class HostedChitController {
         return service.summary();
     }
 
+    /** The household's chit-funds company name, for naming new chits (set by an admin in Settings). */
+    @GetMapping("/hosted-chits/settings")
+    @RequiresPermission(Permission.VIEW)
+    public HostedChitService.ChitSettings chitSettings() {
+        return service.chitSettings();
+    }
+
     @GetMapping("/hosted-chits/{id}")
     @RequiresPermission(Permission.VIEW)
     public Detail detail(@PathVariable Long id) {

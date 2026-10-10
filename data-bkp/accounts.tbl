@@ -1,0 +1,17 @@
+id	tenantId	code	name	accountClass	accountType	institution	accountNumber	openingBalance	openingDate	interestRate	creditLimit	maturityDate	quantity	description	chitBook	hostedChitId	chitRole	systemAccount	active	createdAt	version
+1	1	1000	Cash Account	ASSET	CASH				2026-10-07					Physical cash / petty cash				true	true	2026-10-07T18:25:09.554269900	1
+2	1	1200	Receivables	ASSET	RECEIVABLE									Money others owe you				true	true	2026-10-07T18:25:09.554269900	0
+3	1	1300	Chit Funds	ASSET	CHIT_FUND									Installments paid into your chits, chit by chit				true	true	2026-10-07T18:25:09.554269900	0
+4	1	2000	Payables	LIABILITY	PAYABLE									Bills and dues you still have to pay				true	true	2026-10-07T18:25:09.554269900	0
+5	1	3000	Opening Balance Equity	EQUITY	EQUITY									Balancing account for opening balances				true	true	2026-10-07T18:25:09.554269900	0
+6	1	4000	Income	INCOME	INCOME									All income, split by category				true	true	2026-10-07T18:25:09.554269900	0
+7	1	5000	Expenses	EXPENSE	EXPENSE									All spending, split by category				true	true	2026-10-07T18:25:09.554269900	0
+8	1	1310	ICICI Bank	ASSET	BANK	ICICI Bank	059801513820		2026-10-07									false	true	2026-10-07T18:26:58.235668400	0
+9	1	2010	Surender Chit Receivables	ASSET	RECEIVABLE	Surender Chitti			2026-10-07					This account is to track Surender Chitti Maturity Amount				false	true	2026-10-07T18:38:35.763632100	5
+12	1	2020	Hosted Chit Funds	LIABILITY	OTHER_LIABILITY									Members' money collected in chits you run, until it is paid out	true		FUNDS	true	true	2026-10-09T10:18:32.646323500	1
+14	1	1330	Aditya-Chitfunds(500000) - commission	ASSET	CASH									My commission from the chit Aditya-Chitfunds(500000) (Host a Chit)	true		COMMISSION	false	true	2026-10-09T10:47:31.069662800	1
+15	1	1340	Aditya Chitfunds(5L-OCT26-MAY28) - collections	ASSET	CASH									Members' installments for the chit Aditya Chitfunds(5L-OCT26-MAY28) (Host a Chit)	true	11	COLLECTION	false	true	2026-10-09T11:39:51.741497500	1
+16	1	1350	Test_Chit - collections	ASSET	CASH									Members' installments for the chit Test_Chit (Host a Chit)	true	12	COLLECTION	false	true	2026-10-09T13:54:22.545902200	1
+17	1	1360	Test_Chit - commission	ASSET	CASH									My commission from the chit Test_Chit (Host a Chit)	true	12	COMMISSION	false	true	2026-10-09T13:54:22.569521800	1
+18	1	1370	Test_Chit - late interest	ASSET	CASH									Late payment interest from the chit Test_Chit (Host a Chit)	true	12	LATE_FEE	false	true	2026-10-09T13:54:22.570528500	1
+25	1	1380	Paid directly to winners	ASSET	OTHER_ASSET									Installments members paid straight to the month's winner, until the payout is recorded (Host a Chit)	true		DIRECT	true	true	2026-10-10T18:16:42.850130500	1

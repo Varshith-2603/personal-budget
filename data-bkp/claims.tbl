@@ -1,0 +1,1 @@
+id	tenantId	kind	party	narration	amount	startDate	dueDate	interestRate	interestType	receivableAccountId	paidFromAccountId	categoryId	journalEntryId	status	notes	postInterestMonthly	interestCollection	interestAccountId	createdAt	version

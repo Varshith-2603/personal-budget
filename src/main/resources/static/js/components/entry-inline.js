@@ -11,7 +11,7 @@
  */
 import { api } from '../core/api.js';
 import { can } from '../core/store.js';
-import { esc, toast, confirmDialog } from '../core/ui.js';
+import { esc, toast, confirmDialog, narrativeHtml } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, date, dateTime } from '../core/format.js';
 import { openJournalEditor } from './transaction-forms.js';
@@ -121,7 +121,7 @@ function detailHtml(e) {
             <span class="mono">${money(side === 'dr' ? l.debit : l.credit, { decimals: 2 })}</span></span>`;
     const debits = e.lines.filter(l => Number(l.debit) > 0).map(l => pill(l, 'dr')).join('');
     const credits = e.lines.filter(l => Number(l.credit) > 0).map(l => pill(l, 'cr')).join('');
-    const memos = e.lines.filter(l => l.memo).map(l => `<b>${esc(l.accountName)}:</b> ${esc(l.memo)}`);
+    const memos = e.lines.filter(l => l.memo).map(l => `<b>${esc(l.accountName)}:</b> ${narrativeHtml(l.memo)}`);
     const fact = (iconName, html, cls = '') => `<span class="ed-fact ${cls}">${icon(iconName)}${html}</span>`;
     return `
     <div class="entry-detail">

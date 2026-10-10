@@ -55,7 +55,7 @@ public class JournalLine implements TenantOwned {
     @Column(nullable = false)
     private BigDecimal credit;
 
-    @Column(length = 255)
+    @Column(length = 2000)
     private String memo;
 
     /** Expense or income category, on lines of the Expenses / Income account. */

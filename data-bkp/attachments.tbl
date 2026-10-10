@@ -1,0 +1,3 @@
+id	tenantId	journalEntryId	pendingEntryId	fileName	storedName	contentType	sizeBytes	sha256	width	height	hasThumbnail	source	caption	createdBy	createdAt
+1	1	69		Photo 2026-10-07 14.21.jpg	2b8ec5f628d24aa2b6a75f320abe66f9.jpg	image/jpeg	365712	3b00eb70173ea02dab6d5fe0a30983f810850eb3cb35b2b9cd067df8c8ab7a2b	994	990	true	CAMERA		admin	2026-10-07T19:51:20.612505700
+2	1		2	Photo 2026-10-07 17.28.jpg	365f6fa5d2f744b587bdcb950f8cbc54.jpg	image/jpeg	513506	eac70a2dc09880f3e9a0cd30f02d6bd5efdda71063ea0342d879be790731da37	1013	1347	true	CAMERA		link:Varshith	2026-10-07T22:58:55.065951500

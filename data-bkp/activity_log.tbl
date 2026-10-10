@@ -1,0 +1,427 @@
+id	tenantId	at	userId	actor	via	linkId	action	area	summary	method	path
+1	1	2026-10-07T22:05:29.025508700	1	Administrator	WEB		ADDED	Access links	Made an access link for Varshith · view only · Expenses · 1 h		
+2	1	2026-10-07T22:05:47.709418100	1	Varshith (link)	LINK	1	OPENED_LINK	Access links	Opened the access link		
+3	1	2026-10-07T22:06:55.693743100	1	Administrator	WEB		ADDED	Access links	Made an access link for Varshith · view only · Chits · 24 h		
+4	1	2026-10-07T22:07:04.436748400	1	Varshith (link)	LINK	2	OPENED_LINK	Access links	Opened the access link		
+5	1	2026-10-07T22:07:59.527854600	1	Administrator	WEB		ADDED	Access links	Made an access link for Surendar · view only · Accounts, Chits · 24 h		
+6	1	2026-10-07T22:08:06.791092600	1	Surendar (link)	LINK	3	OPENED_LINK	Access links	Opened the access link		
+7	1	2026-10-07T22:10:30.902807900	1	Administrator	WEB		REVOKED	Access links	Revoked the access link for Surendar		
+8	1	2026-10-07T22:30:41.222205800	1	Administrator	WEB		ADDED	Access links	Made an access link for Surendar · view only · Accounts, Chits · 1 h		
+9	1	2026-10-07T22:30:52.331634	1	Surendar · link	LINK	4	OPENED_LINK	Access links	Opened the access link		
+10	1	2026-10-07T22:32:29.368074	1	Administrator	WEB		DELETED	Expenses	Deleted an expense · Semester fee · ₹70,000 · EX-000001	DELETE	/api/expenses/76
+11	1	2026-10-07T22:34:38.562804600	1	Administrator	WEB		REVOKED	Access links	Revoked the access link for Surendar		
+12	1	2026-10-07T22:35:40.133946	1	Administrator	WEB		ADDED	Access links	Made an access link for Surendar Vemula · view only · Accounts, Chits · 24 h		
+13	1	2026-10-07T22:35:51.804411600	1	Surendar Vemula · link	LINK	5	OPENED_LINK	Access links	Opened the access link		
+14	1	2026-10-07T22:38:42.821313500	1	Surendar Vemula · link	LINK	5	OPENED_LINK	Access links	Opened the access link		
+15	1	2026-10-07T22:55:10.281609800	1	Administrator	WEB		REVOKED	Access links	Revoked the access link for Varshith		
+16	1	2026-10-07T22:55:30.510465100	1	Administrator	WEB		ADDED	Access links	Made an access link for Varshith · recorder with approval · Expenses · 24 h		
+17	1	2026-10-07T22:55:45.788898200	1	Varshith · link	LINK	6	OPENED_LINK	Access links	Opened the access link		
+18	1	2026-10-07T22:56:53.186111400	1	Varshith · link	LINK	6	SUBMITTED	Approvals	Sent for approval: Vegetables · ₹500		
+19	1	2026-10-07T22:57:45.654624800	1	Administrator	WEB		REJECTED	Approvals	Rejected Vegetables · Groceries · from ICICI Bank · ₹500 from Varshith · link · Add evidence		
+20	1	2026-10-07T22:58:54.034071900	1	Varshith · link	LINK	6	SUBMITTED	Approvals	Sent for approval: Veggies · ₹500		
+21	1	2026-10-07T22:58:55.256605	1	Varshith · link	LINK	6	ADDED	Evidence	Added evidence · Photo 2026-10-07 17.28.jpg	POST	/api/attachments
+22	1	2026-10-07T22:59:30.104346700	1	Administrator	WEB		REJECTED	Approvals	Rejected Veggies · Groceries · from ICICI Bank · ₹500 from Varshith · link · incorrect evidence		
+23	1	2026-10-07T23:03:14.582130	1	Administrator	WEB		ADDED	Money owed	Recorded money lent / owed · Lent to Sattanna Bava · Sattanna Bava · ₹500,000 · LN-000001	POST	/api/claims
+24	1	2026-10-07T23:09:00.077133900	1	Administrator	WEB		DELETED	Money owed	Deleted money lent / owed · Sattanna Bava · Lent to Sattanna Bava · ₹500,000	DELETE	/api/claims/1
+25	1	2026-10-07T23:45:13.765354200	1	Varshith · link	LINK	6	SUBMITTED	Approvals	Sent for approval: Vegetables · ₹500		
+26	1	2026-10-07T23:45:33.939900100	1	Administrator	WEB		REJECTED	Approvals	Rejected Vegetables · Groceries · from Cash Account · ₹500 from Varshith · link · sample		
+27	1	2026-10-07T23:51:51.344759900	1	Administrator	WEB		ADDED	Access links	Made an access link for Varshith · view only · Dashboard, Expenses, Income, Accounts, Chits, Budgets · 24 h		
+28	1	2026-10-07T23:51:58.821539600	1	Varshith · link	LINK	7	OPENED_LINK	Access links	Opened the access link		
+29	1	2026-10-07T23:55:49.465881700	1	Administrator	WEB		REVOKED	Access links	Revoked the access link for Varshith		
+30	1	2026-10-07T23:56:18.920375500	2	Surendar	WEB		SIGNED_IN	Sign-in	Signed in		
+31	1	2026-10-08T00:11:37.177037	1	Administrator	WEB		ADDED	Settings	Added a category · Electricity Bill	POST	/api/categories
+32	1	2026-10-08T00:11:57.485060800	1	Administrator	WEB		ADDED	Settings	Added a category · Dance & Music	POST	/api/categories
+33	1	2026-10-08T00:12:39.198320800	1	Administrator	WEB		CHANGED	Settings	Changed a category · Dance & Music	PUT	/api/categories/31
+34	1	2026-10-08T00:18:56.689306	1	Administrator	WEB		ADDED	Money owed	Recorded money lent / owed · Lent to Sattanna Bava · Sattanna Bava · ₹500,000 · LN-000001	POST	/api/claims
+35	1	2026-10-08T00:19:32.073271	1	Administrator	WEB		CHANGED	Money owed	Edited money lent / owed · Lent to Sattanna Bava · Sattanna Bava · ₹500,000 · LN-000001	PUT	/api/claims/2
+36	1	2026-10-08T00:35:27.508043100	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+37	1	2026-10-08T00:51:54.585904300	1	Administrator	WEB		ADDED	Gifts	Recorded a gift · from Sudheer	POST	/api/gifts
+38	1	2026-10-08T00:54:42.502027800	1	Administrator	WEB		ADDED	Access links	Made an access link for Varshith · view only · Accounts, Chits · 24 h		
+39	1	2026-10-08T00:55:22.040623400	1	Administrator	WEB		ADDED	Access links	Made an access link for Varshith · view only · Accounts, Chits · 24 h		
+40	1	2026-10-08T00:55:28.620294700	1	Varshith · link	LINK	9	OPENED_LINK	Access links	Opened the access link		
+41	1	2026-10-08T00:56:58.799591500	1	Administrator	WEB		ADDED	Gifts	Recorded a gift · from Sattanna	POST	/api/gifts
+42	1	2026-10-08T00:57:37.604818600	1	Administrator	WEB		ADDED	Gifts	Recorded a gift · to Sattanna	POST	/api/gifts
+43	1	2026-10-08T10:16:20.559426400	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+44	1	2026-10-08T11:06:04.967215	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+45	1	2026-10-08T11:15:21.692832	1	Administrator	WEB		ADDED	Money owed	Shared the statement of Lent to Sattanna Bava with Sattanna Bava · 1 day		
+46	1	2026-10-08T11:15:21.730293500	1	Administrator	WEB		ADDED	Money owed	Made a statement link	POST	/api/claims/2/shares
+47	1	2026-10-08T11:15:46.141665300	1	Administrator	WEB		REVOKED	Money owed	Stopped the statement link of Lent to Sattanna Bava for Sattanna Bava		
+48	1	2026-10-08T11:15:46.201727500	1	Administrator	WEB		REVOKED	Money owed	Stopped a statement link	POST	/api/claims/2/shares/1/revoke
+49	1	2026-10-08T11:15:53.296985500	1	Administrator	WEB		ADDED	Money owed	Shared the statement of Lent to Sattanna Bava with Sattanna Bava · 1 day		
+50	1	2026-10-08T11:15:53.331171800	1	Administrator	WEB		ADDED	Money owed	Made a statement link	POST	/api/claims/2/shares
+51	1	2026-10-08T11:19:22.158916400	1	Administrator	WEB		ADDED	Access links	Made an access link for Mahesh · recorder with approval · Expenses · 24 h		
+52	1	2026-10-08T11:19:33.184090100	1	Mahesh · link	LINK	10	OPENED_LINK	Access links	Opened the access link		
+53	1	2026-10-08T11:20:16.622374400	1	Mahesh · link	LINK	10	SUBMITTED	Approvals	Sent for approval: Veggies · ₹500		
+54	1	2026-10-08T11:20:34.337738200	1	Administrator	WEB		REJECTED	Approvals	Rejected Veggies · Groceries · from ICICI Bank · ₹500 from Mahesh · link · No evidence		
+55	1	2026-10-08T11:20:51.949938900	1	Mahesh · link	LINK	10	SUBMITTED	Approvals	Corrected and sent again: Veggies · ₹500		
+56	1	2026-10-08T11:20:58.406235800	1	Administrator	WEB		REJECTED	Approvals	Rejected Veggies · Groceries · from ICICI Bank · ₹500 from Mahesh · link		
+57	1	2026-10-08T11:21:04.651815	1	Mahesh · link	LINK	10	DELETED	Approvals	Took back Veggies · Groceries · from ICICI Bank · ₹500		
+58	1	2026-10-08T11:21:22.763583400	1	Mahesh · link	LINK	10	SUBMITTED	Approvals	Sent for approval: Dining Out · ₹500		
+59	1	2026-10-08T11:21:41.323993800	1	Administrator	WEB		REJECTED	Approvals	Rejected Dining Out · Dining Out · from Cash Account · ₹500 from Mahesh · link		
+60	1	2026-10-08T11:21:49.981509400	1	Mahesh · link	LINK	10	DELETED	Approvals	Took back Dining Out · Dining Out · from Cash Account · ₹500		
+61	1	2026-10-08T11:25:26.474897500	1	Administrator	WEB		ADDED	Money owed	Recorded money lent / owed · Lent to Sujakka · Sujakka · ₹200,000 · LN-000002	POST	/api/claims
+62	1	2026-10-08T11:27:01.547648300	1	Administrator	WEB		ADDED	Money owed	Recorded money lent / owed · Lent to Akhil · Akhil · ₹3,000,000 · LN-000003	POST	/api/claims
+63	1	2026-10-08T11:28:27.877852800	1	Administrator	WEB		CHANGED	Money owed	Changed how interest is collected · Lent to Akhil · Akhil · ₹3,000,000 · LN-000003	PUT	/api/claims/4/interest-plan
+64	1	2026-10-08T11:29:52.142143500	1	Administrator	WEB		DELETED	Money owed	Deleted money lent / owed · Akhil · Lent to Akhil · ₹3,000,000	DELETE	/api/claims/4
+65	1	2026-10-08T12:32:42.982032100	1	Administrator	WEB		ADDED	Money owed	Recorded money lent / owed · Praveen Vegitables · Praveen · ₹500 · PO-000001	POST	/api/claims
+66	1	2026-10-08T12:33:41.113972600	1	Administrator	WEB		POSTED	Money owed	Recorded a repayment · Praveen Vegitables · Praveen · ₹500 · PO-000001	POST	/api/claims/5/repayments
+67	1	2026-10-08T12:37:15.106001200	1	Administrator	WEB		DELETED	Money owed	Removed a repayment · Praveen · Praveen Vegitables · ₹500	DELETE	/api/claims/5/repayments/1
+68	1	2026-10-08T12:37:24.759276800	1	Administrator	WEB		DELETED	Money owed	Deleted money lent / owed · Praveen · Praveen Vegitables · ₹500	DELETE	/api/claims/5
+69	1	2026-10-08T12:38:40.375990600	1	Administrator	WEB		ADDED	Expenses	Added an expense · Vegetables · ₹500 · EX-000001	POST	/api/expenses
+70	1	2026-10-08T12:58:31.809057500	1	Administrator	WEB		ADDED	Money owed	Recorded money lent / owed · Veggies · Praveen · ₹100 · PO-000001	POST	/api/claims
+71	1	2026-10-08T13:07:39.895323200	1	Administrator	WEB		CHANGED	Money owed	Changed how interest is collected · Lent to Sujakka · Sujakka · ₹200,000 · LN-000002	PUT	/api/claims/3/interest-plan
+72	1	2026-10-08T13:07:43.284369200	1	Administrator	WEB		CHANGED	Money owed	Changed how interest is collected · Lent to Sujakka · Sujakka · ₹200,000 · LN-000002	PUT	/api/claims/3/interest-plan
+73	1	2026-10-08T13:07:47.217106600	1	Administrator	WEB		CHANGED	Money owed	Changed how interest is collected · Lent to Sujakka · Sujakka · ₹200,000 · LN-000002	PUT	/api/claims/3/interest-plan
+74	1	2026-10-08T13:07:53.556535800	1	Administrator	WEB		CHANGED	Money owed	Changed how interest is collected · Lent to Sujakka · Sujakka · ₹200,000 · LN-000002	PUT	/api/claims/3/interest-plan
+75	1	2026-10-08T13:07:56.196718500	1	Administrator	WEB		CHANGED	Money owed	Changed how interest is collected · Lent to Sujakka · Sujakka · ₹200,000 · LN-000002	PUT	/api/claims/3/interest-plan
+76	1	2026-10-08T13:08:00.890516700	1	Administrator	WEB		CHANGED	Money owed	Changed how interest is collected · Lent to Sujakka · Sujakka · ₹200,000 · LN-000002	PUT	/api/claims/3/interest-plan
+77	1	2026-10-08T13:26:18.472870300	1	Administrator	WEB		DELETED	Money owed	Deleted money lent / owed · Praveen · Veggies · ₹100	DELETE	/api/claims/6
+78	1	2026-10-08T13:26:23.066829200	1	Administrator	WEB		DELETED	Money owed	Deleted money lent / owed · Sattanna Bava · Lent to Sattanna Bava · ₹500,000	DELETE	/api/claims/2
+79	1	2026-10-08T13:26:26.680754	1	Administrator	WEB		DELETED	Money owed	Deleted money lent / owed · Sujakka · Lent to Sujakka · ₹200,000	DELETE	/api/claims/3
+80	1	2026-10-08T13:26:47.411563800	1	Administrator	WEB		DELETED	Expenses	Deleted an expense · Vegetables · ₹500 · EX-000001	DELETE	/api/expenses/83
+81	1	2026-10-08T13:27:54.820852600	1	Administrator	WEB		ADDED	Access links	Made an access link for Surendar Vemula · view only · Accounts, Chits · 24 h		
+82	1	2026-10-08T13:35:25.072413600	1	Surendar Vemula · link	LINK	11	OPENED_LINK	Access links	Opened the access link		
+83	1	2026-10-08T13:40:06.811178700	1	Surendar Vemula · link	LINK	11	OPENED_LINK	Access links	Opened the access link		
+84	1	2026-10-08T14:21:28.568791	1	Surendar Vemula · link	LINK	11	OPENED_LINK	Access links	Opened the access link		
+85	1	2026-10-08T14:46:48.965369	1	Surendar Vemula · link	LINK	11	OPENED_LINK	Access links	Opened the access link		
+86	1	2026-10-08T16:12:47.044869	1	Surendar Vemula · link	LINK	11	OPENED_LINK	Access links	Opened the access link		
+87	1	2026-10-08T16:27:06.167714900	1	Surendar Vemula · link	LINK	11	OPENED_LINK	Access links	Opened the access link		
+88	1	2026-10-08T16:43:19.286953500	1	Surendar Vemula · link	LINK	11	OPENED_LINK	Access links	Opened the access link		
+89	1	2026-10-08T16:45:43.837088200	1	Administrator	MOBILE		SIGNED_IN	Sign-in	Signed in on the mobile version		
+90	1	2026-10-08T16:47:13.090724600	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+91	1	2026-10-08T16:49:52.153754900	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+92	1	2026-10-08T17:17:41.835171500	1	Administrator	WEB		ADDED	Expenses	Added an expense · Vegetables · Roadside Market · ₹500 · EX-000001	POST	/api/expenses
+93	1	2026-10-08T17:18:49.709968400	1	Administrator	WEB		REVERSED	Expenses	Reversed an expense · Reversal of EX-000001: Vegetables · Roadside Market · ₹500 · RV-000001	POST	/api/expenses/85/reverse
+94	1	2026-10-08T17:21:10.444182600	1	Administrator	WEB		DELETED	Expenses	Undid a refund or reversal · Reversal of EX-000001: Vegetables · ₹500 · RV-000001	DELETE	/api/expenses/85/refunds/86
+95	1	2026-10-08T17:21:18.943987200	1	Administrator	WEB		POSTED	Expenses	Recorded a refund · Refund: Vegetables · Roadside Market · ₹500 · RF-000001	POST	/api/expenses/85/refunds
+96	1	2026-10-08T17:22:26.706229300	1	Administrator	WEB		DELETED	Expenses	Undid a refund or reversal · Refund: Vegetables · ₹500 · RF-000001	DELETE	/api/expenses/85/refunds/87
+97	1	2026-10-08T17:28:27.819141700	1	Administrator	WEB		ADDED	Expenses	Added an expense · Vegetables · Roadside Market · ₹300 · EX-000002	POST	/api/expenses
+98	1	2026-10-08T17:42:05.206442100	1	Administrator	WEB		DELETED	Expenses	Deleted an expense · Vegetables · ₹500 · EX-000001	DELETE	/api/expenses/85
+99	1	2026-10-08T17:42:12.592927500	1	Administrator	WEB		DELETED	Expenses	Deleted an expense · Vegetables · ₹300 · EX-000002	DELETE	/api/expenses/88
+100	1	2026-10-08T17:51:30.172173800	1	Administrator	WEB		CHANGED	Chits	Edited a chit · Surender Chitti(November-2025-June-2028)	PUT	/api/chits/3
+101	1	2026-10-09T00:57:29.657039800	1	Administrator	WEB		ADDED	Chits	Added a chit · Surender Chitti(April-2023-October-2025)	POST	/api/chits/1/close
+102	1	2026-10-09T00:57:39.881193	1	Administrator	WEB		POSTED	Chits	Paid installment #29 · Surender Chitti(June-2024-December-2026)	POST	/api/chits/2/installments/60/pay
+103	1	2026-10-09T00:57:45.676307300	1	Administrator	WEB		POSTED	Chits	Paid installment #30 · Surender Chitti(June-2024-December-2026)	POST	/api/chits/2/installments/61/pay
+104	1	2026-10-09T00:57:49.682402300	1	Administrator	WEB		POSTED	Chits	Paid installment #31 · Surender Chitti(June-2024-December-2026)	POST	/api/chits/2/installments/62/pay
+105	1	2026-10-09T00:57:55.928227500	1	Administrator	WEB		POSTED	Chits	Recorded a payout · Surender Chitti(June-2024-December-2026)	POST	/api/chits/2/payout
+106	1	2026-10-09T00:57:58.438839600	1	Administrator	WEB		ADDED	Chits	Added a chit · Surender Chitti(June-2024-December-2026)	POST	/api/chits/2/close
+107	1	2026-10-09T00:58:10.879503800	1	Administrator	WEB		POSTED	Chits	Paid installment #12 · Surender Chitti(November-2025-June-2028)	POST	/api/chits/3/installments/74/pay
+108	1	2026-10-09T00:58:18.347622100	1	Administrator	WEB		POSTED	Chits	Paid installment #13 · Surender Chitti(November-2025-June-2028)	POST	/api/chits/3/installments/75/pay
+109	1	2026-10-09T00:58:24.551730200	1	Administrator	WEB		POSTED	Chits	Paid installment #14 · Surender Chitti(November-2025-June-2028)	POST	/api/chits/3/installments/76/pay
+110	1	2026-10-09T02:24:35.748699300	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+111	1	2026-10-09T02:28:07.388826600		Demo data	WEB		ADDED	Host a Chit	Loaded the demo chit · Family Chit 2026		
+112	1	2026-10-09T09:06:30.911130300	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Friends chit 2026 · ₹600,000 · 20 members		
+113	1	2026-10-09T09:07:20.509672500	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Friends chit 2026 month 1 · 20 members · ₹600,000		
+114	1	2026-10-09T09:07:39.186275	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Friends chit 2026 month 1 · Revathi · random draw		
+115	1	2026-10-09T09:07:46.328216900	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Revathi · Friends chit 2026 month 1 · ₹575,000 · commission ₹25,000		
+116	1	2026-10-09T09:12:05.657404600	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Friends chit 2026 month 2 · Venkatesh · random draw		
+117	1	2026-10-09T09:12:53.018988200	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Friends chit 2026 month 2 · 20 members · ₹600,000		
+118	1	2026-10-09T09:13:03.518227700	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Venkatesh · Friends chit 2026 month 2 · ₹580,000 · commission ₹25,000		
+119	1	2026-10-09T09:24:30.585074400	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Test · ₹500,000 · 20 members		
+120	1	2026-10-09T09:24:41.719588200	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Test month 1 · Swathi · random draw		
+121	1	2026-10-09T09:35:28.054706	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Test · ₹500,000 · 20 members		
+122	1	2026-10-09T09:35:39.598622700	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Test month 1 · Kiran Babu · random draw		
+123	1	2026-10-09T09:35:45.277276	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test month 1 · 20 members · ₹500,000		
+124	1	2026-10-09T09:35:50.950085900	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Kiran Babu · Test month 1 · ₹475,000 · commission ₹25,000		
+125	1	2026-10-09T10:18:06.590195500	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · test · ₹500,000 · 20 members		
+126	1	2026-10-09T10:18:32.701792400	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · test month 1 · 20 members · ₹500,000		
+127	1	2026-10-09T10:18:47.018100600	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · test month 1 · Divya · random draw		
+128	1	2026-10-09T10:18:50.928402900	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Divya · test month 1 · ₹475,000 · commission ₹25,000		
+129	1	2026-10-09T10:19:28.744827800	1	Administrator	WEB		ADDED	Host a Chit	Shared Priya Sharma's status in test · 7 days		
+130	1	2026-10-09T10:24:42.904255500	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+131	1	2026-10-09T10:24:56.582281900	1	Administrator	WEB		ADDED	Host a Chit	Shared Kavitha's status in Friends chit 2026 · 7 days		
+132	1	2026-10-09T10:25:34.702760500	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Friends chit 2026 month 3 · Balaji · random draw		
+133	1	2026-10-09T10:25:54.103044100	1	Administrator	WEB		CHANGED	Host a Chit	Cleared the winner · Friends chit 2026 month 3		
+134	1	2026-10-09T10:25:59.587087200	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Friends chit 2026 month 3 · Kavitha · picked		
+135	1	2026-10-09T10:26:09.841618100	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Kavitha · Friends chit 2026 month 3 · ₹585,000 · commission ₹25,000 · closed with ₹600,000 due		
+136	1	2026-10-09T10:33:17.346793100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Kiran Babu · Friends chit 2026 month 3 · ₹30,000 · Cash		
+137	1	2026-10-09T10:33:19.213162500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ravi Kumar · Friends chit 2026 month 3 · ₹30,000 · Cash		
+138	1	2026-10-09T10:33:19.921864600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Kavitha · Friends chit 2026 month 3 · ₹30,000 · Cash		
+139	1	2026-10-09T10:33:20.489157	1	Administrator	WEB		POSTED	Host a Chit	Collected · Prakash · Friends chit 2026 month 3 · ₹30,000 · Cash		
+140	1	2026-10-09T10:33:22.333402300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Sandhya · Friends chit 2026 month 3 · ₹30,000 · Cash		
+141	1	2026-10-09T10:33:22.923560800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Friends chit 2026 month 3 · ₹30,000 · Cash		
+142	1	2026-10-09T10:33:23.320978300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Vani · Friends chit 2026 month 3 · ₹30,000 · Cash		
+143	1	2026-10-09T10:33:27.601971500	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Friends chit 2026 month 4 · 20 members · ₹600,000		
+144	1	2026-10-09T10:33:31.456535600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Friends chit 2026 month 3 · ₹30,000 · Cash		
+145	1	2026-10-09T10:33:32.432482600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Mahesh · Friends chit 2026 month 3 · ₹30,000 · Cash		
+146	1	2026-10-09T10:33:33.193223900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Sunitha · Friends chit 2026 month 3 · ₹30,000 · Cash		
+147	1	2026-10-09T10:33:33.882821600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Raju · Friends chit 2026 month 3 · ₹30,000 · Cash		
+148	1	2026-10-09T10:33:34.376221	1	Administrator	WEB		POSTED	Host a Chit	Collected · Shobha · Friends chit 2026 month 3 · ₹30,000 · Cash		
+149	1	2026-10-09T10:33:35.496646700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Revathi · Friends chit 2026 month 3 · ₹30,000 · Cash		
+150	1	2026-10-09T10:33:36.175369800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Priya Sharma · Friends chit 2026 month 3 · ₹30,000 · Cash		
+151	1	2026-10-09T10:33:36.821871100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Arjun · Friends chit 2026 month 3 · ₹30,000 · Cash		
+152	1	2026-10-09T10:33:37.257582300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Balaji · Friends chit 2026 month 3 · ₹30,000 · Cash		
+153	1	2026-10-09T10:33:38.519275600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Venkatesh · Friends chit 2026 month 3 · ₹30,000 · Cash		
+154	1	2026-10-09T10:33:39.332843400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Jyothi · Friends chit 2026 month 3 · ₹30,000 · Cash		
+155	1	2026-10-09T10:33:40.094597500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Madhavi · Friends chit 2026 month 3 · ₹30,000 · Cash		
+156	1	2026-10-09T10:33:40.808085	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ramesh Naidu · Friends chit 2026 month 3 · ₹30,000 · Cash		
+157	1	2026-10-09T10:34:20.432681800	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test month 1 · 20 members · ₹500,000		
+158	1	2026-10-09T10:34:25.464559800	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Swathi · Test month 1 · ₹475,000 · commission ₹25,000		
+159	1	2026-10-09T10:34:30.045866400	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test month 2 · 20 members · ₹505,000		
+160	1	2026-10-09T10:34:37.813432300	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Test month 2 · Mahesh · random draw		
+161	1	2026-10-09T10:34:43.123546300	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Mahesh · Test month 2 · ₹480,000 · commission ₹25,000		
+162	1	2026-10-09T10:34:46.941601700	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test month 3 · 20 members · ₹510,000		
+163	1	2026-10-09T10:34:53.263791900	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · test month 2 · 20 members · ₹505,000		
+164	1	2026-10-09T10:34:57.307330700	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Family Chit 2026 month 6 · 12 members · ₹280,000		
+165	1	2026-10-09T10:35:01.810073900	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test month 2 · 20 members · ₹500,000		
+166	1	2026-10-09T10:35:13.273669	1	Administrator	WEB		POSTED	Host a Chit	Collected · Naresh · Family Chit 2026 month 3 · ₹25,000 · Cash		
+167	1	2026-10-09T10:35:14.219140200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Suresh Reddy · Family Chit 2026 month 3 · ₹25,000 · Cash		
+168	1	2026-10-09T10:35:14.953314400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Mahesh · Family Chit 2026 month 4 · ₹10,000 · Cash		
+169	1	2026-10-09T10:35:15.724266400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Family Chit 2026 month 4 · ₹5,000 · Cash		
+170	1	2026-10-09T10:35:16.279365900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Prakash · Family Chit 2026 month 4 · ₹15,000 · Cash		
+171	1	2026-10-09T10:35:17.418683400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Swathi · Family Chit 2026 month 5 · ₹25,000 · Cash		
+172	1	2026-10-09T10:35:18.241330200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ramesh Naidu · Family Chit 2026 month 5 · ₹15,000 · Cash		
+173	1	2026-10-09T10:35:18.805920400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Sandhya · Family Chit 2026 month 5 · ₹15,000 · Cash		
+174	1	2026-10-09T10:35:19.340285100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Family Chit 2026 month 5 · ₹25,000 · Cash		
+175	1	2026-10-09T10:40:07.978459700	1	Administrator	WEB		DELETED	Host a Chit	Cleared the demo chit		
+176	1	2026-10-09T10:40:19.723397	1	Administrator	WEB		DELETED	Host a Chit	Deleted a hosted chit · Test		
+177	1	2026-10-09T10:40:27.082419	1	Administrator	WEB		DELETED	Host a Chit	Deleted a hosted chit · test		
+178	1	2026-10-09T10:40:35.789645900	1	Administrator	WEB		DELETED	Host a Chit	Deleted a hosted chit · Test		
+179	1	2026-10-09T10:40:40.394601800	1	Administrator	WEB		DELETED	Host a Chit	Deleted a hosted chit · Friends chit 2026		
+180	1	2026-10-09T10:40:56.761648700	1	Administrator	WEB		DELETED	Accounts	Deleted an account · test - collections	DELETE	/api/accounts/10
+181	1	2026-10-09T10:41:04.540534	1	Administrator	WEB		DELETED	Accounts	Deleted an account · test - commission	DELETE	/api/accounts/11
+182	1	2026-10-09T10:41:43.014038400	1	Administrator	WEB		ADDED	Host a Chit	Loaded the demo chit · Family Chit 2026		
+183	1	2026-10-09T10:41:43.035397700	1	Administrator	WEB		ADDED	Host a Chit	Loaded the demo chit · Auction Chit 10L		
+184	1	2026-10-09T10:41:50.063499400	1	Administrator	WEB		DELETED	Host a Chit	Cleared the demo chit		
+185	1	2026-10-09T10:47:31.079865100	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Aditya-Chitfunds(500000) · ₹500,000 · 20 members		
+186	1	2026-10-09T10:47:59.881451300	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya-Chitfunds(500000) month 1 · 20 members · ₹500,000		
+187	1	2026-10-09T10:48:48.364159500	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya-Chitfunds(500000) month 1 · Swathi · random draw		
+188	1	2026-10-09T10:48:52.320954700	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Swathi · Aditya-Chitfunds(500000) month 1 · ₹475,000 · commission ₹25,000		
+189	1	2026-10-09T11:00:18.099905500	1	Administrator	WEB		ADDED	Host a Chit	Loaded the demo chit · Family Chit 2026		
+190	1	2026-10-09T11:00:18.123216400	1	Administrator	WEB		ADDED	Host a Chit	Loaded the demo chit · Auction Chit 10L		
+191	1	2026-10-09T11:00:22.543415900	1	Administrator	WEB		DELETED	Host a Chit	Cleared the demo chit		
+192	1	2026-10-09T11:33:05.613595600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Gopal · Aditya-Chitfunds(500000) month 2 · ₹25,000 · Cash · RC-000726		
+193	1	2026-10-09T11:33:36.439576100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Revathi · Aditya-Chitfunds(500000) month 2 · ₹25,000 · Cash · RC-000727		
+194	1	2026-10-09T11:33:51.771239400	1	Administrator	WEB		DELETED	Host a Chit	Deleted a hosted chit · Aditya-Chitfunds(500000)		
+195	1	2026-10-09T11:39:51.801963800	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Aditya Chitfunds(5L-OCT26-MAY28) · ₹500,000 · 20 members		
+196	1	2026-10-09T11:40:07.792147800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Venkatesh · Aditya Chitfunds(5L-OCT26-MAY28) month 1 · ₹25,000 · Cash · RC-000728		
+197	1	2026-10-09T11:41:21.734328100	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 1 · 19 members · ₹475,000		
+198	1	2026-10-09T11:41:59.186215400	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 1 · Divya · random draw		
+199	1	2026-10-09T11:42:53.179350400	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000001 · Divya · Aditya Chitfunds(5L-OCT26-MAY28) month 1 · ₹475,000		
+200	1	2026-10-09T11:42:53.202210500	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Divya · Aditya Chitfunds(5L-OCT26-MAY28) month 1 · ₹475,000 · commission ₹25,000		
+201	1	2026-10-09T11:43:26.744224400	1	Administrator	WEB		CHANGED	Host a Chit	Agreement signed in person · AG-000001 · Aditya Chitfunds(5L-OCT26-MAY28) month 1		
+202	1	2026-10-09T11:45:01.515298800	1	Administrator	WEB		ADDED	Host a Chit	Shared Divya's statement · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+203	1	2026-10-09T11:46:47.520334600	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Divya · Aditya Chitfunds(5L-OCT26-MAY28) · 90 days		
+204	1	2026-10-09T11:52:19.137557500	1	Administrator	WEB		ADDED	Host a Chit	Shared Suresh Reddy's statement · Aditya Chitfunds(5L-OCT26-MAY28) · 7 days		
+205	1	2026-10-09T11:53:36.579868500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) month 2 · ₹15,000 · Cash · RC-000748		
+206	1	2026-10-09T11:53:48.516723300	1	Administrator	WEB		ADDED	Host a Chit	Shared a receipt to Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) · 90 days		
+207	1	2026-10-09T12:13:53.459149	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 2 · 20 members · ₹490,000		
+208	1	2026-10-09T12:13:58.942268600	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 2 · Swathi · random draw		
+209	1	2026-10-09T12:16:27.756741600	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000002 · Swathi · Aditya Chitfunds(5L-OCT26-MAY28) month 2 · ₹480,000		
+210	1	2026-10-09T12:16:27.782682300	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Swathi · Aditya Chitfunds(5L-OCT26-MAY28) month 2 · ₹480,000 · commission ₹25,000		
+211	1	2026-10-09T12:16:38.510356600	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Swathi · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+212	1	2026-10-09T12:17:07.656270100		Swathi	WEB		ACCEPTED	Host a Chit	Agreement AG-000002 accepted by Swathi · Aditya Chitfunds(5L-OCT26-MAY28) month 2	POST	/public/hosted-chits
+213	1	2026-10-09T12:39:52.543960400	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 3 · 20 members · ₹510,000		
+214	1	2026-10-09T12:40:00.741333500	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 3 · Ravi Kumar · random draw		
+215	1	2026-10-09T12:40:24.876472300	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000003 · Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) month 3 · ₹485,000		
+216	1	2026-10-09T12:40:24.903399200	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) month 3 · ₹485,000 · commission ₹25,000		
+217	1	2026-10-09T12:40:34.586332600	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+218	1	2026-10-09T12:41:48.282750800		Ravi Kumar	WEB		ACCEPTED	Host a Chit	Agreement AG-000003 accepted by Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) month 3	POST	/public/hosted-chits
+219	1	2026-10-09T12:45:13.482626600	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) · 90 days		
+220	1	2026-10-09T12:45:40.680646600	1	Administrator	WEB		ADDED	Host a Chit	Shared Lakshmi Devi's statement · Aditya Chitfunds(5L-OCT26-MAY28) · 7 days		
+221	1	2026-10-09T12:49:13.324800800	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 4 · 20 members · ₹515,000		
+222	1	2026-10-09T12:49:19.874430300	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 4 · Shobha · random draw		
+223	1	2026-10-09T12:49:45.624517	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000004 · Shobha · Aditya Chitfunds(5L-OCT26-MAY28) month 4 · ₹490,000		
+224	1	2026-10-09T12:49:45.645170500	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Shobha · Aditya Chitfunds(5L-OCT26-MAY28) month 4 · ₹490,000 · commission ₹25,000		
+225	1	2026-10-09T12:49:49.590647200	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Shobha · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+226	1	2026-10-09T12:50:34.654855800		Shobha	WEB		ACCEPTED	Host a Chit	Agreement AG-000004 accepted by Shobha · Aditya Chitfunds(5L-OCT26-MAY28) month 4	POST	/public/hosted-chits
+227	1	2026-10-09T12:52:00.221023400	1	Administrator	WEB		ADDED	Host a Chit	Made payment links for 20 members · Aditya Chitfunds(5L-OCT26-MAY28)		
+228	1	2026-10-09T13:38:34.893376900	1	Administrator	WEB		CHANGED	Host a Chit	Set the receipt signature · Aditya Chitfunds(5L-OCT26-MAY28)		
+229	1	2026-10-09T13:39:48.843181400	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 5 · 20 members · ₹520,000		
+230	1	2026-10-09T13:40:17.192598900	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 5 · Srinivas · picked		
+231	1	2026-10-09T13:40:52.476872100	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000005 · Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) month 5 · ₹495,000		
+232	1	2026-10-09T13:40:52.498782700	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) month 5 · ₹495,000 · commission ₹25,000		
+233	1	2026-10-09T13:40:58.772820200	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+234	1	2026-10-09T13:41:41.065661		Srinivas	WEB		ACCEPTED	Host a Chit	Agreement AG-000005 accepted by Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) month 5	POST	/public/hosted-chits
+235	1	2026-10-09T13:43:50.454125	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) · 90 days		
+236	1	2026-10-09T13:47:22.357193200	1	Administrator	WEB		ADDED	Host a Chit	Made receipt links for 1 payment · Aditya Chitfunds(5L-OCT26-MAY28)		
+237	1	2026-10-09T13:49:40.335248700	1	Administrator	WEB		ADDED	Host a Chit	Shared Raju's statement · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+238	1	2026-10-09T13:54:22.591131800	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Test_Chit · auction · ₹1,000,000 · 20 members		
+239	1	2026-10-09T13:55:22.602427800	1	Administrator	WEB		CHANGED	Host a Chit	Recorded the auction · Test_Chit month 1 · Prakash · bid ₹225,000		
+240	1	2026-10-09T13:55:33.243269700	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test_Chit month 1 · 20 members · ₹825,000		
+241	1	2026-10-09T13:55:55.750007500	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000006 · Prakash · Test_Chit month 1 · ₹775,000		
+242	1	2026-10-09T13:55:55.765491400	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Prakash · Test_Chit month 1 · ₹775,000 · commission ₹50,000		
+243	1	2026-10-09T13:56:00.093119	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Prakash · Test_Chit · 30 days		
+244	1	2026-10-09T13:56:35.194390700		Prakash	WEB		ACCEPTED	Host a Chit	Agreement AG-000006 accepted by Prakash · Test_Chit month 1	POST	/public/hosted-chits
+245	1	2026-10-09T14:08:45.103945200	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test_Chit month 2 · 20 members · ₹1,000,000		
+246	1	2026-10-09T14:09:03.012895700	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 6 · 20 members · ₹525,000		
+247	1	2026-10-09T14:10:04.856083600	1	Administrator	WEB		CHANGED	Host a Chit	Recorded the auction · Test_Chit month 2 · Divya · bid ₹289,000		
+248	1	2026-10-09T14:10:23.610190600	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000007 · Divya · Test_Chit month 2 · ₹711,000		
+249	1	2026-10-09T14:10:23.636841	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Divya · Test_Chit month 2 · ₹711,000 · commission ₹50,000		
+250	1	2026-10-09T14:11:59.197421400	1	Administrator	WEB		CHANGED	Host a Chit	Recorded the auction · Test_Chit month 3 · Kavitha · bid ₹269,000		
+251	1	2026-10-09T14:44:27.404306500	1	Administrator	WEB		CHANGED	Host a Chit	Cleared the winner · Test_Chit month 3		
+252	1	2026-10-09T14:44:30.803351	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Test_Chit month 3 · 20 members · ₹1,000,000		
+253	1	2026-10-09T15:00:07.155191400	1	Administrator	WEB		CHANGED	Host a Chit	Recorded the auction · Test_Chit month 3 · Raju · bid ₹268,000		
+254	1	2026-10-09T15:00:21.133155600	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000008 · Raju · Test_Chit month 3 · ₹732,000		
+255	1	2026-10-09T15:00:21.155660400	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Raju · Test_Chit month 3 · ₹732,000 · commission ₹50,000		
+256	1	2026-10-09T15:00:50.532350500	1	Administrator	WEB		CHANGED	Host a Chit	Recorded the auction · Test_Chit month 4 · Kavitha · bid ₹225,000		
+257	1	2026-10-09T15:01:07.498124300	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000009 · Kavitha · Test_Chit month 4 · ₹775,000		
+258	1	2026-10-09T15:01:07.507412500	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Kavitha · Test_Chit month 4 · ₹775,000 · commission ₹50,000 · closed with ₹825,000 due		
+259	1	2026-10-09T15:01:29.475521300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Revathi · Test_Chit month 4 · ₹41,250 · Cash · RC-000909		
+260	1	2026-10-09T15:01:30.663903	1	Administrator	WEB		POSTED	Host a Chit	Collected · Gopal · Test_Chit month 4 · ₹41,250 · Cash · RC-000910		
+261	1	2026-10-09T15:01:32.430166400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Test_Chit month 4 · ₹41,250 · Cash · RC-000911		
+262	1	2026-10-09T15:01:33.149798400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Balaji · Test_Chit month 4 · ₹41,250 · Cash · RC-000912		
+263	1	2026-10-09T15:01:34.454093700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Raju · Test_Chit month 4 · ₹41,250 · Cash · RC-000913		
+264	1	2026-10-09T15:18:04.148917900	1	Administrator	WEB		CHANGED	Settings	E-mail settings switched on · smtp.gmail.com · maheshreddy.chinnala@gmail.com		
+265	1	2026-10-09T15:18:04.314045200	1	Administrator	WEB		CHANGED	Other	PUT /admin/mail-settings	PUT	/api/admin/mail-settings
+266	1	2026-10-09T15:18:55.251239100	1	Administrator	WEB		CHANGED	Settings	E-mail settings switched on · smtp.gmail.com · maheshreddy.chinnala@gmail.com		
+267	1	2026-10-09T15:18:55.308542900	1	Administrator	WEB		CHANGED	Other	PUT /admin/mail-settings	PUT	/api/admin/mail-settings
+268	1	2026-10-09T15:33:51.230745800	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Test · ₹500,000 · 20 members		
+269	1	2026-10-09T15:34:17.306877800	1	Administrator	WEB		ADDED	Host a Chit	Shared Vani's statement · Test · 7 days		
+270	1	2026-10-09T15:38:57.238695300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Test_Chit month 4 · ₹41,250 · Cash · RC-000914		
+271	1	2026-10-09T15:38:57.979777200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Sandhya · Test_Chit month 4 · ₹41,250 · Cash · RC-000915		
+272	1	2026-10-09T15:38:58.620317800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Prakash · Test_Chit month 4 · ₹41,250 · Cash · RC-000916		
+273	1	2026-10-09T15:39:02.428543200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Madhavi · Test_Chit month 4 · ₹41,250 · Cash · RC-000917		
+274	1	2026-10-09T15:39:03.564950900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Naresh · Test_Chit month 4 · ₹41,250 · Cash · RC-000918		
+275	1	2026-10-09T15:39:04.533567600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Suresh Reddy · Test_Chit month 4 · ₹41,250 · Cash · RC-000919		
+276	1	2026-10-09T15:39:05.377056700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Harish · Test_Chit month 4 · ₹41,250 · Cash · RC-000920		
+277	1	2026-10-09T15:39:07.737377100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Anitha Rao · Test_Chit month 4 · ₹41,250 · Cash · RC-000921		
+278	1	2026-10-09T15:39:09.076881800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Sunitha · Test_Chit month 4 · ₹41,250 · Cash · RC-000922		
+279	1	2026-10-09T15:39:09.892513100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Jyothi · Test_Chit month 4 · ₹41,250 · Cash · RC-000923		
+280	1	2026-10-09T15:39:11.908816200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Vani · Test_Chit month 4 · ₹41,250 · Cash · RC-000924		
+281	1	2026-10-09T15:39:13.036075600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ravi Kumar · Test_Chit month 4 · ₹41,250 · Cash · RC-000925		
+282	1	2026-10-09T15:39:14.064996800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Kavitha · Test_Chit month 4 · ₹41,250 · Cash · RC-000926		
+283	1	2026-10-09T15:39:15.553933500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Venkatesh · Test_Chit month 4 · ₹41,250 · Cash · RC-000927		
+284	1	2026-10-09T15:39:16.395987100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Arjun · Test_Chit month 4 · ₹41,250 · Cash · RC-000928		
+285	1	2026-10-09T15:39:55.616635100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Venkatesh · Test month 1 · ₹25,000 · Cash · RC-000929		
+286	1	2026-10-09T15:40:01.115038400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Balaji · Test month 1 · ₹25,000 · Cash · RC-000930		
+287	1	2026-10-09T15:40:16.613031900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Vani · Test month 1 · ₹25,000 · Cash · RC-000931		
+288	1	2026-10-09T15:40:40.541016800	1	Administrator	WEB		CHANGED	Host a Chit	Set the receipt signature · Test		
+289	1	2026-10-09T15:42:54.412110200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Swathi · Test month 1 · ₹25,000 · Cash · RC-000932		
+290	1	2026-10-09T15:42:59.091111500	1	Administrator	WEB		ADDED	Host a Chit	Made receipt links for 1 payment · Test		
+291	1	2026-10-09T20:06:07.899006100	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+292	1	2026-10-10T00:14:24.627696100	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+293	1	2026-10-10T00:16:16.493470800	1	Administrator	MOBILE		SIGNED_IN	Sign-in	Signed in on the mobile version		
+294	1	2026-10-10T00:17:06.025621500	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+295	1	2026-10-10T00:17:25.461729700	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+296	1	2026-10-10T00:17:44.452450600	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 6 · Sunitha · random draw		
+297	1	2026-10-10T00:17:55.654758200	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000010 · Sunitha · Aditya Chitfunds(5L-OCT26-MAY28) month 6 · ₹500,000		
+298	1	2026-10-10T00:17:55.677218	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Sunitha · Aditya Chitfunds(5L-OCT26-MAY28) month 6 · ₹500,000 · commission ₹25,000		
+299	1	2026-10-10T00:18:00.932029800	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Sunitha · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+300	1	2026-10-10T00:18:43.261599400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Venkatesh · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000933		
+301	1	2026-10-10T00:19:13.431654900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Raju · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000934		
+302	1	2026-10-10T00:19:14.505483200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Balaji · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000935		
+303	1	2026-10-10T00:19:16.196779	1	Administrator	WEB		POSTED	Host a Chit	Collected · Jyothi · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000936		
+304	1	2026-10-10T00:19:17.508139200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹30,000 · Cash · RC-000937		
+305	1	2026-10-10T00:19:18.246453300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Suresh Reddy · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000938		
+306	1	2026-10-10T00:19:54.512647	1	Administrator	WEB		ADDED	Host a Chit	Shared Raju's statement · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+307	1	2026-10-10T00:20:09.501301300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000939		
+308	1	2026-10-10T00:20:23.150718	1	Administrator	WEB		POSTED	Host a Chit	Collected · Shobha · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹30,000 · Cash · RC-000940		
+309	1	2026-10-10T00:20:38.106012200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ramesh Naidu · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000941		
+310	1	2026-10-10T00:21:20.496100600	1	Administrator	WEB		ADDED	Host a Chit	Started a hosted chit · Adity Chitfunds(5L) · ₹500,000 · 20 members		
+311	1	2026-10-10T00:21:38.293385200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Jyothi · Adity Chitfunds(5L) month 1 · ₹25,000 · Cash · RC-000942		
+312	1	2026-10-10T00:22:11.477826900	1	Administrator	WEB		CHANGED	Host a Chit	Set the receipt signature · Adity Chitfunds(5L)		
+313	1	2026-10-10T00:22:17.373469600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Mahesh · Adity Chitfunds(5L) month 1 · ₹25,000 · Cash · RC-000943		
+314	1	2026-10-10T00:24:44.937423900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Srinivas · Adity Chitfunds(5L) month 1 · ₹25,000 · Cash · RC-000944		
+315	1	2026-10-10T00:24:58.070354100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Adity Chitfunds(5L) month 1 · ₹25,000 · Cash · RC-000945		
+316	1	2026-10-10T00:32:45.713443	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+317	1	2026-10-10T16:37:57.985541500	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+318	1	2026-10-10T17:00:08.350822500	1	Administrator	WEB		SIGNED_IN	Sign-in	Signed in		
+319	1	2026-10-10T17:31:36.053883700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Prakash · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000946		
+320	1	2026-10-10T17:31:38.039251800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹30,000 · Cash · RC-000947		
+321	1	2026-10-10T17:32:06.150904900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Padma · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000948		
+322	1	2026-10-10T17:32:21.502775600	1	Administrator	WEB		CHANGED	Host a Chit	Set the receipt signature · Aditya Chitfunds(5L-OCT26-MAY28)		
+323	1	2026-10-10T17:32:26.267722700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Swathi · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹30,000 · Cash · RC-000949		
+324	1	2026-10-10T17:34:12.607331400	1	Administrator	WEB		DELETED	Host a Chit	Deleted a hosted chit · Test · reverted 4 payment(s), 0 payout(s) and 4 journal entries		
+325	1	2026-10-10T17:34:25.872482200	1	Administrator	WEB		DELETED	Host a Chit	Deleted a hosted chit · Adity Chitfunds(5L) · reverted 4 payment(s), 0 payout(s) and 4 journal entries		
+326	1	2026-10-10T17:34:49.559310700	1	Administrator	WEB		DELETED	Host a Chit	Deleted the agreement AG-000010 · Aditya Chitfunds(5L-OCT26-MAY28) month 6		
+327	1	2026-10-10T17:36:08.683660500	1	Administrator	WEB		DELETED	Host a Chit	Deleted a chit account · Aditya-Chitfunds(500000) - collections		
+328	1	2026-10-10T17:37:25.076453200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Sunitha · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹30,000 · Cash · RC-000950		
+329	1	2026-10-10T17:37:25.934805800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Anitha Rao · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000951		
+330	1	2026-10-10T17:37:26.600371300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Naresh · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000952		
+331	1	2026-10-10T17:37:27.260924800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Priya Sharma · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000953		
+332	1	2026-10-10T17:37:27.958198100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹30,000 · Cash · RC-000954		
+333	1	2026-10-10T17:37:29.196199700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Madhavi · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000955		
+334	1	2026-10-10T17:37:30.272736900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Gopal · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹25,000 · Cash · RC-000956		
+335	1	2026-10-10T17:37:35.322937600	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · Padma · random draw		
+336	1	2026-10-10T17:37:39.805918500	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000011 · Padma · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹505,000		
+337	1	2026-10-10T17:37:39.830687600	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Padma · Aditya Chitfunds(5L-OCT26-MAY28) month 7 · ₹505,000 · commission ₹25,000		
+338	1	2026-10-10T17:37:53.051325200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Jyothi · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000957		
+339	1	2026-10-10T17:37:54.569167300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000958		
+340	1	2026-10-10T17:37:55.185652100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Venkatesh · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000959		
+341	1	2026-10-10T17:37:55.742431500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Raju · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000960		
+342	1	2026-10-10T17:37:56.276987900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Balaji · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000961		
+343	1	2026-10-10T17:37:56.824080600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹30,000 · Cash · RC-000962		
+344	1	2026-10-10T17:37:57.346041100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Suresh Reddy · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000963		
+345	1	2026-10-10T17:37:57.986657100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Prakash · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000964		
+346	1	2026-10-10T17:37:58.471226400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Shobha · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹30,000 · Cash · RC-000965		
+347	1	2026-10-10T17:37:58.940529500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹30,000 · Cash · RC-000966		
+348	1	2026-10-10T17:37:59.410196800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ramesh Naidu · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000967		
+349	1	2026-10-10T17:37:59.923984	1	Administrator	WEB		POSTED	Host a Chit	Collected · Padma · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹30,000 · Cash · RC-000968		
+350	1	2026-10-10T17:38:00.353901500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Gopal · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000969		
+351	1	2026-10-10T17:38:00.821987700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Swathi · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹30,000 · Cash · RC-000970		
+352	1	2026-10-10T17:38:01.266548500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Madhavi · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000971		
+353	1	2026-10-10T17:38:31.336706	1	Administrator	WEB		POSTED	Host a Chit	Collected · Anitha Rao · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000973		
+354	1	2026-10-10T17:38:32.157451500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Naresh · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000974		
+355	1	2026-10-10T17:38:32.843071600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Priya Sharma · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹25,000 · Cash · RC-000975		
+356	1	2026-10-10T17:38:33.522708300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹30,000 · Cash · RC-000976		
+357	1	2026-10-10T17:38:40.925000700	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · Prakash · random draw		
+358	1	2026-10-10T17:39:42.805866600	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000012 · Prakash · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹510,000		
+359	1	2026-10-10T17:39:42.837504400	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Prakash · Aditya Chitfunds(5L-OCT26-MAY28) month 8 · ₹510,000 from 2 accounts · commission ₹25,000		
+360	1	2026-10-10T17:40:33.022232300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000977		
+361	1	2026-10-10T17:40:33.755757400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Venkatesh · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000978		
+362	1	2026-10-10T17:40:34.406943700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Raju · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000979		
+363	1	2026-10-10T17:40:35.151436600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Balaji · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000980		
+364	1	2026-10-10T17:40:35.803241900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Jyothi · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000981		
+365	1	2026-10-10T17:40:36.441201900	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000982		
+366	1	2026-10-10T17:40:37.042674600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Suresh Reddy · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000983		
+367	1	2026-10-10T17:40:37.729464500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Prakash · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000984		
+368	1	2026-10-10T17:40:38.399503300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Shobha · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000985		
+369	1	2026-10-10T17:40:38.984505100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000986		
+370	1	2026-10-10T17:40:39.576413700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ramesh Naidu · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000987		
+371	1	2026-10-10T17:40:40.201869400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Padma · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000988		
+372	1	2026-10-10T17:40:41.006945	1	Administrator	WEB		POSTED	Host a Chit	Collected · Gopal · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000989		
+373	1	2026-10-10T17:40:41.537356600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Swathi · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000990		
+374	1	2026-10-10T17:40:42.236384500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Madhavi · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000991		
+375	1	2026-10-10T17:40:42.940994600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Sunitha · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000992		
+376	1	2026-10-10T17:40:43.608609800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Anitha Rao · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000993		
+377	1	2026-10-10T17:40:44.300086400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Naresh · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000994		
+378	1	2026-10-10T17:40:44.983353600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Priya Sharma · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹25,000 · Cash · RC-000995		
+379	1	2026-10-10T17:40:45.667771600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹30,000 · Cash · RC-000996		
+380	1	2026-10-10T17:40:51.783886700	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · Raju · random draw		
+381	1	2026-10-10T17:49:41.310945300	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000013 · Raju · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹515,000		
+382	1	2026-10-10T17:49:41.333137400	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Raju · Aditya Chitfunds(5L-OCT26-MAY28) month 9 · ₹515,000 from 3 accounts · commission ₹25,000		
+383	1	2026-10-10T17:52:53.628532600	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 10 · Venkatesh · random draw		
+384	1	2026-10-10T17:56:25.675075600	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 10 · 20 members · ₹545,000		
+385	1	2026-10-10T17:58:29.048604800	1	Administrator	WEB		DELETED	Host a Chit	Deleted the agreement AG-000013 · Aditya Chitfunds(5L-OCT26-MAY28) month 9		
+386	1	2026-10-10T18:14:43.337783100	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000014 · Venkatesh · Aditya Chitfunds(5L-OCT26-MAY28) month 10 · ₹520,000		
+387	1	2026-10-10T18:14:43.385670700	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Venkatesh · Aditya Chitfunds(5L-OCT26-MAY28) month 10 · ₹520,000 from 3 accounts · commission ₹25,000		
+388	1	2026-10-10T18:15:15.655806400	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 11 · Anitha Rao · random draw		
+389	1	2026-10-10T18:16:30.568994500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Priya Sharma · Aditya Chitfunds(5L-OCT26-MAY28) month 11 · ₹25,000 · UPI · RC-001017		
+390	1	2026-10-10T18:16:33.505965300	1	Administrator	WEB		POSTED	Host a Chit	Collected · Srinivas · Aditya Chitfunds(5L-OCT26-MAY28) month 11 · ₹30,000 · UPI · RC-001018		
+391	1	2026-10-10T18:16:42.958287600	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 11 · 18 members · ₹495,000 · paid the winner directly		
+392	1	2026-10-10T18:17:41.828254100	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000015 · Anitha Rao · Aditya Chitfunds(5L-OCT26-MAY28) month 11 · ₹525,000		
+393	1	2026-10-10T18:17:41.847430600	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Anitha Rao · Aditya Chitfunds(5L-OCT26-MAY28) month 11 · ₹525,000 from 3 accounts · commission ₹25,000		
+394	1	2026-10-10T18:25:31.519274700	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹1,000 · Cash · RC-001037		
+395	1	2026-10-10T18:25:49.847356100	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · Ramesh Naidu · random draw		
+396	1	2026-10-10T18:26:05.358814400	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹3,000 · Cash · paid directly to Ramesh Naidu · RC-001038		
+397	1	2026-10-10T18:26:21.716185200	1	Administrator	WEB		POSTED	Host a Chit	Collected · Lakshmi Devi · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹21,000 · Cash · RC-001039		
+398	1	2026-10-10T18:26:37.344372500	1	Administrator	WEB		POSTED	Host a Chit	Collected · Balaji · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹25,000 · UPI · RC-001040		
+399	1	2026-10-10T18:26:42.026949800	1	Administrator	WEB		POSTED	Host a Chit	Collected · Jyothi · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹25,000 · UPI · RC-001041		
+400	1	2026-10-10T18:26:44.177080100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Divya · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹30,000 · UPI · RC-001042		
+401	1	2026-10-10T18:26:46.155224100	1	Administrator	WEB		POSTED	Host a Chit	Collected · Ravi Kumar · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹30,000 · UPI · RC-001043		
+402	1	2026-10-10T18:26:47.748986600	1	Administrator	WEB		POSTED	Host a Chit	Collected · Madhavi · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹25,000 · UPI · RC-001044		
+403	1	2026-10-10T18:26:49.835427	1	Administrator	WEB		POSTED	Host a Chit	Collected · Swathi · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹30,000 · UPI · RC-001045		
+404	1	2026-10-10T18:26:55.262675600	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · 13 members · ₹365,000 · paid the winner directly		
+405	1	2026-10-10T18:27:18.331408400	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000016 · Ramesh Naidu · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹530,000		
+406	1	2026-10-10T18:27:18.342161100	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Ramesh Naidu · Aditya Chitfunds(5L-OCT26-MAY28) month 12 · ₹530,000 from 2 accounts · commission ₹25,000		
+407	1	2026-10-10T18:49:43.316645300	1	Administrator	WEB		CHANGED	Host a Chit	Edited a hosted chit · Aditya Chitfunds(5L-OCT26-MAY28) · posts to the books		
+408	1	2026-10-10T18:50:02.443896800	1	Administrator	WEB		CHANGED	Host a Chit	Edited a hosted chit · Aditya Chitfunds(5L-OCT26-MAY28) · posts to the books		
+409	1	2026-10-10T18:50:36.936879300	1	Administrator	WEB		CHANGED	Host a Chit	Edited a hosted chit · Aditya Chitfunds(5L-OCT26-MAY28) · posts to the books		
+410	1	2026-10-10T18:53:38.929234400	1	Administrator	WEB		POSTED	Host a Chit	My money put into the chit accounts · ₹6,000 · Cash Account → Aditya Chitfunds(5L-OCT26-MAY28) - collections · Aditya Chitfunds(5L-OCT26-MAY28)		
+411	1	2026-10-10T19:45:55.975583400	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 13 · Madhavi · random draw		
+412	1	2026-10-10T19:46:01.375678400	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 13 · 20 members · ₹560,000		
+413	1	2026-10-10T19:47:10.425790100	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000017 · Madhavi · Aditya Chitfunds(5L-OCT26-MAY28) month 13 · ₹535,000		
+414	1	2026-10-10T19:47:10.460482100	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Madhavi · Aditya Chitfunds(5L-OCT26-MAY28) month 13 · ₹535,000 from 2 accounts · commission ₹25,000		
+415	1	2026-10-10T19:57:52.543369200	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 14 · Priya Sharma · random draw		
+416	1	2026-10-10T19:57:55.961118200	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 14 · 20 members · ₹565,000		
+417	1	2026-10-10T19:58:59.358813800	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000018 · Priya Sharma · Aditya Chitfunds(5L-OCT26-MAY28) month 14 · ₹540,000		
+418	1	2026-10-10T19:58:59.386280300	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Priya Sharma · Aditya Chitfunds(5L-OCT26-MAY28) month 14 · ₹540,000 · commission ₹25,000		
+419	1	2026-10-10T19:59:05.720887900	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 15 · Balaji · random draw		
+420	1	2026-10-10T19:59:08.612186300	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 15 · 20 members · ₹570,000		
+421	1	2026-10-10T19:59:16.737797700	1	Administrator	WEB		ADDED	Host a Chit	Made the agreement AG-000019 · Balaji · Aditya Chitfunds(5L-OCT26-MAY28) month 15 · ₹545,000		
+422	1	2026-10-10T19:59:16.793757100	1	Administrator	WEB		POSTED	Host a Chit	Paid out · Balaji · Aditya Chitfunds(5L-OCT26-MAY28) month 15 · ₹545,000 · commission ₹25,000		
+423	1	2026-10-10T19:59:18.339926600	1	Administrator	WEB		ADDED	Host a Chit	Shared the agreement with Balaji · Aditya Chitfunds(5L-OCT26-MAY28) · 30 days		
+424	1	2026-10-10T19:59:23.350913900	1	Administrator	WEB		CHANGED	Host a Chit	Chose the winner · Aditya Chitfunds(5L-OCT26-MAY28) month 16 · Gopal · random draw		
+425	1	2026-10-10T19:59:26.254009600	1	Administrator	WEB		POSTED	Host a Chit	Marked all paid · Aditya Chitfunds(5L-OCT26-MAY28) month 16 · 20 members · ₹575,000		
+426	1	2026-10-10T20:00:22.203799500	1	Administrator	WEB		CHANGED	Host a Chit	Edited a hosted chit · Aditya Chitfunds(5L-OCT26-MAY28) · posts to the books		

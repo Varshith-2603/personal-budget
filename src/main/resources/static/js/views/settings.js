@@ -19,6 +19,7 @@ const SECTIONS = [
     { id: 'shortcuts', label: 'Keyboard', iconName: 'keyboard', hint: 'Every shortcut' },
     { id: 'mobile', label: 'Mobile app', iconName: 'phone', hint: 'Address and who can use it' },
     { id: 'email', label: 'E-mail', iconName: 'mail', hint: 'Account for reminders and receipts' },
+    { id: 'chits', label: 'Host a Chit', iconName: 'hand-coins', hint: 'Company name for new chits' },
 ];
 
 export async function render(container, params, isCurrent) {
@@ -54,6 +55,7 @@ export async function render(container, params, isCurrent) {
     if (section === 'preferences') renderPreferences(body);
     if (section === 'mobile') await renderMobile(body, () => render(container, params, isCurrent));
     if (section === 'email') await renderMail(body, () => render(container, params, isCurrent));
+    if (section === 'chits') await renderChitSettings(body, () => render(container, params, isCurrent));
     if (section === 'shortcuts') {
         body.innerHTML = panel({ title: 'Keyboard shortcuts', iconName: 'keyboard',
             body: `<div class="shortcut-map">${SHORTCUTS.map(g => `<section><div class="section-title">${esc(g.group)}</div>
@@ -260,6 +262,43 @@ const MAIL_PRESETS = [
  * The household's own e-mail account: Host a Chit reminders and receipts go out from it. Admins only; the password
  * is stored encrypted and never shown again.
  */
+/**
+ * Host a Chit: the name the household runs its chits under. New chits are named after it, with the chit's value and
+ * the months it runs ("Aditya Chitfunds 5L (Oct26–May28)"); an admin sets it.
+ */
+async function renderChitSettings(body, reload) {
+    const admin = can('MANAGE_USERS');
+    const cfg = await api.get('/hosted-chits/settings').catch(() => ({}));
+    const sample = name => {
+        const d = new Date();
+        const tag = (plus) => { const x = new Date(d.getFullYear(), d.getMonth() + plus, 1); return x.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3) + String(x.getFullYear()).slice(2); };
+        return `${(name || cfg.householdName || 'Chit').trim()} 5L (${tag(0)}–${tag(19)})`;
+    };
+    body.innerHTML = panel({ title: 'Host a Chit', iconName: 'hand-coins', sub: 'Naming new chits',
+        body: `<form class="form-grid one chit-settings" id="chit-settings" onsubmit="return false" style="max-width:560px">
+            <label class="field"><span>Chit-funds company name</span>
+                <input type="text" name="companyName" maxlength="60" value="${esc(cfg.companyName || '')}" placeholder="${esc(cfg.householdName || 'e.g. Aditya Chitfunds')}" ${admin ? '' : 'disabled'} data-plain>
+                <small>New chits are named after it; empty uses the household's name.</small></label>
+            <div class="book-note">${icon('sparkles')}<span>A new chit of ₹5L over 20 months starting this month is named <b data-sample>${esc(sample(cfg.companyName))}</b>.
+                Auction and planned chits add “Auction” or “Planned”. You can always type another name.</span></div>
+            ${admin ? `<div class="row"><button class="btn primary" type="submit">${icon('check')}Save</button></div>`
+                : `<p class="small muted">${icon('lock')} Only an admin of the household can change it.</p>`}
+        </form>` });
+    const form = body.querySelector('#chit-settings');
+    form.companyName.addEventListener('input', () => { body.querySelector('[data-sample]').textContent = sample(form.companyName.value); });
+    form.addEventListener('submit', async () => {
+        const name = form.companyName.value.trim().replace(/\s+/g, ' ');
+        if (name && !/^[\p{L}\p{N} .&'()-]{2,60}$/u.test(name)) { toast(`Use letters, digits, spaces and . & ' ( ) - (2 to 60 characters)`, 'error'); return; }
+        try {
+            await api.put('/admin/chit-settings', { companyName: name || null });
+            toast('Saved');
+            reload();
+        } catch (err) {
+            toast(err.message, 'error');
+        }
+    });
+}
+
 async function renderMail(body, reload) {
     if (!can('MANAGE_USERS')) {
         body.innerHTML = panel({ title: 'E-mail', iconName: 'mail', body: emptyState('Only an admin of the household can set up e-mail.', 'lock') });

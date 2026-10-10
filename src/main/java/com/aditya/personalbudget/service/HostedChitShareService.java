@@ -10,6 +10,8 @@ import com.aditya.personalbudget.domain.type.Feature;
 import com.aditya.personalbudget.domain.type.UserRole;
 import com.aditya.personalbudget.exception.BusinessException;
 import com.aditya.personalbudget.exception.NotFoundException;
+import com.aditya.personalbudget.domain.entity.Account;
+import com.aditya.personalbudget.repository.AccountRepository;
 import com.aditya.personalbudget.repository.HostedChitAgreementRepository;
 import com.aditya.personalbudget.repository.HostedChitMemberRepository;
 import com.aditya.personalbudget.repository.HostedChitPaymentRepository;
@@ -134,7 +136,15 @@ public class HostedChitShareService {
                              int currentMonth, int completedMonths, String status, BigDecimal totalCollected,
                              BigDecimal totalPaidOut, boolean showEarnings, BigDecimal commission, BigDecimal commissionEarned,
                              BigDecimal held, BigDecimal pendingDues, List<PublicMonth> schedule, PublicMember member,
-                             PublicReceipt receipt, PublicAgreement agreement) {
+                             PublicReceipt receipt, PublicAgreement agreement, PublicPayTo payTo) {
+    }
+
+    /**
+     * Where a member pays (on their statement link): a UPI ID, or bank details for a transfer, signed by the organiser and
+     * sealed (HMAC over every detail and the signature) so a changed account number or UPI ID shows as tampered.
+     */
+    public record PublicPayTo(String upiId, String payeeName, String holderName, String bankName, String accountNumber, String ifsc,
+                              String signer, String signature, String seal, LocalDateTime sealedAt, String stampName) {
     }
 
     private final HostedChitShareRepository shares;
@@ -146,13 +156,15 @@ public class HostedChitShareService {
     private final HostedChitService service;
     private final ActivityService activity;
     private final AppSettingsService settings;
+    private final AccountRepository accountRepo;
     private final SecureRandom random = new SecureRandom();
 
     public HostedChitShareService(HostedChitShareRepository shares, HostedChitRepository chits, HostedChitMemberRepository members,
                                   HostedChitPaymentRepository payments, HostedChitAgreementRepository agreements,
                                   TenantRepository tenants, HostedChitService service, ActivityService activity,
-                                  AppSettingsService settings) {
+                                  AppSettingsService settings, AccountRepository accountRepo) {
         this.settings = settings;
+        this.accountRepo = accountRepo;
         this.shares = shares;
         this.chits = chits;
         this.members = members;
@@ -410,7 +422,53 @@ public class HostedChitShareService {
                 MEMBER.equals(kind) ? (c.payeeName() != null ? c.payeeName() : s.getCreatedByName()) : null,
                 c.currentMonth(), c.completedMonths(), c.status(), full ? c.totalCollected() : null, full ? c.totalPaidOut() : null,
                 earnings, earnings ? c.commission() : null, earnings ? c.commissionEarned() : null, earnings ? c.held() : null,
-                CHIT.equals(kind) ? c.pendingDues() : null, full ? schedule : List.of(), MEMBER.equals(kind) ? member : null, receipt, agreement);
+                CHIT.equals(kind) ? c.pendingDues() : null, full ? schedule : List.of(), MEMBER.equals(kind) ? member : null, receipt, agreement,
+                MEMBER.equals(kind) ? payTo(d, s, t) : null);
+    }
+
+    /**
+     * The account the member pays into: theirs if one is set, else the chit's, else the chit's collection account (when
+     * it has a UPI ID or bank details); otherwise the chit's own UPI ID. Null when there is nothing to pay into.
+     */
+    private PublicPayTo payTo(Detail d, HostedChitShare s, Tenant t) {
+        var c = d.chit();
+        HostedChit chit = chits.findById(c.id()).orElseThrow();
+        HostedChitMember m = s.getMemberId() == null ? null : members.findById(s.getMemberId()).orElse(null);
+        Account a = java.util.stream.Stream.of(m == null ? null : m.getPayToAccountId(), chit.getPayToAccountId(), chit.getAccountId())
+                .filter(Objects::nonNull).map(id -> accountRepo.findById(id).orElse(null))
+                .filter(x -> x != null && Boolean.TRUE.equals(x.getActive()) && (x.getUpiId() != null || bankReady(x)))
+                .findFirst().orElse(null);
+        String upi = a != null ? a.getUpiId() : c.upiId();
+        boolean bank = a != null && bankReady(a);
+        if (upi == null && !bank) {
+            return null;
+        }
+        String payee = a != null && a.getHolderName() != null ? a.getHolderName() : c.payeeName() != null ? c.payeeName() : s.getCreatedByName();
+        String signer = c.receiptSigner() != null ? c.receiptSigner() : c.payeeName() != null ? c.payeeName() : c.createdBy();
+        LocalDateTime at = LocalDateTime.now().withNano(0);
+        String holder = bank ? (a.getHolderName() != null ? a.getHolderName() : payee) : null;
+        String bankName = bank ? a.getInstitution() : null;
+        String number = bank ? a.getAccountNumber().trim() : null;
+        String ifsc = bank ? a.getIfsc() : null;
+        String seal = hmac(String.join("|", "PAYTO", String.valueOf(c.id()), String.valueOf(s.getMemberId()), String.valueOf(upi),
+                String.valueOf(payee), String.valueOf(holder), String.valueOf(bankName), String.valueOf(number), String.valueOf(ifsc),
+                String.valueOf(signer), c.receiptSignature() == null ? "" : HostedChitService.sha256(c.receiptSignature()), at.toString()));
+        String stamp = t.getChitCompanyName() != null && !t.getChitCompanyName().isBlank() ? t.getChitCompanyName().trim() : t.getName();
+        return new PublicPayTo(upi, payee, holder, bankName, number, ifsc, signer, c.receiptSignature(), seal, at, stamp);
+    }
+
+    private static boolean bankReady(Account a) {
+        return a.getAccountNumber() != null && !a.getAccountNumber().isBlank() && a.getIfsc() != null;
+    }
+
+    private String hmac(String content) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(settings.receiptSigningKey(), "HmacSHA256"));
+            return java.util.HexFormat.of().formatHex(mac.doFinal(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static PublicMember publicMember(Detail d, Long memberId) {

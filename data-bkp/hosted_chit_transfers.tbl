@@ -1,0 +1,2 @@
+id	tenantId	chitId	transferDate	toAccountId	amount	chitMoney	mode	reference	note	journalEntryId	createdBy	createdAt	version
+1	1	11	2026-10-10	15	6000.00	false	Bank			529	admin	2026-10-10T18:53:38.876925100	1

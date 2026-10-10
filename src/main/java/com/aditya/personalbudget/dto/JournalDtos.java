@@ -73,7 +73,7 @@ public final class JournalDtos {
             Long chitId,
             @PositiveOrZero BigDecimal debit,
             @PositiveOrZero BigDecimal credit,
-            @Size(max = 255) String memo) {
+            @Size(max = 2000) String memo) {
     }
 
     /** What a quick transaction represents. Money always flows {@code from} one account {@code to} another. */

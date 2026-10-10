@@ -1,0 +1,41 @@
+id	tenantId	chitId	monthNo	winnerMemberId	drawMethod	bidAmount	payoutAmount	commissionAmount	plannedInstallment	plannedPayout	payoutDate	payoutMode	payoutReference	payoutTo	commissionFromAccountId	payoutEntryId	commissionEntryId	commissionTransferEntryId	version
+201	1	11	1	206	Random draw		475000.00	25000.00			2026-10-09	Bank				182	183		2
+202	1	11	2	214	Random draw		480000.00	25000.00			2026-10-09	Cash				205	206		2
+203	1	11	3	210	Random draw		485000.00	25000.00			2026-10-09	Bank				227	228		2
+204	1	11	4	209	Random draw		490000.00	25000.00			2026-10-09	Bank				249	250		2
+205	1	11	5	220	Picked		495000.00	25000.00			2026-10-09	Bank	10235021485564			271	272		2
+206	1	11	6	216	Random draw		500000.00	25000.00			2026-10-10	Bank				389	390		2
+207	1	11	7	212	Random draw		505000.00	25000.00			2026-10-10	Bank				415	416		3
+208	1	11	8	208	Random draw		510000.00	25000.00			2026-10-10	Bank				437	438		3
+209	1	11	9	203	Random draw		515000.00	25000.00			2026-10-10	Bank				459	460		3
+210	1	11	10	202	Random draw		520000.00	25000.00			2026-10-10	Bank				481	482		3
+211	1	11	11	217	Random draw		525000.00	25000.00			2026-10-10	Bank				503	504		3
+212	1	11	12	211	Random draw		530000.00	25000.00			2026-10-10	Bank				527	528		3
+213	1	11	13	215	Random draw		535000.00	25000.00			2026-10-10	Bank				550	551		3
+214	1	11	14	219	Random draw		540000.00	25000.00			2026-10-10	Bank				572	573		3
+215	1	11	15	204	Random draw		545000.00	25000.00			2026-10-10	Bank				594	595		3
+216	1	11	16	213	Random draw														1
+217	1	11	17																0
+218	1	11	18																0
+219	1	11	19																0
+220	1	11	20																0
+221	1	12	1	231	Auction	225000.00	775000.00	50000.00			2026-10-09	Bank				293	294	357	3
+222	1	12	2	222	Auction	289000.00	711000.00	50000.00			2026-10-09	Bank				335	336	358	3
+223	1	12	3	224	Auction	268000.00	732000.00	50000.00			2026-10-09	Bank				359	360	361	4
+224	1	12	4	225	Auction	225000.00	775000.00	50000.00			2026-10-09	Bank				362	363	364	2
+225	1	12	5																0
+226	1	12	6																0
+227	1	12	7																0
+228	1	12	8																0
+229	1	12	9																0
+230	1	12	10																0
+231	1	12	11																0
+232	1	12	12																0
+233	1	12	13																0
+234	1	12	14																0
+235	1	12	15																0
+236	1	12	16																0
+237	1	12	17																0
+238	1	12	18																0
+239	1	12	19																0
+240	1	12	20																0

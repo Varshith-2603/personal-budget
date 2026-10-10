@@ -12,6 +12,16 @@ export function esc(value) {
         { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
 
+/**
+ * A narrative as HTML: its "[...]" segments become tags, and "[Own a/c ...]" ones (money that came through your own
+ * bank or cash account) stand out, so they are easy to tell from the chit's own accounts.
+ */
+export function narrativeHtml(text) {
+    return esc(text).replace(/\[([^\]]+)\]/g, (m, inner) => inner.startsWith('Own a/c ')
+        ? `<span class="nv-seg own" title="Came through your own account">⌂ ${inner.slice(8)}</span>`
+        : `<span class="nv-seg">${inner}</span>`).replace(/ \| /g, '<span class="nv-sep"></span>');
+}
+
 /** A glass panel with a titled header and a scrolling body. */
 export function panel({ id = '', title, iconName, sub = '', actions = '', body = '', bodyClass = '', foot = '', cls = '' }) {
     return `

@@ -14,7 +14,7 @@
  */
 import { api } from '../core/api.js';
 import { can, loadAccounts } from '../core/store.js';
-import { panel, esc, openModal, confirmDialog, toast, emptyState, loading } from '../core/ui.js';
+import { panel, esc, openModal, confirmDialog, toast, emptyState, loading, narrativeHtml } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, moneyShort, date, shortDate, isoDate, firstOfMonth } from '../core/format.js';
 import { setPageKeys, listNavigator } from '../core/keys.js';
@@ -155,7 +155,6 @@ function draw(container, book, accounts, reload) {
                         ${book.chits.map(c => `<option value="${c.id}" ${c.id === view.chit ? 'selected' : ''} data-balance="${c.money.held}"
                             data-meta="${esc(`${c.status === 'COMPLETED' ? 'finished · ' : ''}owed ${moneyShort(c.money.owedToMembers)}`)}">${esc(c.name)}</option>`).join('')}
                         <option value="all" ${view.chit === null ? 'selected' : ''} data-meta="every chit, grouped">All chits</option></select></label></span></h3>
-                <span class="sub">${plural(items.filter(i => i.key && i.key.startsWith('acct:')).length, 'account')}</span>
                 <div class="actions">${manage() ? `<button class="btn sm icon hc-add" id="ca-transfer" title="Move money between accounts" aria-label="Move money">${icon('transfer')}</button>
                     <button class="btn sm primary icon hc-add" id="ca-new" title="Add a chit account" aria-label="Add a chit account">${icon('plus')}</button>` : ''}</div>
             </header>
@@ -669,7 +668,7 @@ function statementHtml(s, only, ownChit = null) {
             <td class="hc-nowrap">${shortDate(l.date)}</td>
             <td class="hc-nowrap muted">${esc(l.entryNo)}</td>
             <td class="ca-stmt-what"><span class="ellipsis">${ownChit && l.hostedChitId === ownChit ? '' : l.chitName ? `<span class="ca-tag">${esc(l.chitName)}</span>` : '<span class="ca-tag mine">mine</span>'}
-                <b>${esc(l.narration)}</b>${sub ? `<small class="muted"> · ${esc(sub)}</small>` : ''}</span></td>
+                <b>${esc(l.narration)}</b>${sub ? `<small class="muted"> · ${narrativeHtml(sub)}</small>` : ''}</span></td>
             <td class="num pos">${num(l.moneyIn) ? money(l.moneyIn) : ''}</td>
             <td class="num neg">${num(l.moneyOut) ? money(l.moneyOut) : ''}</td>
             <td class="num"><b>${signed(l.balance)}</b></td></tr>`;
@@ -706,19 +705,22 @@ export function transfersTable(list, empty, { actions = true } = {}) {
 // ===================================================================== dialogs
 
 /**
- * Move money: from one or more accounts into one. Pick the chit, whether it is the chit's money or your own, the
- * accounts and amounts; a preview shows the journal entry it posts. Also edits a transfer ({ editing }).
- * from: [{ accountId, amount }] to start with.
+ * Move money: from one or more accounts into one, as one journal entry. Pick the chit and whether it is the chit's
+ * money (the members') or your own, the accounts and amounts. Consolidating chit money: each account lists the
+ * members' payments that came into it and are still there; the ones ticked are linked to the transfer (so a payment
+ * can be followed from its receipt to the payout) and make the amount and the narrative. The side shows the entry it
+ * posts. Also edits a transfer ({ editing }). from: [{ accountId, amount }] to start with.
  */
 export async function openTransfer({ book = null, accounts = null, chitId = null, toAccountId = null, from = [], chitMoney = null, editing = null, onDone } = {}) {
     [book, accounts] = await Promise.all([book || api.get('/hosted-chits/book'), accounts || loadAccounts()]);
     const s = editing ? {
         chitId: editing.chitId, toAccountId: editing.toAccountId, chitMoney: editing.chitMoney, date: editing.date, mode: editing.mode,
         reference: editing.reference || '', note: editing.note || '',
-        legs: editing.from.map(l => ({ accountId: l.accountId, amount: num(l.amount), reference: l.reference || '', mode: l.mode })),
+        legs: editing.from.map(l => ({ accountId: l.accountId, amount: num(l.amount), reference: l.reference || '', mode: l.mode,
+            paymentIds: [...(l.paymentIds || [])], note: l.note || '', auto: false })),
     } : {
         chitId, toAccountId, chitMoney, date: isoDate(), mode: 'Bank', reference: '', note: '',
-        legs: from.length ? from.map(l => ({ accountId: l.accountId, amount: num(l.amount) || '', reference: '' })) : [{ accountId: null, amount: '', reference: '' }],
+        legs: (from.length ? from : [{}]).map(l => ({ accountId: l.accountId || null, amount: num(l.amount) || '', reference: '', paymentIds: null, note: '', auto: !num(l.amount) })),
     };
     const byId = id => accounts.find(a => a.id === Number(id));
     const chitOf = () => book.chits.find(c => c.id === Number(s.chitId));
@@ -734,35 +736,74 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
         const spots = chitAmounts();
         s.chitMoney = !!chitOf() && s.legs.some(l => byId(l.accountId) && !byId(l.accountId).chitBook && num(spots[l.accountId]) > 0);
     }
+    // the chit's payments, to pick the ones a consolidation carries (fetched once per chit)
+    const details = new Map();
+    const detailOf = async id => {
+        if (!id) return null;
+        if (!details.has(id)) details.set(id, await api.get(`/hosted-chits/${id}`).catch(() => null));
+        return details.get(id);
+    };
+    /**
+     * Payments that came into an account and are still there: not moved by another transfer, not paid out, and (for
+     * money moved before transfers named their payments) no more than the chit money the account still holds, the
+     * latest first.
+     */
+    const waitingIn = (d, accountId) => {
+        const list = (d?.payments || []).filter(p => p.accountId === Number(accountId) && !p.paidToMemberId
+            && num(p.amount) > 0 && (!p.transferId || p.transferId === editing?.id) && !p.paidOutMonth)
+            .sort((a, b) => b.paidDate.localeCompare(a.paidDate) || b.id - a.id);
+        const spot = (d?.money?.spots || []).find(x => x.accountId === Number(accountId));
+        let room = num(spot?.amount) + (editing ? editing.from.filter(l => l.accountId === Number(accountId)).reduce((t, l) => t + num(l.amount), 0) : 0);
+        return list.filter(p => (room -= num(p.amount)) >= -0.005).reverse();
+    };
+    /** "[Own a/c ICICI Bank] Gopal RC-000968 (UTR265) ₹25,000; ...": the payments, and the account they came into. */
+    const narrative = (list, accountId) => {
+        if (!list.length) return '';
+        const a = accounts.find(x => x.id === Number(accountId));
+        const label = a ? `[${a.chitBook ? '' : 'Own a/c '}${a.name}] ` : '';
+        return label + list.map(p => `${p.memberName} ${p.receiptNo || ''}${p.reference ? ` (${p.reference})` : ''} ${money(p.amount)}`.replace(/\s+/g, ' ')).join('; ');
+    };
+    const flArea = (label, attrs, value = '', cls = '') => `<label class="fl fl-area ${cls}"><textarea rows="1" ${attrs} placeholder=" " data-plain>${esc(value)}</textarea><span>${label}</span></label>`;
+    const fl = (label, attrs, value = '', unit = '', cls = '') => `<label class="fl ${cls}"><input ${attrs} value="${esc(value)}" placeholder=" " data-plain><span>${label}</span>${unit ? `<i class="fl-unit">${unit}</i>` : ''}</label>`;
+    const options = selected => {
+        const c = chitOf();
+        const amounts = s.chitMoney && c ? chitAmounts() : null;
+        const liquid = a => a.active && a.accountClass === 'ASSET' && ['CASH', 'BANK', 'WALLET'].includes(a.accountType);
+        const groups = [[`${c?.name || 'This chit'}'s accounts`, accounts.filter(a => liquid(a) && a.chitBook && c && a.hostedChitId === c.id)],
+            ['Common chit accounts', accounts.filter(a => liquid(a) && a.chitBook && !a.hostedChitId)], ['My accounts', accounts.filter(a => liquid(a) && !a.chitBook)]];
+        return `<option value="">Pick an account</option>${groups.filter(([, l]) => l.length).map(([label, list]) => `<optgroup label="${esc(label)}">${list.map(a =>
+            `<option value="${a.id}" ${String(a.id) === String(selected) ? 'selected' : ''}>${esc(a.name)} · ${amounts ? `${moneyShort(num(amounts[a.id]))} of the chit's` : moneyShort(a.balance)}</option>`).join('')}</optgroup>`).join('')}`;
+    };
+
     openModal({
-        title: editing ? 'Change transfer' : 'Move money', iconName: 'transfer', size: 'xl',
-        body: `<div class="ca-xfer">
-            <div class="ca-xfer-main">
-                <div class="form-grid two">
-                    <label class="field"><span>Chit</span><select name="chitId" data-plain>
+        title: editing ? 'Change transfer' : 'Move money', iconName: 'transfer', size: 'xl ca-xfer-modal',
+        body: `<div class="ca-x">
+            <div class="ca-x-main">
+                <div class="ca-x-top">
+                    <label class="fl fixed"><select name="chitId" data-plain>
                         <option value="">No particular chit (my money)</option>
-                        ${book.chits.map(c => `<option value="${c.id}" ${c.id === Number(s.chitId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
-                    <div class="field"><span>Whose money</span><div class="seg-chips" data-whose>
+                        ${book.chits.map(c => `<option value="${c.id}" ${c.id === Number(s.chitId) ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select><span>Chit</span></label>
+                    <div class="ca-x-whose seg-chips" data-whose>
                         <button type="button" class="seg-chip ${s.chitMoney ? 'active' : ''}" data-money="1" title="Members' money: it stays the chit's wherever it goes">${icon('users')}Chit money</button>
-                        <button type="button" class="seg-chip ${s.chitMoney ? '' : 'active'}" data-money="0" title="Your own: an advance into a chit, or commission taken out">${icon('piggy')}My own money</button></div></div>
+                        <button type="button" class="seg-chip ${s.chitMoney ? '' : 'active'}" data-money="0" title="Your own: an advance into a chit, or commission taken out">${icon('piggy')}My own money</button></div>
                 </div>
-                <div class="section-title">${icon('arrow-out')}From <small class="muted" data-quick-hint></small></div>
+                <div class="ca-x-sec"><span>${icon('arrow-out')}From</span><small class="muted" data-quick-hint></small></div>
                 <div class="ca-quick" data-quick></div>
-                <div class="ca-legs" data-legs></div>
-                <button type="button" class="btn sm ghost" data-add-leg>${icon('plus')}Another account</button>
-                <div class="section-title">${icon('arrow-in')}Into</div>
-                <div class="form-grid two">
-                    <label class="field span-2"><span>Account</span><select name="toAccountId" data-to></select></label>
-                    <label class="field"><span>Date</span><input type="date" name="date" value="${s.date}" max="${isoDate()}"></label>
-                    <div class="field"><span>Mode</span><div class="seg-chips" data-modes>${MODES.map(x => `<button type="button" class="seg-chip ${s.mode === x ? 'active' : ''}" data-mode="${x}">${x}</button>`).join('')}</div></div>
-                    <label class="field"><span>Reference</span><input type="text" name="reference" maxlength="60" value="${esc(s.reference)}" placeholder="UTR / UPI ref" data-plain></label>
-                    <label class="field"><span>Note <small class="muted">optional</small></span><input type="text" name="note" maxlength="255" value="${esc(s.note)}" data-plain></label>
+                <div class="ca-x-legs" data-legs></div>
+                <button type="button" class="btn sm ghost ca-x-add" data-add-leg>${icon('plus')}Another account</button>
+                <div class="ca-x-sec"><span>${icon('arrow-in')}Into</span></div>
+                <div class="ca-x-into">
+                    <label class="fl fixed ca-x-wide"><select data-to data-plain></select><span>Account</span></label>
+                    ${fl('Date', `type="date" name="date" max="${isoDate()}"`, s.date)}
+                    <div class="ca-x-modes seg-chips" data-modes>${MODES.map(x => `<button type="button" class="seg-chip ${s.mode === x ? 'active' : ''}" data-mode="${x}">${x}</button>`).join('')}</div>
+                    ${fl('Reference (UTR / UPI)', 'type="text" name="reference" maxlength="60"', s.reference)}
+                    ${fl('Note', 'type="text" name="note" maxlength="255"', s.note, 'optional', 'ca-x-wide')}
                 </div>
             </div>
-            <aside class="ca-xfer-side">
-                <div class="section-title">${icon('journal')}Journal entry</div>
+            <aside class="ca-x-side">
+                <div class="ca-x-total"><small data-kind>Transfer</small><b data-total>₹0</b><span data-explain class="muted"></span></div>
+                <div class="ca-x-sec"><span>${icon('journal')}Journal entry</span></div>
                 <div data-preview></div>
-                <p class="muted hc-small" data-explain></p>
             </aside>
         </div>`,
         actions: [
@@ -771,14 +812,16 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
                 const legs = s.legs.filter(l => l.accountId || num(l.amount));
                 if (!s.toAccountId) throw new Error('Pick the account the money goes into');
                 const on = modal.el.querySelector('[name=date]').value;
-                if (on && on > isoDate()) throw new Error('The transfer date cannot be in the future');
-                if (s.legs.some(l => Number(l.accountId) === Number(s.toAccountId))) throw new Error('Money cannot move from an account into itself');
+                if (!on) throw new Error('Enter the date');
+                if (on > isoDate()) throw new Error('The transfer date cannot be in the future');
                 if (!legs.length) throw new Error('Pick the account the money comes from');
                 if (legs.some(l => !l.accountId)) throw new Error('Pick an account on every line');
                 if (legs.some(l => num(l.amount) <= 0)) throw new Error('Enter the amount on every line');
+                if (legs.some(l => Number(l.accountId) === Number(s.toAccountId))) throw new Error('Money cannot move from an account into itself');
                 const body = {
-                    chitId: s.chitId ? Number(s.chitId) : null, date: modal.el.querySelector('[name=date]').value || null, toAccountId: Number(s.toAccountId),
-                    from: legs.map(l => ({ accountId: Number(l.accountId), amount: num(l.amount), reference: (l.reference || '').trim() || null, mode: l.mode || null })),
+                    chitId: s.chitId ? Number(s.chitId) : null, date: on, toAccountId: Number(s.toAccountId),
+                    from: legs.map(l => ({ accountId: Number(l.accountId), amount: num(l.amount), reference: (l.reference || '').trim() || null, mode: l.mode || null,
+                        paymentIds: s.chitMoney ? (l.paymentIds || []) : [], note: (l.note || '').trim() || null })),
                     chitMoney: s.chitMoney, mode: s.mode, reference: modal.el.querySelector('[name=reference]').value.trim() || null,
                     note: modal.el.querySelector('[name=note]').value.trim() || null, version: editing?.version,
                 };
@@ -791,22 +834,47 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
             const el = modal.el;
             const legsEl = el.querySelector('[data-legs]');
             const toSel = el.querySelector('[data-to]');
-            const options = selected => moneyAccountOptions(accounts, { chitId: Number(s.chitId) || null, chitName: chitOf()?.name || 'This chit', selected, amounts: s.chitMoney && chitOf() ? chitAmounts() : null });
-            const drawLegs = () => {
-                legsEl.innerHTML = s.legs.map((l, i) => `<div class="ca-leg-row" data-i="${i}">
-                    <select data-leg-account>${options(l.accountId)}</select>
-                    <input type="number" class="num" step="any" min="0" placeholder="Amount" value="${l.amount}" data-leg-amount data-type="number" inputmode="decimal">
-                    <input type="text" maxlength="60" placeholder="Ref (optional)" value="${esc(l.reference || '')}" data-leg-ref data-plain>
-                    <button type="button" class="btn sm ghost icon" data-remove title="Remove" ${s.legs.length === 1 ? 'disabled' : ''}>${icon('x')}</button></div>`).join('');
+            const drawLegs = async () => {
+                const d = s.chitMoney && chitOf() ? await detailOf(Number(s.chitId)) : null;
+                legsEl.innerHTML = s.legs.map((l, i) => {
+                    const waiting = d && l.accountId ? waitingIn(d, l.accountId) : [];
+                    // a consolidation starts with every payment waiting in the account
+                    if (waiting.length && l.paymentIds === null) {
+                        l.paymentIds = waiting.map(p => p.id);
+                        if (l.auto) l.amount = waiting.reduce((t, p) => t + num(p.amount), 0);
+                        if (!l.note) l.note = narrative(waiting, l.accountId);
+                    }
+                    const picked = new Set(l.paymentIds || []);
+                    return `<div class="ca-x-leg" data-i="${i}">
+                        <div class="ca-x-leg-top">
+                            <label class="fl fixed ca-x-wide"><select data-leg-account data-plain>${options(l.accountId)}</select><span>Account ${s.legs.length > 1 ? i + 1 : ''}</span></label>
+                            <button type="button" class="btn sm ghost icon" data-remove title="Remove" ${s.legs.length === 1 ? 'disabled' : ''}>${icon('x')}</button></div>
+                        <div class="ca-x-leg-figs">
+                            ${fl('Amount', 'type="number" step="any" min="0" inputmode="decimal" data-leg-amount class="num"', l.amount, '₹')}
+                            ${fl('UTR / reference', 'type="text" maxlength="60" data-leg-ref', l.reference || '')}
+                        </div>
+                        ${waiting.length ? `<div class="ca-x-pays">
+                            <div class="ca-x-pays-head">${icon('link')}Members' payments in this account <small class="muted">tick the ones this moves: they are linked to the transfer</small></div>
+                            ${waiting.map(p => `<label class="ca-x-pay"><input type="checkbox" data-pay="${p.id}" ${picked.has(p.id) ? 'checked' : ''}>
+                                <span class="hc-avatar xs">${esc(initials(p.memberName || '?'))}</span><b>${esc(p.memberName)}</b>
+                                <small>${esc([`month ${p.monthNo}`, p.receiptNo, shortDate(p.paidDate), p.mode, p.reference ? `ref ${p.reference}` : ''].filter(Boolean).join(' · '))}</small>
+                                <b class="pos">${money(p.amount)}</b></label>`).join('')}
+                            ${flArea('Narrative (on the journal line)', 'maxlength="2000" data-leg-note', l.note || '', 'ca-x-wide')}
+                            ${l.note && /\[Own a\/c /.test(l.note) ? `<div class="hc-src-nv">${narrativeHtml(l.note)}</div>` : ''}
+                        </div>` : s.chitMoney && l.accountId ? `<small class="muted ca-x-none">${icon('info')}No payments of this chit waiting in this account.</small>` : ''}
+                    </div>`;
+                }).join('');
             };
             const drawTo = () => { toSel.innerHTML = options(s.toAccountId); };
             const drawQuick = () => {
                 const c = chitOf();
-                const spots = (c?.money.spots || []).filter(x => num(x.amount) > 0 && x.accountId !== Number(s.toAccountId) && !s.legs.some(l => Number(l.accountId) === x.accountId));
+                const spots = (c?.money.spots || []).filter(x => num(x.amount) > 0 && x.role !== 'DIRECT' && x.accountId !== Number(s.toAccountId)
+                    && !s.legs.some(l => Number(l.accountId) === x.accountId));
                 el.querySelector('[data-quick]').innerHTML = s.chitMoney && spots.length ? spots.map(x => `<button type="button" class="date-chip" data-quick-add="${x.accountId}" data-amount="${x.amount}">
                     ${icon('plus')}${esc(x.accountName)} ${moneyShort(x.amount)}</button>`).join('') : '';
-                el.querySelector('[data-quick-hint]').textContent = s.chitMoney && spots.length ? `· where ${c.name}'s money is` : '';
+                el.querySelector('[data-quick-hint]').textContent = s.chitMoney && spots.length ? `where ${c.name}'s money is` : '';
             };
+            const initials = name => name.split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase();
             const preview = () => {
                 const legs = s.legs.filter(l => l.accountId && num(l.amount) > 0);
                 const total = legs.reduce((t, l) => t + num(l.amount), 0);
@@ -814,21 +882,32 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
                 const c = chitOf();
                 const tag = a => !a ? '' : a.chitBook ? (c ? `<span class="ca-tag">${esc(c.name)}</span>` : '<span class="ca-tag mine">mine</span>')
                     : s.chitMoney && c ? `<span class="ca-tag">${esc(c.name)}</span>` : '<span class="ca-tag mine">mine</span>';
-                el.querySelector('[data-preview]').innerHTML = total && to ? `<table class="ca-je"><thead><tr><th>Account</th><th class="num">Dr</th><th class="num">Cr</th></tr></thead><tbody>
-                    <tr><td>${esc(to.name)} ${tag(to)}</td><td class="num">${money(total)}</td><td></td></tr>
-                    ${legs.map(l => `<tr><td class="ca-cr">${esc(byId(l.accountId)?.name || '?')} ${tag(byId(l.accountId))}</td><td></td><td class="num">${money(l.amount)}</td></tr>`).join('')}
-                    </tbody><tfoot><tr><td>Transfer · ${legs.length > 1 ? `${legs.length} accounts` : '1 account'}</td><td class="num">${money(total)}</td><td class="num">${money(total)}</td></tr></tfoot></table>`
-                    : `<p class="muted hc-small">Pick the accounts and amounts to see the entry.</p>`;
                 const personal = involvesPersonal();
+                el.querySelector('[data-total]').textContent = money(total);
+                el.querySelector('[data-kind]').textContent = s.chitMoney ? (legs.length > 1 ? 'Consolidating chit money' : 'Moving chit money')
+                    : personal && to && !to.chitBook ? 'Taking my money out' : personal ? 'Putting my money in' : 'Transfer';
                 el.querySelector('[data-explain]').innerHTML = !c ? 'Your own money between chit accounts; no chit is involved.'
-                    : s.chitMoney ? `${esc(c.name)}'s money (the members'): it is still the chit's in every account it moves to${personal ? ', your own accounts included' : ''}.`
-                    : personal ? `Your own money: ${to && !to.chitBook ? `taken out of ${esc(c.name)}'s accounts (your commission or interest, or an advance coming back)` : `put into ${esc(c.name)}'s accounts as an advance`}. Only the chit account's side carries the chit.`
+                    : s.chitMoney ? `${esc(c.name)}'s money (the members'): it stays the chit's in every account it moves to${personal ? ', your own accounts included' : ''}.`
+                    : personal ? `Your own money: ${to && !to.chitBook ? `taken out of ${esc(c.name)}'s accounts (commission, interest or an advance coming back)` : `put into ${esc(c.name)}'s accounts as an advance`}.`
                     : `Moved between ${esc(c.name)}'s chit accounts.`;
+                el.querySelector('[data-preview]').innerHTML = total && to ? `<table class="ca-je ca-je-fixed"><colgroup><col><col class="amt"><col class="amt"></colgroup>
+                    <thead><tr><th>Account</th><th class="num">Dr</th><th class="num">Cr</th></tr></thead><tbody>
+                    <tr><td>${esc(to.name)} ${tag(to)}</td><td class="num">${money(total)}</td><td></td></tr>
+                    ${legs.map(l => `<tr><td class="ca-cr">${esc(byId(l.accountId)?.name || '?')} ${tag(byId(l.accountId))}
+                        ${l.note ? `<small class="ca-je-note">${esc(l.note)}</small>` : ''}${(l.paymentIds || []).length ? `<small class="ca-je-note">${icon('link')}${l.paymentIds.length} payment${l.paymentIds.length === 1 ? '' : 's'} linked</small>` : ''}</td>
+                        <td></td><td class="num">${money(l.amount)}</td></tr>`).join('')}
+                    </tbody><tfoot><tr><td>${legs.length > 1 ? `${legs.length} accounts` : 'Transfer'}</td><td class="num">${money(total)}</td><td class="num">${money(total)}</td></tr></tfoot></table>`
+                    : `<p class="muted hc-small">Pick the accounts and amounts to see the entry.</p>`;
                 el.querySelector('[data-whose]').hidden = !c;
             };
-            const redraw = () => { drawLegs(); drawTo(); drawQuick(); preview(); };
+            const redraw = async () => { await drawLegs(); drawTo(); drawQuick(); preview(); };
             redraw();
-            el.querySelector('[name=chitId]').addEventListener('change', e => { s.chitId = e.target.value ? Number(e.target.value) : null; if (!s.chitId) s.chitMoney = false; redraw(); });
+            el.querySelector('[name=chitId]').addEventListener('change', e => {
+                s.chitId = e.target.value ? Number(e.target.value) : null;
+                if (!s.chitId) s.chitMoney = false;
+                s.legs.forEach(l => { l.paymentIds = null; });
+                redraw();
+            });
             el.querySelector('[data-whose]').addEventListener('click', e => {
                 const b = e.target.closest('[data-money]');
                 if (!b) return;
@@ -842,27 +921,41 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
                 s.mode = b.dataset.mode;
                 el.querySelectorAll('[data-modes] [data-mode]').forEach(x => x.classList.toggle('active', x === b));
             });
-            el.querySelector('[data-add-leg]').addEventListener('click', () => { s.legs.push({ accountId: null, amount: '', reference: '' }); drawLegs(); drawQuick(); });
+            el.querySelector('[data-add-leg]').addEventListener('click', () => { s.legs.push({ accountId: null, amount: '', reference: '', paymentIds: null, note: '', auto: true }); redraw(); });
             el.querySelector('[data-quick]').addEventListener('click', e => {
                 const b = e.target.closest('[data-quick-add]');
                 if (!b) return;
                 const empty = s.legs.find(l => !l.accountId);
-                const leg = { accountId: Number(b.dataset.quickAdd), amount: num(b.dataset.amount), reference: '' };
+                const leg = { accountId: Number(b.dataset.quickAdd), amount: num(b.dataset.amount), reference: '', paymentIds: null, note: '', auto: true };
                 if (empty) Object.assign(empty, leg); else s.legs.push(leg);
                 redraw();
             });
             toSel.addEventListener('change', () => { s.toAccountId = toSel.value ? Number(toSel.value) : null; drawQuick(); preview(); });
-            legsEl.addEventListener('change', e => {
+            legsEl.addEventListener('change', async e => {
                 const row = e.target.closest('[data-i]');
                 if (!row) return;
                 const leg = s.legs[Number(row.dataset.i)];
                 if (e.target.matches('[data-leg-account]')) {
                     leg.accountId = e.target.value ? Number(e.target.value) : null;
+                    leg.paymentIds = null; leg.note = ''; leg.auto = true;
                     // a chit's own account brings its chit along
                     const owner = byId(leg.accountId)?.hostedChitId;
-                    if (owner && !s.chitId) { s.chitId = owner; el.querySelector('[name=chitId]').value = owner; redraw(); return; }
-                    if (!num(leg.amount) && s.chitMoney) leg.amount = Math.max(0, num(chitAmounts()[leg.accountId])) || '';
-                    drawLegs(); drawQuick();
+                    if (owner && !s.chitId) { s.chitId = owner; el.querySelector('[name=chitId]').value = owner; }
+                    if (s.chitMoney && !num(leg.amount)) leg.amount = Math.max(0, num(chitAmounts()[leg.accountId])) || '';
+                    await redraw();
+                    return;
+                }
+                if (e.target.matches('[data-pay]')) {
+                    const d = await detailOf(Number(s.chitId));
+                    const ids = new Set(leg.paymentIds || []);
+                    if (e.target.checked) ids.add(Number(e.target.dataset.pay)); else ids.delete(Number(e.target.dataset.pay));
+                    leg.paymentIds = [...ids];
+                    const chosen = (d?.payments || []).filter(p => ids.has(p.id));
+                    leg.amount = chosen.reduce((t, p) => t + num(p.amount), 0) || leg.amount;
+                    leg.note = narrative(chosen, leg.accountId);
+                    row.querySelector('[data-leg-amount]').value = leg.amount;
+                    const noteEl = row.querySelector('[data-leg-note]');
+                    if (noteEl) noteEl.value = leg.note;
                 }
                 preview();
             });
@@ -870,8 +963,9 @@ export async function openTransfer({ book = null, accounts = null, chitId = null
                 const row = e.target.closest('[data-i]');
                 if (!row) return;
                 const leg = s.legs[Number(row.dataset.i)];
-                if (e.target.matches('[data-leg-amount]')) leg.amount = e.target.value;
+                if (e.target.matches('[data-leg-amount]')) { leg.amount = e.target.value; leg.auto = false; }
                 if (e.target.matches('[data-leg-ref]')) leg.reference = e.target.value;
+                if (e.target.matches('[data-leg-note]')) leg.note = e.target.value;
                 preview();
             });
             legsEl.addEventListener('click', e => {
@@ -914,6 +1008,9 @@ function openAccountForm(book, account, { reload, accounts }) {
                 ${['COLLECTION', 'COMMISSION', 'LATE_FEE'].map(r => `<option value="${r}" ${s.role === r ? 'selected' : ''}>${ROLE[r][0]}</option>`).join('')}</select></label>
             <label class="field" data-new><span>Bank / institution</span><input type="text" name="institution" value="${esc(s.institution)}" maxlength="100" data-plain></label>
             <label class="field" data-new><span>Account number</span><input type="text" name="accountNumber" value="${esc(s.accountNumber)}" maxlength="40" data-plain></label>
+            <label class="field" data-new data-bankf="BANK WALLET"><span>Account holder name</span><input type="text" name="holderName" value="${esc(account?.holderName || '')}" maxlength="100" placeholder="As on the passbook" data-plain></label>
+            <label class="field" data-new data-bankf="BANK"><span>IFSC</span><input type="text" name="ifsc" value="${esc(account?.ifsc || '')}" maxlength="11" placeholder="e.g. SBIN0001234" style="text-transform:uppercase" data-plain></label>
+            <label class="field span-2" data-new data-bankf="BANK WALLET"><span>UPI ID <small class="muted">members pay into it from their payment links</small></span><input type="text" name="upiId" value="${esc(account?.upiId || '')}" maxlength="60" placeholder="name@bank" data-plain></label>
             ${editing ? '' : `<label class="field" data-new><span>Opening balance <small class="muted">your own money</small></span><input type="number" name="openingBalance" class="num" step="any" min="0" data-type="number"></label>
             <label class="field" data-new><span>As of</span><input type="date" name="openingDate" value="${isoDate()}"></label>`}
             <label class="field span-2" data-new><span>Note</span><input type="text" name="description" value="${esc(s.description)}" maxlength="255"></label>
@@ -943,11 +1040,17 @@ function openAccountForm(book, account, { reload, accounts }) {
                 if (f.openingBalance && Number(f.openingBalance.value) < 0) throw new Error('The opening balance cannot be negative');
                 if (f.openingDate?.value && f.openingDate.value > isoDate()) throw new Error('The opening date cannot be in the future');
                 if (f.description.value.trim().length > 255) throw new Error('The note can be at most 255 characters');
+                const bankf = ['BANK', 'WALLET'].includes(s.accountType);
+                const ifsc = s.accountType === 'BANK' ? f.ifsc.value.trim().toUpperCase() : '';
+                const upi = bankf ? f.upiId.value.trim() : '';
+                if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) throw new Error('The IFSC is 4 letters, a zero, then 6 letters or digits (e.g. SBIN0001234)');
+                if (upi && !/^[\w.\-]{2,}@[A-Za-z][\w.]{1,}$/.test(upi)) throw new Error('The UPI ID looks like name@bank');
                 const body = {
                     name: f.name.value.trim(), accountType: s.accountType, hostedChitId: chit, role: chit ? f.role.value : null,
                     institution: f.institution.value.trim() || null, accountNumber: f.accountNumber.value.trim() || null,
                     openingBalance: f.openingBalance ? (Number(f.openingBalance.value) || null) : null, openingDate: f.openingDate?.value || null,
                     description: f.description.value.trim() || null, active: editing ? f.active.checked : true, version: account?.version,
+                    holderName: bankf ? f.holderName.value.trim() || null : null, ifsc: ifsc || null, upiId: upi || null,
                 };
                 const saved = editing ? await api.put(`/hosted-chits/book/accounts/${account.id}`, body) : await api.post('/hosted-chits/book/accounts', body);
                 toast(editing ? 'Saved' : `${saved.name} added`);
@@ -961,7 +1064,12 @@ function openAccountForm(book, account, { reload, accounts }) {
                 if (!b) return;
                 s.accountType = b.dataset.type;
                 el.querySelectorAll('[data-types] [data-type]').forEach(x => x.classList.toggle('active', x === b));
+                syncBank();
             });
+            const syncBank = () => el.querySelectorAll('[data-bankf]').forEach(x => {
+                x.hidden = s.mode !== 'NEW' || !x.dataset.bankf.split(' ').includes(s.accountType);
+            });
+            syncBank();
             el.querySelector('[data-modes]')?.addEventListener('click', e => {
                 const b = e.target.closest('[data-mode]');
                 if (!b) return;
@@ -969,6 +1077,7 @@ function openAccountForm(book, account, { reload, accounts }) {
                 el.querySelectorAll('[data-modes] [data-mode]').forEach(x => x.classList.toggle('active', x === b));
                 el.querySelectorAll('[data-new]').forEach(x => { x.hidden = s.mode !== 'NEW'; });
                 el.querySelector('[data-move]').hidden = s.mode !== 'MOVE';
+                syncBank();
             });
             el.querySelector('[name=hostedChitId]').addEventListener('change', e => { el.querySelector('[data-role]').hidden = !e.target.value; });
         },

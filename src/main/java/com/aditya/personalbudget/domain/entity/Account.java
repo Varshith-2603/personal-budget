@@ -93,6 +93,18 @@ public class Account implements TenantOwned {
     @Column(length = 255)
     private String description;
 
+    /** Bank and wallet accounts: the name the account is held in (shown to chit members paying into it). */
+    @Column(length = 100)
+    private String holderName;
+
+    /** Bank accounts: the branch's IFSC, e.g. ICIC0000598. */
+    @Column(length = 11)
+    private String ifsc;
+
+    /** Bank and wallet accounts: the UPI ID money can be sent to, e.g. name@okicici. */
+    @Column(length = 60)
+    private String upiId;
+
     /**
      * Part of the hosted-chit book (Host a Chit, Chit accounts): the money of the chits the user runs as organiser.
      * These accounts are kept off the personal Accounts page, pickers and liquid-money figures.

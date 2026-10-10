@@ -102,9 +102,17 @@ public class HostedChitService {
     // ================================================================== requests
 
     /** payoutAccount: where the member takes the payout (bank, account number and IFSC, or a UPI ID). */
+    /**
+     * payoutAccount: where the member takes the payout (bank, account number and IFSC, or a UPI ID); payToAccountId:
+     * the organiser's account this member pays into (its UPI ID or bank details are on the member's payment link).
+     */
     public record MemberInput(@NotBlank @Size(max = 100) String name, @Size(max = 20) String phone,
                               @jakarta.validation.constraints.Email @Size(max = 120) String email,
-                              @Size(max = 120) String payoutAccount) {
+                              @Size(max = 120) String payoutAccount, Long payToAccountId) {
+
+        public MemberInput(String name, String phone, String email, String payoutAccount) {
+            this(name, phone, email, payoutAccount, null);
+        }
     }
 
     /** The organiser's signature for receipts (an SVG path in a 1000 x 300 box) and the name under it; blank removes it. */
@@ -152,7 +160,22 @@ public class HostedChitService {
             Long version,
             /* planned chits: how much the installment rises each month (0: the same), and the chit table */
             @PositiveOrZero BigDecimal installmentIncrement,
-            List<@Valid PlanMonth> plan) {
+            List<@Valid PlanMonth> plan,
+            /* the account members pay into by default (its UPI ID or bank details go on their payment links) */
+            Long payToAccountId) {
+
+        public ChitRequest(String name, String chitType, LocalDate startMonth, Integer dueDay, Integer memberCount, Integer months,
+                           BigDecimal installment, BigDecimal baseValue, BigDecimal monthlyIncrement, BigDecimal commission,
+                           String winnerExtraType, BigDecimal winnerExtraValue, BigDecimal maxBidPercent, BigDecimal lateFeePercent,
+                           Integer lateGraceDays, String upiId, String payeeName, Boolean postToBooks, Long accountId,
+                           Boolean separateCollectionAccount, Long commissionAccountId, Boolean separateCommissionAccount,
+                           Long commissionCategoryId, Long lateFeeAccountId, Boolean separateLateFeeAccount, String notes,
+                           List<MemberInput> members, Long version, BigDecimal installmentIncrement, List<PlanMonth> plan) {
+            this(name, chitType, startMonth, dueDay, memberCount, months, installment, baseValue, monthlyIncrement, commission,
+                    winnerExtraType, winnerExtraValue, maxBidPercent, lateFeePercent, lateGraceDays, upiId, payeeName, postToBooks,
+                    accountId, separateCollectionAccount, commissionAccountId, separateCommissionAccount, commissionCategoryId,
+                    lateFeeAccountId, separateLateFeeAccount, notes, members, version, installmentIncrement, plan, null);
+        }
     }
 
     /** One month of a planned chit's table: what each member pays and what the winner gets. */
@@ -224,10 +247,12 @@ public class HostedChitService {
                            /* planned chits: the installment's monthly rise when the table was made */
                            BigDecimal installmentIncrement,
                            /* started: amounts, percentages, dates and the chit table no longer change */
-                           boolean termsLocked) {
+                           boolean termsLocked,
+                           /* the account members pay into by default (else the UPI ID above) */
+                           Long payToAccountId, String payToAccountName) {
     }
 
-    public record MemberView(Long id, int slot, String name, String phone, String email, String payoutAccount, Integer wonMonth,
+    public record MemberView(Long id, int slot, String name, String phone, String email, String payoutAccount, Long payToAccountId, Integer wonMonth,
                              BigDecimal totalPaid, BigDecimal balanceDue, BigDecimal lateFeeDue, Long version) {
     }
 
@@ -248,7 +273,9 @@ public class HostedChitService {
                               BigDecimal lateFeeWaived, String reference, String receiptNo, LocalDate paidDate,
                               String mode, String note, String entryNo, Long journalEntryId, int attachmentCount,
                               String createdBy, LocalDateTime createdAt, Long version, Long accountId, String accountName,
-                              Long paidToMemberId, String paidToName, String batchId) {
+                              Long paidToMemberId, String paidToName, String batchId,
+                              /* where the money went on: moved by a transfer ("to … · TR-000005"), paid out in a month */
+                              String movedTo, Long transferId, Integer paidOutMonth) {
     }
 
     /** Late interest on one member's month: accrued so far, collected or let off, still due. */
@@ -303,6 +330,7 @@ public class HostedChitService {
     private final JournalLineRepository lines;
     private final HostedChitBookService book;
     private final HostedChitLegRepository legs;
+    private final com.aditya.personalbudget.repository.TenantRepository tenants;
 
     public HostedChitService(HostedChitRepository chits, HostedChitMemberRepository members, HostedChitMonthRepository months,
                              HostedChitPaymentRepository payments, HostedChitShareRepository shares,
@@ -310,7 +338,9 @@ public class HostedChitService {
                              AccountRepository accounts, CategoryRepository categoryRepository,
                              JournalEntryRepository entries, AccountService accountService, CategoryService categoryService,
                              LedgerService ledger, ActivityService activity, JournalLineRepository lines,
-                             HostedChitBookService book, HostedChitLegRepository legs) {
+                             HostedChitBookService book, HostedChitLegRepository legs,
+                             com.aditya.personalbudget.repository.TenantRepository tenants) {
+        this.tenants = tenants;
         this.lines = lines;
         this.book = book;
         this.legs = legs;
@@ -353,6 +383,38 @@ public class HostedChitService {
                 sum.apply(ChitView::collectedThisMonth), sum.apply(ChitView::expectedThisMonth),
                 all.stream().map(ChitView::commissionEarned).reduce(Money.ZERO, BigDecimal::add),
                 running.stream().map(ChitView::nextDueDate).filter(Objects::nonNull).min(Comparator.naturalOrder()).orElse(null));
+    }
+
+    // ================================================================== settings
+
+    /** The household's chit-funds company name (new chits are named after it), and the household's name as a fallback. */
+    public record ChitSettings(String companyName, String householdName) {
+    }
+
+    public record ChitSettingsRequest(@Size(max = 60) String companyName) {
+    }
+
+    public ChitSettings chitSettings() {
+        com.aditya.personalbudget.domain.entity.Tenant t = tenants.findById(UserContext.tenantId())
+                .orElseThrow(() -> new NotFoundException("Household", UserContext.tenantId()));
+        return new ChitSettings(t.getChitCompanyName(), t.getName());
+    }
+
+    @Transactional
+    public ChitSettings saveChitSettings(ChitSettingsRequest r) {
+        com.aditya.personalbudget.domain.entity.Tenant t = tenants.findById(UserContext.tenantId())
+                .orElseThrow(() -> new NotFoundException("Household", UserContext.tenantId()));
+        String name = blank(r.companyName());
+        if (name != null) {
+            name = name.replaceAll("\\s+", " ");
+            if (!name.matches("[\\p{L}\\p{N} .&'()-]{2,60}")) {
+                throw new BusinessException("The company name can have letters, digits, spaces and . & ' ( ) - (2 to 60)");
+            }
+        }
+        t.setChitCompanyName(name);
+        tenants.save(t);
+        activity.record("CHANGED", AREA, name == null ? "Cleared the chit-funds company name" : "Chit-funds company name · " + name);
+        return chitSettings();
     }
 
     // ================================================================== create / update / delete
@@ -463,6 +525,7 @@ public class HostedChitService {
             applyTerms(c, r);
         }
         c.setNotes(blank(r.notes()));
+        c.setPayToAccountId(r.payToAccountId() == null ? null : requirePayTo(r.payToAccountId()).getId());
         String upi = blank(r.upiId());
         if (upi != null && !upi.matches("[\\w.\\-]{2,}@[A-Za-z][\\w.]{1,}")) {
             throw new BusinessException("The UPI ID should look like name@bank");
@@ -566,6 +629,7 @@ public class HostedChitService {
             m.setPhone(blank(list.get(i).phone()));
             m.setEmail(blank(list.get(i).email()));
             m.setPayoutAccount(blank(list.get(i).payoutAccount()));
+            m.setPayToAccountId(list.get(i).payToAccountId() == null ? null : requirePayTo(list.get(i).payToAccountId()).getId());
             rows.add(m);
         }
         members.saveAll(rows);
@@ -623,6 +687,7 @@ public class HostedChitService {
         m.setPhone(cleanPhone(r.phone(), name));
         m.setEmail(blank(r.email()));
         m.setPayoutAccount(blank(r.payoutAccount()));
+        m.setPayToAccountId(r.payToAccountId() == null ? null : requirePayTo(r.payToAccountId()).getId());
         members.save(m);
         activity.record("CHANGED", AREA, "Edited a member · " + c.getName() + " · " + before
                 + (before.equals(m.getName()) ? "" : " → " + m.getName()));
@@ -1119,7 +1184,7 @@ public class HostedChitService {
                 .debit(fundsAccount().getId(), month.getPayoutAmount(), month.getPayoutTo() == null ? null : "To " + month.getPayoutTo())
                 .hostedChit(c.getId());
         for (HostedChitLeg leg : parts) {
-            draft.credit(leg.getAccountId(), leg.getAmount(), HostedChitBookService.legMemo(leg.getMode(), leg.getReference()))
+            draft.credit(leg.getAccountId(), leg.getAmount(), HostedChitBookService.legMemo(leg.getMode(), leg.getReference(), leg.getNote()))
                     .hostedChit(c.getId());
         }
         return draft.party(winner.getName())
@@ -1433,6 +1498,8 @@ public class HostedChitService {
             leg.setAmount(Money.round(l.amount()));
             leg.setMode(mode(l.mode() != null ? l.mode() : r.mode()));
             leg.setReference(blank(l.reference()));
+            leg.setPaymentIds(HostedChitBookService.csv(book.linkedPayments(c.getId(), l.paymentIds(), null, month.getId())));
+            leg.setNote(blank(l.note()) == null ? null : ActivityService.cut(l.note().trim(), 2000));
             leg.setPosition(out.size() + 1);
             total = total.add(leg.getAmount());
             out.add(leg);
@@ -1842,6 +1909,22 @@ public class HostedChitService {
         return accountId != null && accounts.findById(accountId).map(a -> Account.ROLE_DIRECT.equals(a.getChitRole())).orElse(false);
     }
 
+    /**
+     * An account members can be asked to pay into: a bank or wallet account, active, with a UPI ID or a bank account
+     * number and IFSC (they go on the member's payment link).
+     */
+    Account requirePayTo(Long accountId) {
+        Account a = accountService.require(accountId);
+        if (!Boolean.TRUE.equals(a.getActive()) || (a.getAccountType() != AccountType.BANK && a.getAccountType() != AccountType.WALLET)) {
+            throw new BusinessException("Members pay into a bank or wallet account; " + a.getName() + " is not one");
+        }
+        boolean bank = a.getAccountNumber() != null && !a.getAccountNumber().isBlank() && a.getIfsc() != null;
+        if (a.getUpiId() == null && !bank) {
+            throw new BusinessException(a.getName() + " has no UPI ID or bank details (account number and IFSC): add them to the account first");
+        }
+        return a;
+    }
+
     private static boolean hasPayments(Calc calc, int monthNo) {
         return calc.paymentList.stream().anyMatch(p -> p.getMonthNo() == monthNo);
     }
@@ -1860,7 +1943,7 @@ public class HostedChitService {
                 throw new BusinessException("Two members are called \"" + name + "\"; add a surname or an initial");
             }
             out.add(new MemberInput(name, cleanPhone(m.phone(), name), m.email() == null || m.email().isBlank() ? null : m.email().trim(),
-                    m.payoutAccount() == null || m.payoutAccount().isBlank() ? null : m.payoutAccount().trim()));
+                    m.payoutAccount() == null || m.payoutAccount().isBlank() ? null : m.payoutAccount().trim(), m.payToAccountId()));
         }
         return out;
     }
@@ -2167,7 +2250,8 @@ public class HostedChitService {
                     totalCollected, paidOut, commission, pending, pendingCount,
                     totalCollected.subtract(paidOut).subtract(commission), next, locked,
                     c.getCreatedBy(), c.getCreatedAt(), c.getVersion(), Money.nz(c.getInstallmentIncrement()),
-                    !today.isBefore(c.getStartMonth()) || locked);
+                    !today.isBefore(c.getStartMonth()) || locked, c.getPayToAccountId(),
+                    c.getPayToAccountId() == null ? null : accounts.findById(c.getPayToAccountId()).map(Account::getName).orElse(null));
         }
 
         Detail detail() {
@@ -2182,11 +2266,17 @@ public class HostedChitService {
             entries.findAllById(entryIds).forEach(e -> entryNos.put(e.getId(), e.getEntryNo()));
 
             List<MemberView> memberViews = memberList.stream().map(m -> new MemberView(m.getId(), m.getSlot(), m.getName(), m.getPhone(), m.getEmail(),
-                    m.getPayoutAccount(), wonMonth(m.getId()),
+                    m.getPayoutAccount(), m.getPayToAccountId(), wonMonth(m.getId()),
                     paid.getOrDefault(m.getId(), Map.of()).values().stream().reduce(Money.ZERO, BigDecimal::add),
                     dues(m.getId()), lateDueOf(m.getId()), m.getVersion())).toList();
 
             Map<Long, List<LegView>> legsByMonth = book.legsByMonth(c.getId());
+            List<TransferView> moves = book.transfersOf(c.getId());
+            // each payment's way on: the transfer that moved it, and the payout that paid it out
+            Map<Long, TransferView> movedBy = new HashMap<>();
+            moves.forEach(t -> t.from().forEach(l -> l.paymentIds().forEach(id -> movedBy.put(id, t))));
+            Map<Long, Integer> paidOutIn = new HashMap<>();
+            monthList.forEach(m -> legsByMonth.getOrDefault(m.getId(), List.of()).forEach(l -> l.paymentIds().forEach(id -> paidOutIn.put(id, m.getMonthNo()))));
             Map<Long, String> accountNames = new HashMap<>();
             accounts.findByTenantId(c.getTenantId()).forEach(a -> accountNames.put(a.getId(), a.getName()));
             List<MonthView> schedule = monthList.stream().map(m -> {
@@ -2214,7 +2304,9 @@ public class HostedChitService {
                     p.getReceiptNo(), p.getPaidDate(), p.getMode(), p.getNote(), entryNos.get(p.getJournalEntryId()), p.getJournalEntryId(),
                     p.getJournalEntryId() == null ? 0 : files.getOrDefault(p.getJournalEntryId(), 0), p.getCreatedBy(), p.getCreatedAt(),
                     p.getVersion(), accountOf(p), accountNames.get(accountOf(p)), p.getPaidToMemberId(), names.get(p.getPaidToMemberId()),
-                    p.getBatchId())).toList();
+                    p.getBatchId(), movedBy.containsKey(p.getId()) ? "to " + movedBy.get(p.getId()).toAccountName()
+                        + (movedBy.get(p.getId()).entryNo() != null ? " · " + movedBy.get(p.getId()).entryNo() : "") : null,
+                    movedBy.containsKey(p.getId()) ? movedBy.get(p.getId()).id() : null, paidOutIn.get(p.getId()))).toList();
             List<LateFeeView> lateFees = new ArrayList<>();
             if (Money.isPositive(c.getLateFeePercent())) {
                 for (HostedChitMember m : memberList) {
@@ -2270,7 +2362,7 @@ public class HostedChitService {
                         l.note(), l.paymentId(), l.account()));
             }
             return new Detail(view(), memberViews, schedule, paymentViews, ledgerRows, lateFees, agreementViews,
-                    book.money(c), book.transfersOf(c.getId()));
+                    book.money(c), moves);
         }
 
         /** Where a payment came into (older payments: the chit's collections account). */

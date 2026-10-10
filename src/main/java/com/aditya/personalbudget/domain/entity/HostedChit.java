@@ -135,6 +135,10 @@ public class HostedChit implements TenantOwned {
     @Column(length = 60)
     private String upiId;
 
+    /** The account members pay into by default: its UPI ID, or its bank details, go on their payment links. */
+    @References(Account.class)
+    private Long payToAccountId;
+
     /** The name members see when they pay by UPI. */
     @Column(length = 100)
     private String payeeName;

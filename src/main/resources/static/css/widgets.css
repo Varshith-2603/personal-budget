@@ -1782,3 +1782,10 @@ tr.sched-current td:first-child { box-shadow: inset 3px 0 0 #f2c94c; }
 .xp-subs-bar.has-rejected { background: #fff1f1; border-color: #f1b8b8; }
 .xp-subs-bar svg { width: 14px; height: 14px; }
 @media (max-width: 760px) { .ap-mode { grid-template-columns: minmax(0, 1fr); } .claim-quick { margin-left: 0; } }
+
+/* narratives: "[...]" segments as tags; money that came through your own bank or cash account stands out */
+.nv-seg { display: inline-block; margin: 0 3px 1px 0; padding: 0 6px; border-radius: 5px; font-size: 0.92em; font-weight: 600; line-height: 1.55;
+    background: #eef4f9; color: var(--ocean-800, #0b4f78); border: 1px solid #d6e4ef; white-space: nowrap; }
+.nv-seg.own { background: #fff3dc; color: #8a5300; border-color: #f0cf8e; }
+.nv-sep { display: inline-block; width: 1px; height: 0.95em; margin: 0 6px; vertical-align: -1px; background: var(--hairline-strong, #c9d6e2); }
+.ed-fact.memo { line-height: 1.6; }

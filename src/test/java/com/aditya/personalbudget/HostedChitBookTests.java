@@ -8,6 +8,7 @@ import com.aditya.personalbudget.domain.type.Feature;
 import com.aditya.personalbudget.domain.type.UserRole;
 import com.aditya.personalbudget.dto.AccountDtos.AccountRequest;
 import com.aditya.personalbudget.dto.AccountDtos.AccountView;
+import com.aditya.personalbudget.dto.AccountDtos.BankDetailsRequest;
 import com.aditya.personalbudget.exception.BusinessException;
 import com.aditya.personalbudget.repository.AccountRepository;
 import com.aditya.personalbudget.repository.AppUserRepository;
@@ -29,6 +30,9 @@ import com.aditya.personalbudget.service.HostedChitService.MemberInput;
 import com.aditya.personalbudget.service.HostedChitService.PaymentRequest;
 import com.aditya.personalbudget.service.HostedChitService.PayoutRequest;
 import com.aditya.personalbudget.service.HostedChitService.WinnerRequest;
+import com.aditya.personalbudget.service.HostedChitShareService;
+import com.aditya.personalbudget.service.HostedChitShareService.PublicChit;
+import com.aditya.personalbudget.service.HostedChitShareService.ShareRequest;
 import com.aditya.personalbudget.service.ReportService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,6 +74,7 @@ class HostedChitBookTests {
     @Autowired HostedChitService chits;
     @Autowired HostedChitBookService book;
     @Autowired ReportService reports;
+    @Autowired HostedChitShareService shares;
 
     private Tenant tenant;
 
@@ -286,6 +291,76 @@ class HostedChitBookTests {
         assertThat(after.chit().name()).startsWith("Renamed");
         assertThat(after.chit().upiId()).isEqualTo("me@okhdfc");
         assertThat(after.chit().commission()).isEqualByComparingTo("1500");
+    }
+
+    @Test
+    void aPaymentIsFollowedFromTheBankThroughTheTransferToThePayout() {
+        Long icici = bank("ICICI Link " + System.nanoTime());
+        Detail d = chits.create(chit("Linked " + System.nanoTime()));
+        Long chitId = d.chit().id();
+        Long collections = d.chit().accountId();
+        Long a = d.members().get(0).id(), b = d.members().get(1).id(), c = d.members().get(2).id();
+        Long intoBank = pay(chitId, b, 1, icici).payments().stream().filter(p -> p.memberId().equals(b)).findFirst().orElseThrow().id();
+        pay(chitId, a, 1, null);
+        pay(chitId, c, 1, null);
+
+        // consolidated with its payment named: the payment knows the transfer, and cannot be moved twice
+        var move = new LegInput(icici, bd(10000), "UPI", "C77", List.of(intoBank), "Lakshmi RC-x");
+        TransferView t = book.transfer(new TransferRequest(chitId, LocalDate.now(), collections, List.of(move), true, "Bank", null, null, null));
+        assertThat(t.from().getFirst().paymentIds()).containsExactly(intoBank);
+        d = chits.detail(chitId);
+        var moved = d.payments().stream().filter(p -> p.id().equals(intoBank)).findFirst().orElseThrow();
+        assertThat(moved.transferId()).isEqualTo(t.id());
+        assertThat(moved.movedTo()).contains(t.entryNo());
+        assertThatThrownBy(() -> book.transfer(new TransferRequest(chitId, LocalDate.now(), collections,
+                List.of(new LegInput(icici, bd(1), "UPI", null, List.of(intoBank), null)), true, "Bank", null, null, null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("another transfer");
+        assertThat(lines.findByJournalEntryId(t.journalEntryId())).anyMatch(l -> l.getMemo() != null && l.getMemo().contains("Lakshmi RC-x"));
+
+        // the payout says which payments it pays out
+        chits.setWinner(chitId, 1, new WinnerRequest(a, false, null));
+        d = chits.payout(chitId, 1, payout(List.of(new LegInput(collections, bd(28500), "Bank", "P1", List.of(intoBank), "incl. Lakshmi's (moved from ICICI)"))));
+        assertThat(d.payments().stream().filter(p -> p.id().equals(intoBank)).findFirst().orElseThrow().paidOutMonth()).isEqualTo(1);
+        assertThat(d.schedule().getFirst().legs().getFirst().note()).contains("Lakshmi");
+    }
+
+    @Test
+    void membersPayIntoAnAccountWithBankDetailsAndTheNarrativeIsKeptInFull() {
+        Long icici = bank("ICICI PayTo " + System.nanoTime());
+        Detail d = chits.create(chit("PayTo " + System.nanoTime()));
+        Long chitId = d.chit().id();
+        Long collections = d.chit().accountId();
+        Long a = d.members().get(0).id(), b = d.members().get(1).id(), c = d.members().get(2).id();
+
+        // an account without a UPI ID or bank details cannot be put on a payment link
+        assertThatThrownBy(() -> chits.updateMember(chitId, b, new MemberInput("Lakshmi", null, null, null, icici)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("no UPI ID or bank details");
+        assertThatThrownBy(() -> accounts.updateBankDetails(icici, new BankDetailsRequest("ICICI Bank", "123456789012", "Asha", "ICIC123", null, null)))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("IFSC");
+        accounts.updateBankDetails(icici, new BankDetailsRequest("ICICI Bank", "123456789012", "Asha Organiser", "icic0001234", null, null));
+        d = chits.updateMember(chitId, b, new MemberInput("Lakshmi", null, null, null, icici));
+        assertThat(d.members().stream().filter(m -> m.id().equals(b)).findFirst().orElseThrow().payToAccountId()).isEqualTo(icici);
+
+        // her link carries the bank details (no UPI ID), sealed; the others have nothing to pay into yet
+        PublicChit hers = shares.open(shares.create(chitId, new ShareRequest(b, null, null, "Lakshmi", 24, false, null)).token());
+        assertThat(hers.payTo().upiId()).isNull();
+        assertThat(hers.payTo().accountNumber()).isEqualTo("123456789012");
+        assertThat(hers.payTo().ifsc()).isEqualTo("ICIC0001234");
+        assertThat(hers.payTo().holderName()).isEqualTo("Asha Organiser");
+        assertThat(hers.payTo().seal()).hasSize(64);
+        assertThat(shares.open(shares.create(chitId, new ShareRequest(c, null, null, "Suresh", 24, false, null)).token()).payTo()).isNull();
+
+        // a long narrative reaches the payout and its journal line whole
+        pay(chitId, a, 1, null);
+        pay(chitId, b, 1, null);
+        pay(chitId, c, 1, null);
+        chits.setWinner(chitId, 1, new WinnerRequest(a, false, null));
+        String note = ("[Own a/c ICICI] " + "Lakshmi RC-000968 (UTR265) ₹10,000; ".repeat(20)).trim();
+        assertThat(note.length()).isGreaterThan(600);
+        d = chits.payout(chitId, 1, payout(List.of(new LegInput(collections, bd(28500), "Bank", "P1", List.of(), note))));
+        assertThat(d.schedule().getFirst().legs().getFirst().note()).isEqualTo(note);
+        assertThat(lines.findByJournalEntryId(d.schedule().getFirst().payoutEntryId()))
+                .anyMatch(l -> l.getMemo() != null && l.getMemo().endsWith(note));
     }
 
     private Detail pay(Long chitId, Long memberId, int monthNo, Long into) {

@@ -3,6 +3,7 @@ package com.aditya.personalbudget.service;
 import com.aditya.personalbudget.domain.entity.Account;
 import com.aditya.personalbudget.domain.entity.HostedChit;
 import com.aditya.personalbudget.domain.entity.HostedChitLeg;
+import com.aditya.personalbudget.domain.entity.HostedChitPayment;
 import com.aditya.personalbudget.domain.entity.HostedChitTransfer;
 import com.aditya.personalbudget.domain.entity.JournalEntry;
 import com.aditya.personalbudget.domain.entity.JournalLine;
@@ -82,9 +83,17 @@ public class HostedChitBookService {
 
     // ================================================================== requests
 
-    /** One account's part of a payout or transfer. */
+    /**
+     * One account's part of a payout or transfer. paymentIds: the members' payments this part carries (they came into
+     * that account, or were moved there), so a payment can be followed from its receipt to the payout; note: the
+     * narrative ("Suresh Reddy RC-000969, UTR77 ...").
+     */
     public record LegInput(@NotNull Long accountId, @NotNull @Positive BigDecimal amount, String mode,
-                           @Size(max = 60) String reference) {
+                           @Size(max = 60) String reference, List<Long> paymentIds, @Size(max = 2000) String note) {
+
+        public LegInput(Long accountId, BigDecimal amount, String mode, String reference) {
+            this(accountId, amount, mode, reference, null, null);
+        }
     }
 
     /**
@@ -100,7 +109,16 @@ public class HostedChitBookService {
     public record AccountInput(@NotBlank @Size(max = 100) String name, @NotNull AccountType accountType, Long hostedChitId,
                                String role, @Size(max = 100) String institution, @Size(max = 40) String accountNumber,
                                @PositiveOrZero BigDecimal openingBalance, LocalDate openingDate,
-                               @Size(max = 255) String description, Boolean active, Long version) {
+                               @Size(max = 255) String description, Boolean active, Long version,
+                               /* bank details members pay into: the holder's name, IFSC and UPI ID */
+                               @Size(max = 100) String holderName, @Size(max = 11) String ifsc, @Size(max = 60) String upiId) {
+
+        public AccountInput(String name, AccountType accountType, Long hostedChitId, String role, String institution,
+                            String accountNumber, BigDecimal openingBalance, LocalDate openingDate, String description,
+                            Boolean active, Long version) {
+            this(name, accountType, hostedChitId, role, institution, accountNumber, openingBalance, openingDate, description,
+                    active, version, null, null, null);
+        }
     }
 
     /** Moves an account between the personal accounts and the chit book (optionally to one chit). */
@@ -131,7 +149,8 @@ public class HostedChitBookService {
                               String chitName, String role, boolean systemAccount, boolean active, boolean chitBook,
                               BigDecimal balance, BigDecimal monthIn, BigDecimal monthOut, BigDecimal change30Days,
                               LocalDate lastActivity, long transactionCount, List<BigDecimal> trend,
-                              List<ChitShare> byChit, BigDecimal untagged, List<String> usedBy, Long version) {
+                              List<ChitShare> byChit, BigDecimal untagged, List<String> usedBy, Long version,
+                              String holderName, String ifsc, String upiId) {
     }
 
     public record BookChit(Long id, String name, String chitType, String status, Long collectionAccountId,
@@ -147,7 +166,7 @@ public class HostedChitBookService {
     }
 
     public record LegView(Long id, Long accountId, String accountName, boolean chitBook, BigDecimal amount, String mode,
-                          String reference) {
+                          String reference, List<Long> paymentIds, String note) {
     }
 
     public record TransferView(Long id, Long chitId, String chitName, LocalDate date, boolean chitMoney, String kind,
@@ -187,13 +206,16 @@ public class HostedChitBookService {
     private final HostedChitRepository chits;
     private final HostedChitTransferRepository transfers;
     private final HostedChitLegRepository legs;
+    private final com.aditya.personalbudget.repository.HostedChitPaymentRepository payments;
     private final AccountService accountService;
     private final LedgerService ledger;
     private final ActivityService activity;
 
     public HostedChitBookService(AccountRepository accounts, JournalEntryRepository entries, JournalLineRepository lines,
                                  HostedChitRepository chits, HostedChitTransferRepository transfers, HostedChitLegRepository legs,
-                                 AccountService accountService, LedgerService ledger, ActivityService activity) {
+                                 AccountService accountService, LedgerService ledger, ActivityService activity,
+                                 com.aditya.personalbudget.repository.HostedChitPaymentRepository payments) {
+        this.payments = payments;
         this.accounts = accounts;
         this.entries = entries;
         this.lines = lines;
@@ -532,7 +554,7 @@ public class HostedChitBookService {
         HostedChit chit = r.hostedChitId() == null ? null : requireChit(r.hostedChitId());
         var view = accountService.create(new AccountRequest(null, r.name(), r.accountType(), blank(r.institution()),
                 blank(r.accountNumber()), r.openingBalance(), r.openingDate(), null, null, null, null,
-                blank(r.description()), r.active(), null));
+                blank(r.description()), r.active(), null, r.holderName(), r.ifsc(), r.upiId()));
         Account a = accountService.require(view.id());
         a.setChitBook(true);
         a.setHostedChitId(chit == null ? null : chit.getId());
@@ -556,7 +578,7 @@ public class HostedChitBookService {
         String before = a.getName();
         accountService.update(id, new AccountRequest(a.getCode(), r.name(), r.accountType(), blank(r.institution()),
                 blank(r.accountNumber()), r.openingBalance(), r.openingDate(), null, null, null, null,
-                blank(r.description()), r.active(), r.version()));
+                blank(r.description()), r.active(), r.version(), r.holderName(), r.ifsc(), r.upiId()));
         Account saved = accountService.require(id);
         saved.setHostedChitId(chit == null ? null : chit.getId());
         saved.setChitRole(chit == null ? Account.ROLE_COMMON : role(r.role() != null ? r.role() : a.getChitRole()));
@@ -626,7 +648,7 @@ public class HostedChitBookService {
         t.setTenantId(UserContext.tenantId());
         t.setCreatedBy(UserContext.username());
         t.setCreatedAt(LocalDateTime.now());
-        Draft d = check(r);
+        Draft d = check(r, null);
         fill(t, r, d);
         t = transfers.save(t);
         saveLegs(t, d.legs);
@@ -644,7 +666,7 @@ public class HostedChitBookService {
         if (r.version() != null && !Objects.equals(r.version(), t.getVersion())) {
             throw new ConcurrentUpdateException("hosted_chit_transfers", id);
         }
-        Draft d = check(r);
+        Draft d = check(r, id);
         BigDecimal before = t.getAmount();
         fill(t, r, d);
         legs.deleteAll(legs.findByTransferId(id));
@@ -689,7 +711,7 @@ public class HostedChitBookService {
         }
     }
 
-    private Draft check(TransferRequest r) {
+    private Draft check(TransferRequest r, Long transferId) {
         Draft d = new Draft();
         d.date = r.date() != null ? r.date() : LocalDate.now();
         if (d.date.isAfter(LocalDate.now())) {
@@ -723,9 +745,11 @@ public class HostedChitBookService {
             merged.put(a.getId(), Money.round(l.amount()));
             firstLeg.put(a.getId(), l);
         }
-        d.legs = merged.entrySet().stream().map(e -> new LegInput(e.getKey(), e.getValue(),
-                firstLeg.get(e.getKey()).mode() == null ? null : mode(firstLeg.get(e.getKey()).mode()),
-                blank(firstLeg.get(e.getKey()).reference()))).toList();
+        d.legs = merged.entrySet().stream().map(e -> {
+            LegInput l = firstLeg.get(e.getKey());
+            return new LegInput(e.getKey(), e.getValue(), l.mode() == null ? null : mode(l.mode()), blank(l.reference()),
+                    linkedPayments(chitId, l.paymentIds(), transferId, null), blank(l.note()));
+        }).toList();
         boolean anyBook = d.byId.values().stream().anyMatch(Account::isChitBook);
         boolean anyPersonal = d.byId.values().stream().anyMatch(a -> !a.isChitBook());
         d.chitMoney = Boolean.TRUE.equals(r.chitMoney()) && d.chit != null;
@@ -764,10 +788,49 @@ public class HostedChitBookService {
             leg.setAmount(l.amount());
             leg.setMode(l.mode() != null ? l.mode() : t.getMode());
             leg.setReference(l.reference());
+            leg.setPaymentIds(csv(l.paymentIds()));
+            leg.setNote(l.note());
             leg.setPosition(i + 1);
             rows.add(leg);
         }
         legs.saveAll(rows);
+    }
+
+    /**
+     * Checks the members' payments a part says it carries: they are the chit's, and none is already carried by another
+     * transfer (consolidated twice) or, for a payout, by another payout. Returns them in order, without repeats.
+     */
+    List<Long> linkedPayments(Long chitId, List<Long> ids, Long transferId, Long monthId) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        if (chitId == null) {
+            throw new BusinessException("Pick the chit whose payments these are");
+        }
+        List<Long> out = ids.stream().filter(Objects::nonNull).distinct().toList();
+        Set<Long> known = payments.findByChitId(chitId).stream().map(HostedChitPayment::getId).collect(Collectors.toSet());
+        for (Long id : out) {
+            if (!known.contains(id)) throw new NotFoundException("Payment", id);
+        }
+        for (HostedChitLeg other : legs.findByChitId(chitId)) {
+            boolean sameKind = monthId == null ? other.getTransferId() != null && !other.getTransferId().equals(transferId)
+                    : other.getMonthId() != null && !other.getMonthId().equals(monthId);
+            if (!sameKind) continue;
+            for (Long id : ids(other.getPaymentIds())) {
+                if (out.contains(id)) {
+                    String no = payments.findById(id).map(HostedChitPayment::getReceiptNo).orElse("#" + id);
+                    throw new BusinessException(no + " is already " + (monthId == null ? "moved by another transfer" : "part of another payout"));
+                }
+            }
+        }
+        return out;
+    }
+
+    static String csv(List<Long> ids) {
+        return ids == null || ids.isEmpty() ? null : ids.stream().map(String::valueOf).collect(Collectors.joining(","));
+    }
+
+    static List<Long> ids(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        return java.util.Arrays.stream(csv.split(",")).map(String::trim).filter(s -> s.matches("\\d+")).map(Long::valueOf).toList();
     }
 
     /** Dr the account the money goes to, Cr each account it comes from; lines carry the chit per {@link #tag}. */
@@ -779,7 +842,7 @@ public class HostedChitBookService {
         JournalDraft draft = JournalDraft.of(t.getTransferDate(), VoucherType.TRANSFER, ActivityService.cut(narration, 255))
                 .debit(d.to.getId(), t.getAmount(), legMemo(t.getMode(), t.getReference())).hostedChit(tag(d.to.getId(), chitId, chitMoney));
         for (LegInput l : d.legs) {
-            draft.credit(l.accountId(), l.amount(), legMemo(l.mode() != null ? l.mode() : t.getMode(), l.reference()))
+            draft.credit(l.accountId(), l.amount(), legMemo(l.mode() != null ? l.mode() : t.getMode(), l.reference(), l.note()))
                     .hostedChit(tag(l.accountId(), chitId, chitMoney));
         }
         String ref = t.getReference() != null ? t.getReference()
@@ -812,8 +875,14 @@ public class HostedChitBookService {
     }
 
     static String legMemo(String mode, String reference) {
-        String memo = (mode == null ? "" : mode) + (reference == null ? "" : (mode == null ? "" : " · ") + "ref " + reference);
-        return memo.isBlank() ? null : ActivityService.cut(memo, 255);
+        return legMemo(mode, reference, null);
+    }
+
+    /** "Bank · ref UTR1 · Suresh Reddy RC-000969 ...": the line's mode, reference and the payments it carries. */
+    static String legMemo(String mode, String reference, String note) {
+        String memo = (mode == null ? "" : mode) + (reference == null ? "" : (mode == null ? "" : " · ") + "ref " + reference)
+                + (note == null || note.isBlank() ? "" : (mode == null && reference == null ? "" : " · ") + note.trim());
+        return memo.isBlank() ? null : ActivityService.cut(memo, 2000);
     }
 
     private TransferView transferView(Long id) {
@@ -846,7 +915,7 @@ public class HostedChitBookService {
     private static LegView legView(HostedChitLeg l, Map<Long, Account> byId) {
         Account a = byId.get(l.getAccountId());
         return new LegView(l.getId(), l.getAccountId(), a == null ? "?" : a.getName(), a != null && a.isChitBook(),
-                l.getAmount(), l.getMode(), l.getReference());
+                l.getAmount(), l.getMode(), l.getReference(), ids(l.getPaymentIds()), l.getNote());
     }
 
     // ================================================================== helpers
@@ -1027,7 +1096,7 @@ public class HostedChitBookService {
                     a.getChitRole() != null ? a.getChitRole() : a.getHostedChitId() == null ? Account.ROLE_COMMON : Account.ROLE_COLLECTION,
                     Boolean.TRUE.equals(a.getSystemAccount()), Boolean.TRUE.equals(a.getActive()), a.isChitBook(),
                     balance, in, out, balance.subtract(balanceAsOf(a.getId(), today.minusDays(30))), last,
-                    own.size(), trend, shares, untagged, used, a.getVersion());
+                    own.size(), trend, shares, untagged, used, a.getVersion(), a.getHolderName(), a.getIfsc(), a.getUpiId());
         }
     }
 }

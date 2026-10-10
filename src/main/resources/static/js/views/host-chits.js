@@ -18,7 +18,7 @@
  */
 import { api } from '../core/api.js';
 import { state, can, loadAccounts, categoriesOf } from '../core/store.js';
-import { panel, esc, openModal, confirmDialog, toast, emptyState, printElement } from '../core/ui.js';
+import { panel, esc, openModal, confirmDialog, toast, emptyState, printElement, narrativeHtml } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, moneyShort, date, shortDate, shortDateYear, isoDate, daysFromToday, dateTime } from '../core/format.js';
 import { exportButton, bindExport } from '../core/export.js';
@@ -401,6 +401,7 @@ function drawDetail(container, d) {
                     ${nextAction}
                     ${canManage ? `<button class="btn sm on-dark" data-act="remind" title="Send payment reminders or receipts, by e-mail or WhatsApp">${icon('send')}Send</button>
                         <button class="btn sm on-dark" data-act="share" title="Share a temporary link to this chit">${icon('share')}Share</button>` : ''}
+                    ${canManage && done ? `<button class="btn sm on-dark" data-act="copy-chit" title="Host a new chit with the same terms and members">${icon('copy')}Copy as a new chit</button>` : ''}
                     ${canManage ? `<button class="btn sm on-dark icon" data-act="settings" title="Settings">${icon('settings')}</button>` : ''}
                 </div>
             </div>
@@ -483,6 +484,8 @@ function drawDetail(container, d) {
             else if (act === 'plan-pdf') printPlan(draftFromChit(d));
             else if (act === 'plan-link') sharePlan(draftFromChit(d));
             else if (act === 'edit-plan') openPlanEditor(d);
+            else if (act === 'view-plan') openPlanView(d);
+            else if (act === 'copy-chit') openWizard(d);
             else if (act === 'pay') openPayment(d, memberId, monthNo);
             else if (act === 'collect-all') openCollectAll(d, monthNo);
             else if (act === 'winner') (isAuction(c) ? openAuction : openWinner)(d, m, el.dataset.random === '1');
@@ -531,6 +534,31 @@ function drawDetail(container, d) {
 }
 
 /** After a transfer: the chit again from the server (its money moved). */
+/**
+ * The chit table of a running chit, to read (with your commission) and to share with the members as a PDF or a link
+ * (without it). Once the chit has started it cannot change; this is how it is seen.
+ */
+function openPlanView(d) {
+    const c = d.chit;
+    const w = draftFromChit(d);
+    const plan = planOf(w);
+    const res = isPlanned(c) ? reserveOf(plan.rows) : null;
+    openModal({
+        title: `${isAuction(c) ? 'How the auction works' : 'Chit table'} · ${c.name}`, iconName: isAuction(c) ? 'gavel' : 'calendar', size: 'xl',
+        body: `<div class="hc-plan-view-head">
+                <span>${typeBadge(c)} ${c.memberCount} members · ${c.months} months · ${monthName(c.startMonth)} – ${monthName(d.schedule.at(-1).dueDate)}</span>
+                ${res ? `<span>net commission <b class="${res.total < 0 ? 'neg' : 'gold-ink'}">${signedMoney(res.total)}</b>${res.peak ? ` · keep up to <b>${money(res.peak)}</b>` : ''}</span>` : ''}
+                ${c.termsLocked ? `<span class="badge gray">${icon('lock')}fixed: the chit has started</span>` : ''}</div>
+            <div class="hc-plan-wrap hc-plan-modal">${planTableHtml(w, plan, {})}</div>
+            <p class="muted hc-small">${icon('info')}Members get the table without your commission.</p>`,
+        actions: [
+            { label: 'PDF for members', left: true, iconName: 'printer', onClick: () => { printPlan(w); return true; } },
+            { label: 'Share link', iconName: 'link', onClick: () => { setTimeout(() => sharePlan(w), 0); } },
+            { label: 'Close', kind: 'primary' },
+        ],
+    });
+}
+
 /**
  * Planned chits: edit the chit table of a running chit. Months already paid out are locked; what members pay is
  * locked in months that have payments. "Fill evenly" spreads the open months' payouts from a first to a last figure.
@@ -831,7 +859,7 @@ async function openQuickPaid(d, memberId, monthNo) {
             <label class="field"><span>Reference <small class="muted">optional</small></span><input type="text" name="reference" maxlength="60" placeholder="UPI ref / UTR" data-plain></label>
             <div class="field span-2"><span>Paid by</span>${modeChips('UPI')}</div>
             ${c.postToBooks ? `<label class="field span-2" data-into><span>Received into</span><select name="accountId">${moneyAccountOptions(accounts,
-                { chitId: c.id, chitName: c.name, selected: lastInto || c.accountId })}</select></label>` : ''}
+                { chitId: c.id, chitName: c.name, selected: member?.payToAccountId || lastInto || c.payToAccountId || c.accountId })}</select></label>` : ''}
         </form>`,
         actions: [
             { label: 'More options…', left: true, onClick: () => { setTimeout(() => openPayment(d, memberId, monthNo), 0); } },
@@ -1056,6 +1084,7 @@ function monthsHtml(d) {
     const planned = isPlanned(c);
     const tools = `<div class="hc-members-tools hc-months-tools">
         ${planned && manage() && !c.termsLocked ? `<button class="btn sm primary" data-act="edit-plan">${icon('edit')}Edit chit table</button>` : ''}
+        <button class="btn sm ${planned && manage() && !c.termsLocked ? '' : 'primary'}" data-act="view-plan" title="${auction ? 'How the auction works' : 'The whole chit table'}, to read, print or share">${icon('eye')}${auction ? 'Auction guide' : 'View chit table'}</button>
         ${planned && c.termsLocked ? `<span class="badge gray" title="The chit has started: the table is what the members agreed to">${icon('lock')}Table fixed</span>` : ''}
         <button class="btn sm" data-act="plan-pdf" title="${auction ? 'How the auction works' : 'The chit table'}, for the members (without your commission)">${icon('printer')}${auction ? 'Auction guide' : 'Table'} PDF</button>
         <button class="btn sm" data-act="plan-link" title="A link for the members (without your commission)">${icon('link')}Share link</button>
@@ -1235,6 +1264,7 @@ function historyHtml(d) {
             : p.accountName ? `into ${p.accountName}` : '';
         const facts = [['Received', `${date(p.paidDate)} · ${p.mode}`], ['Where', where], ['Reference', p.reference], ['Receipt', p.receiptNo],
             ['Late interest', num(p.lateFee) ? money(p.lateFee) : ''], ['Let off', num(p.lateFeeWaived) ? money(p.lateFeeWaived) : ''],
+            ['Moved', p.movedTo], ['Paid out', p.paidOutMonth ? `in the month ${p.paidOutMonth} payout` : ''],
             ['Entry', p.entryNo], ['Note', p.note], ['Recorded', `${p.createdBy}, ${dateTime(p.createdAt)}`]].filter(([, v]) => v);
         return `<div class="hc-lg-item" data-lg-name="${esc((p.memberName || '').toLowerCase())}">
             <div class="hc-lg-row" data-act="lg-expand" title="Show the details">
@@ -1243,6 +1273,8 @@ function historyHtml(d) {
                 <span class="hc-lg-mode">${esc(p.mode)}</span>
                 ${p.paidToMemberId ? `<span class="hc-lg-chip direct" title="${esc(where)}">${icon('hand')}direct</span>` : ''}
                 ${p.batchId ? '<span class="hc-lg-chip" title="Marked paid with everyone at once">all</span>' : ''}
+                ${p.movedTo ? `<span class="hc-lg-chip" title="Moved ${esc(p.movedTo)}">${icon('merge')}moved</span>` : ''}
+                ${p.paidOutMonth ? `<span class="hc-lg-chip good" title="Paid out in month ${p.paidOutMonth}">${icon('crown')}${p.paidOutMonth}</span>` : ''}
                 ${p.attachmentCount ? `<span class="hc-lg-chip" title="${p.attachmentCount} file(s) of evidence">${icon('paperclip')}${p.attachmentCount}</span>` : ''}
                 <small class="hc-lg-date">${shortDate(p.paidDate)}</small>
                 <span class="grow"></span>
@@ -1365,6 +1397,34 @@ function ensurePlan(w) {
     w.plan.forEach((row, i) => { if (!row.instTouched) row.installment = emi + inc * i; });
 }
 
+/** 500000 -> "5L", 1500000 -> "15L", 25000000 -> "2.5Cr", 50000 -> "50K". */
+function shortValue(v) {
+    const trim = x => String(Math.round(x * 10) / 10).replace(/\.0$/, '');
+    return v >= 1e7 ? `${trim(v / 1e7)}Cr` : v >= 1e5 ? `${trim(v / 1e5)}L` : v >= 1e3 ? `${trim(v / 1e3)}K` : String(Math.round(v));
+}
+
+/** "2026-10" plus some months -> "Oct26". */
+function monthTag(ym, plus = 0) {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m - 1 + plus, 1);
+    return d.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3) + String(d.getFullYear()).slice(2);
+}
+
+/**
+ * The name a new chit is given until one is typed: the company, the chit's value and kind, and the months it runs,
+ * e.g. "Aditya Chitfunds 5L (Oct26–May28)" or "Aditya Chitfunds 10L Auction (Oct26–May28)"; "#2" when already taken.
+ */
+function suggestName(w) {
+    const n = num(w.memberCount);
+    if (!(n >= 2) || !/^\d{4}-\d{2}$/.test(w.startMonth)) return w.company || '';
+    const value = w.chitType === 'AUCTION' ? num(w.auctionValue) : w.chitType === 'PLANNED' ? num(w.installment) * n : num(w.baseValue);
+    const kind = w.chitType === 'AUCTION' ? ' Auction' : w.chitType === 'PLANNED' ? ' Planned' : '';
+    const tail = ` ${shortValue(value)}${kind} (${monthTag(w.startMonth)}–${monthTag(w.startMonth, n - 1)})`;
+    let name = `${(w.company || 'Chit').slice(0, 100 - tail.length - 3)}${tail}`;
+    for (let i = 2; w.takenNames?.has(name.toLowerCase()); i++) name = `${name.replace(/ #\d+$/, '')} #${i}`;
+    return name;
+}
+
 /** The draft as the server's chit request. */
 function draftRequest(w) {
     const n = num(w.memberCount);
@@ -1388,7 +1448,9 @@ function draftRequest(w) {
         commissionAccountId: w.postToBooks && w.commissionTo === 'EXISTING' ? w.commissionAccountId : null,
         commissionCategoryId: w.postToBooks ? w.commissionCategoryId : null,
         separateLateFeeAccount: w.lateTo === 'SEPARATE', lateFeeAccountId: w.lateTo === 'EXISTING' ? w.lateFeeAccountId : null,
-        members: w.members.slice(0, n).map(m => ({ name: m.name.trim(), phone: m.phone.replace(/[\s-]/g, '') || null, email: (m.email || '').trim() || null })),
+        members: w.members.slice(0, n).map(m => ({ name: m.name.trim(), phone: m.phone.replace(/[\s-]/g, '') || null, email: (m.email || '').trim() || null,
+            payoutAccount: (m.payoutAccount || '').trim() || null, payToAccountId: m.payToAccountId || null })),
+        payToAccountId: w.payToAccountId || null,
     };
 }
 
@@ -1421,12 +1483,20 @@ function planOf(w) {
  * Hosting a new chit takes over the right-hand pane (the list and the figures stay): three steps with room for a
  * live explanation and the whole schedule beside the form. Cancel, or creating the chit, brings the chit view back.
  */
-async function openWizard() {
+/**
+ * Hosts a new chit. template: a chit's detail to copy (a finished chit used again): its kind, amounts, chit table,
+ * late interest, UPI details and members, starting next month with a fresh name and new accounts.
+ */
+async function openWizard(template = null) {
     if (!manage()) return;
     const container = document.querySelector('.hc-page')?.parentElement;
     if (!container) return;
-    const w = newDraft();
-    const [accounts, categories] = await Promise.all([loadAccounts().catch(() => []), categoriesOf('INCOME').catch(() => [])]);
+    const w = template ? copyDraft(template) : newDraft();
+    const [accounts, categories, cfg, existing] = await Promise.all([loadAccounts().catch(() => []), categoriesOf('INCOME').catch(() => []),
+        api.get('/hosted-chits/settings').catch(() => ({})), api.get('/hosted-chits').catch(() => [])]);
+    // new chits are named after the household's chit-funds company (Settings › Host a Chit)
+    w.company = (cfg.companyName || cfg.householdName || 'Chit').trim();
+    w.takenNames = new Set(existing.map(x => x.name.trim().toLowerCase()));
     w.commissionCategoryId = categories.find(c => c.name === 'Chit Commission Income')?.id ?? null;   // null: made for the chit
     const steps = [['Chit details', 'the kind of chit, dates and money'], ['Members', 'who is in the chit'], ['Payments & accounts', 'UPI, accounts and a last look']];
     const previous = view.selectedId;
@@ -1440,7 +1510,7 @@ async function openWizard() {
         <section class="panel hc-create">
             <header class="hc-create-head">
                 <span class="hero-icon">${icon('hand-coins')}</span>
-                <div class="min-0 hc-create-title"><b>Host a new chit</b><small data-step-note></small></div>
+                <div class="min-0 hc-create-title"><b>${w.copiedFrom ? `Host a new chit · copy of ${esc(w.copiedFrom)}` : 'Host a new chit'}</b><small data-step-note></small></div>
                 <ol class="hc-steps on-dark" data-steps></ol>
                 <button class="btn sm on-dark icon" data-wz="cancel" title="Close (Esc)">${icon('x')}</button>
             </header>
@@ -1605,7 +1675,8 @@ function drawDetails(host, w) {
                 ${typeButton('AUCTION', 'gavel', 'Auction', 'members bid, the discount is shared')}
             </div>
             <div class="hc-fit-grid">
-                ${fl('Chit name', 'name', w, { type: 'text', attrs: 'maxlength="100"', span: 'span-2', tip: auction ? 'e.g. Auction Chit 10L' : 'e.g. Family Chit 2026' })}
+                ${fl('Chit name', 'name', w, { type: 'text', attrs: 'maxlength="100"', span: 'span-2', unit: w.nameTouched ? '' : 'suggested',
+                    tip: 'Suggested from your chit-funds company (Settings › Host a Chit), the value and the months; type your own to change it' })}
                 ${fl('Starts in', 'startMonth', w, { type: 'month', tip: 'The first month members pay' })}
                 ${fl('Members pay by', 'dueDay', w, { attrs: 'min="1" max="28"', unit: 'of the month', tip: 'Day of every month members pay by (1–28)' })}
                 ${fl('Members', 'memberCount', w, { attrs: 'min="2" max="100"', unit: `${num(w.memberCount) || ''} months`, tip: 'Also the number of months: each member wins once' })}
@@ -1670,6 +1741,11 @@ function drawDetails(host, w) {
     const preview = () => {
         const n = num(w.memberCount);
         const ok = n >= 2 && n <= 100 && /^\d{4}-\d{2}$/.test(w.startMonth);
+        if (!w.nameTouched) {
+            w.name = suggestName(w);
+            const box = host.querySelector('[data-k="name"]');
+            if (box && document.activeElement !== box) box.value = w.name;
+        }
         const membersUnit = host.querySelector('[data-k="memberCount"] ~ .fl-unit');
         if (membersUnit) membersUnit.textContent = n ? `${n} months` : '';
         if (auction) {
@@ -1734,6 +1810,7 @@ function drawDetails(host, w) {
         const k = e.target.dataset.k;
         if (!k) return;
         w[k] = e.target.value;
+        if (k === 'name') w.nameTouched = !!e.target.value.trim();   // cleared: the suggestion comes back
         if (k === 'baseValue') w.baseTouched = true;
         if (!auction && !planned && (k === 'memberCount' || k === 'installment') && !w.baseTouched) {
             w.baseValue = num(w.memberCount) * num(w.installment);
@@ -1931,6 +2008,22 @@ function sharePlan(w) {
 }
 
 /** A running chit as a draft, to print or share its table (and, for planned chits, to edit it). */
+/** A new chit's draft copied from a chit: same terms and members, from next month, with its own name and accounts. */
+function copyDraft(d) {
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const from = draftFromChit(d);
+    const w = { ...newDraft(), ...from, name: '', nameTouched: false, copiedFrom: d.chit.name,
+        startMonth: `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`,
+        commissionPercent: Math.round(num(from.commissionPercent) * 100) / 100,
+        winnerExtraType: from.winnerExtraType === 'NONE' ? 'FIXED' : from.winnerExtraType, payToAccountId: d.chit.payToAccountId || null,
+        members: d.members.slice().sort((a, b) => a.slot - b.slot).map(m => ({ name: m.name, phone: m.phone || '', email: m.email || '',
+            payoutAccount: m.payoutAccount || '', payToAccountId: m.payToAccountId || null })) };
+    if (d.chit.winnerExtraType === 'NONE') w.winnerExtraValue = 0;
+    w.plan = from.plan.map(x => ({ ...x }));
+    return w;
+}
+
 function draftFromChit(d) {
     const c = d.chit;
     return {
@@ -2097,6 +2190,9 @@ function drawAccounts(host, w, accounts, categories) {
             <div class="hc-fit-grid two">
                 ${fl('My UPI ID (for “Pay now” links)', 'upiId', w, { type: 'text', unit: 'e.g. name@okhdfcbank', tip: 'Members get a “Pay now” button (GPay, PhonePe, BHIM …) and a QR code with their reminders and statements' })}
                 ${fl('Name shown to members and on receipts', 'payeeName', w, { type: 'text', attrs: 'maxlength="100"' })}
+                <label class="field span-2 hc-payto-field"><span>Members pay into</span><select data-k="payToAccountId" data-plain>${payToOptions(accounts, { id: null }, w.payToAccountId,
+                    'The collection account (else the UPI ID above)')}</select>
+                    <small>Its UPI ID, or its bank details (account number and IFSC), go on members’ payment links</small></label>
             </div>
             <div class="section-title">${icon('journal')}My accounts</div>
             ${booksFields(w, accounts, categories, 'data-k', true)}
@@ -2121,6 +2217,9 @@ function drawAccounts(host, w, accounts, categories) {
         </div>
     </div>`;
     host.addEventListener('input', e => { if (e.target.dataset.k === 'upiId' || e.target.dataset.k === 'payeeName') w[e.target.dataset.k] = e.target.value; });
+    const payTo = host.querySelector('[data-k=payToAccountId]');
+    bindPayTo(payTo, accounts);
+    payTo?.addEventListener('change', () => { w.payToAccountId = payTo.value ? Number(payTo.value) : null; });
     bindBooksFields(host, w, 'data-k');
 }
 
@@ -2254,7 +2353,7 @@ async function openPayment(d, memberId, monthNo, editing = null) {
                 <small data-direct-note ${direct ? '' : 'hidden'}>The money went straight to the winner and is taken off what you pay them. Attach their acknowledgement or the transfer screenshot as evidence.</small></div>` : ''}
             <div class="field ${c.postToBooks ? '' : 'span-2'}"><span>Paid by</span>${modeChips(editing?.mode || 'Cash')}</div>
             ${c.postToBooks ? `<label class="field" data-into ${direct ? 'hidden' : ''}><span>Received into</span><select name="accountId">${moneyAccountOptions(accounts,
-                { chitId: c.id, chitName: c.name, selected: (!direct && editing?.accountId) || lastInto || c.accountId })}</select>
+                { chitId: c.id, chitName: c.name, selected: (!direct && editing?.accountId) || member?.payToAccountId || lastInto || c.payToAccountId || c.accountId })}</select>
                 <small>The chit's account, or your own bank account if the member paid there</small></label>` : ''}
             <label class="field"><span>Transaction reference</span><input type="text" name="reference" maxlength="60" value="${esc(editing?.reference || '')}" placeholder="UPI ref, cheque or transfer no." data-plain></label>
             <label class="field"><span>Note <small class="muted">optional</small></span><input type="text" name="note" maxlength="255" value="${esc(editing?.note || '')}" data-plain></label>
@@ -2510,29 +2609,66 @@ async function openPayout(d, month) {
     const toPay = Math.max(0, payout - direct);
     const spots = (d.money?.spots || []).filter(s => num(s.amount) > 0 && s.role !== 'DIRECT');
     const chitMoney = Object.fromEntries((d.money?.spots || []).map(s => [s.accountId, num(s.amount)]));
-    // what came in for this month (to me), by the account it came into
+    // this month's payments (to me), by the account their money is in now: where it came in, or where a transfer moved it
+    const movedOn = id => (d.transfers || []).find(t => t.from.some(l => (l.paymentIds || []).includes(id)));
     const received = new Map();
-    d.payments.filter(p => p.monthNo === month.monthNo && num(p.amount) && !p.paidToMemberId).forEach(p => {
-        const k = p.accountId || c.accountId;
+    d.payments.filter(p => p.monthNo === month.monthNo && num(p.amount) && !p.paidToMemberId && !p.paidOutMonth).forEach(p => {
+        const k = movedOn(p.id)?.toAccountId ?? (p.accountId || c.accountId);
         received.set(k, (received.get(k) || 0) + num(p.amount));
     });
     // planned chits: a month that pays out more than it collects takes the difference out of the commission account
     const shortfall = isPlanned(c) && num(month.commission) < 0 && c.commissionAccountId ? Math.min(toPay, -num(month.commission)) : 0;
-    /** Pay from where the chit's money is: its own accounts first, then common ones, then your own; the rest from collections. */
+    // the members' payments not yet paid out, and where their money is now: moved by a transfer, else where it came in
+    const movedBy = id => (d.transfers || []).find(t => t.from.some(l => (l.paymentIds || []).includes(id)));
+    const whereNow = p => movedBy(p.id)?.toAccountId ?? (p.accountId || c.accountId);
+    const open = d.payments.filter(p => !p.paidToMemberId && !p.paidOutMonth && num(p.amount) > 0)
+        .sort((a, b) => a.paidDate.localeCompare(b.paidDate) || a.id - b.id);
+    /** Up to `amount` of the payments now in an account (oldest first): their ids and the narrative for the line. */
+    const carried = (accountId, amount) => {
+        // what the account still holds of the chit: payments moved before transfers named them drop out (latest kept)
+        let room = num(chitMoney[accountId]);
+        const here = open.filter(p => whereNow(p) === accountId).reverse().filter(p => (room -= num(p.amount)) >= -0.005).reverse();
+        const ids = [];
+        let sum = 0;
+        for (const p of here) {
+            if (sum >= amount - 0.005) break;
+            ids.push(p.id);
+            sum += num(p.amount);
+        }
+        const list = here.filter(p => ids.includes(p.id));
+        // one segment per way the money came: "[Own a/c ICICI Bank → TR-000008] Gopal RC-000968 (UTR265) ₹25,000; ..."
+        const segments = new Map();
+        for (const p of list) {
+            const origin = accounts.find(a => a.id === (p.accountId || c.accountId));
+            const t = movedBy(p.id);
+            const label = `${origin && !origin.chitBook ? 'Own a/c ' : ''}${origin?.name || 'Collections'}${t ? ` → ${t.entryNo}` : ''}`;
+            segments.set(label, [...(segments.get(label) || []), p]);
+        }
+        const note = [...segments].map(([label, ps]) => `[${label}] ${ps.map(p =>
+            `${p.memberName} ${p.receiptNo || ''}${p.reference ? ` (${p.reference})` : ''} ${money(p.amount)}`.replace(/\s+/g, ' ')).join('; ')}`).join(' | ');
+        return { paymentIds: ids, note };
+    };
+    /**
+     * Pay from where the chit's money is. First your own bank accounts (members paid into them; consolidated money
+     * follows its transfer), then common chit accounts, then the chit's collections; the commission account only for a
+     * month that pays out more than it collects. Each part names, and is linked to, the payments it pays out.
+     */
     const suggest = () => {
         let left = toPay - shortfall;
-        const legs = shortfall ? [{ accountId: c.commissionAccountId, amount: shortfall, mode: 'Bank', reference: '' }] : [];
-        for (const s of spots) {
-            if (shortfall && s.accountId === c.commissionAccountId) continue;
-            if (left <= 0) break;
-            const take = Math.min(left, num(s.amount));
-            legs.push({ accountId: s.accountId, amount: take, mode: 'Bank', reference: '' });
+        const legs = shortfall ? [{ accountId: c.commissionAccountId, amount: shortfall, mode: 'Bank', reference: '',
+            paymentIds: [], note: `From my commission: month ${month.monthNo} pays out more than it collects` }] : [];
+        const rank = x => !x.chitBook ? 0 : !x.own ? 1 : x.accountId === c.accountId ? 2 : 9;
+        const ordered = spots.filter(x => rank(x) < 9).sort((a, b) => rank(a) - rank(b) || num(b.amount) - num(a.amount));
+        for (const x of ordered) {
+            if (left <= 0.005) break;
+            const take = Math.min(left, num(x.amount));
+            legs.push({ accountId: x.accountId, amount: take, mode: 'Bank', reference: '', ...carried(x.accountId, take) });
             left -= take;
         }
-        if (left > 0) {
+        if (left > 0.005) {
             const own = legs.find(l => l.accountId === c.accountId);
             if (own) own.amount += left;
-            else legs.push({ accountId: c.accountId, amount: left, mode: 'Bank', reference: '' });
+            else legs.push({ accountId: c.accountId, amount: left, mode: 'Bank', reference: '', ...carried(c.accountId, left) });
         }
         return legs;
     };
@@ -2563,7 +2699,7 @@ async function openPayout(d, month) {
             <div class="min-0 grow"><b>Already paid to ${esc(month.winnerName)} directly</b>
                 <small class="ellipsis" title="${esc(directList.map(p => `${p.memberName}: ${money(p.amount)}`).join('\n'))}">${esc(directList.map(p => p.memberId === month.winnerMemberId ? `${p.memberName} (own, set off)` : p.memberName).join(', '))}</small></div>
             <b class="hc-src-amt">${money(direct)}</b></div>` : ''}
-        ${received.size ? `<div class="ca-received"><small>${icon('arrow-in')}Came in this month — tap to pay from it:</small>${[...received].map(([id, v]) =>
+        ${received.size ? `<div class="ca-received"><small>${icon('arrow-in')}This month's payments are now in — tap to pay from it:</small>${[...received].map(([id, v]) =>
             `<button type="button" class="ca-mchip in clickable" data-add-from="${id}" data-amount="${v}"><span class="ellipsis">${esc(nameOf(id))}</span><b>${money(v)}</b></button>`).join('')}</div>` : ''}
         <div class="hc-srcs" data-legs></div>
         <div class="hc-srcs-foot">
@@ -2628,7 +2764,8 @@ async function openPayout(d, month) {
                     payoutDate: v('payoutDate').value || null, mode: books ? (legs[0]?.mode || 'Bank') : chosenMode(el),
                     reference: books ? null : v('reference').value.trim() || null, allowDues,
                     createAgreement: agreement, guarantorName: v('guarantorName').value.trim() || null, guarantorPhone: v('guarantorPhone').value.trim() || null,
-                    legs: books ? legs.map(l => ({ accountId: Number(l.accountId), amount: num(l.amount), mode: l.mode, reference: (l.reference || '').trim() || null })) : null,
+                    legs: books ? legs.map(l => ({ accountId: Number(l.accountId), amount: num(l.amount), mode: l.mode, reference: (l.reference || '').trim() || null,
+                        paymentIds: l.paymentIds || [], note: (l.note || '').trim() || null })) : null,
                     payoutTo: v('payoutTo').value.trim() || null,
                     commissionFromAccountId: v('commissionFrom')?.value ? Number(v('commissionFrom').value) : null,
                 });
@@ -2658,7 +2795,10 @@ async function openPayout(d, month) {
                         <label class="hc-src-field amt"><small>Amount</small><input type="number" class="num" step="any" min="0" value="${l.amount}" data-leg-amount data-type="number" inputmode="decimal"></label>
                         <label class="hc-src-field"><small>Mode</small><select data-leg-mode data-plain>${['Bank', 'UPI', 'Cash'].map(x => `<option ${l.mode === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
                         <label class="hc-src-field grow"><small>UTR / reference</small><input type="text" maxlength="60" value="${esc(l.reference || '')}" data-leg-ref data-plain></label>
-                    </div></div>`).join('')
+                    </div>
+                    <div class="hc-src-note">${(l.paymentIds || []).length ? `<span class="hc-lg-chip direct" title="Linked to these payments">${icon('link')}${l.paymentIds.length}</span>` : ''}
+                        <textarea rows="1" maxlength="2000" placeholder="Narrative: whose payments these are (on the journal line)" data-leg-note data-plain>${esc(l.note || '')}</textarea>
+                    </div>${l.note && /\[Own a\/c /.test(l.note) ? `<div class="hc-src-nv">${narrativeHtml(l.note)}</div>` : ''}</div>`).join('')
                     : `<p class="muted hc-small">${direct >= payout ? 'Members paid the whole amount to the winner directly: nothing more to pay.' : 'Add the account you paid from.'}</p>`;
             };
             const PALETTE = ['#0b7cbd', '#13a89a', '#c99a3b', '#5b4fc9', '#d9603c', '#13808f', '#7b8fa3'];
@@ -2707,7 +2847,9 @@ async function openPayout(d, month) {
                 const cr = (name, v, note = '') => `<tr><td class="ca-cr">${name}${note}</td><td></td><td class="num">${money(v)}</td></tr>`;
                 el.querySelector('[data-preview]').innerHTML = je(`Chit payout · ${esc(month.winnerName)}`, dr(`Hosted Chit Funds ${tag}`, payout)
                         + (direct ? cr('Paid directly to winners', direct, ` <small class="muted">${plural(directList.length, 'member')}</small>`) : '')
-                        + legs.map(l => cr(esc(nameOf(l.accountId)), num(l.amount), ` <small class="muted">${esc(l.mode)}${l.reference ? ' · ' + esc(l.reference) : ''}</small>`)).join('')
+                        + legs.map(l => cr(esc(nameOf(l.accountId)) + (accounts.find(a => a.id === Number(l.accountId))?.chitBook === false ? ' <span class="nv-seg own">own a/c</span>' : ''),
+                            num(l.amount), ` <small class="muted">${esc(l.mode)}${l.reference ? ' · ' + esc(l.reference) : ''}</small>`
+                            + (l.note ? `<small class="ca-je-note">${narrativeHtml(l.note)}</small>` : ''))).join('')
                         + `<tr class="ca-je-total"><td>Total</td><td class="num">${money(payout)}</td><td class="num ${ok ? '' : 'neg'}">${money(total)}</td></tr>`)
                     + (commission > 0 ? je('Commission (income)', dr(`Hosted Chit Funds ${tag}`, commission) + cr('Income · commission', commission))
                         + (separate ? je('Commission to its account (transfer)', dr(esc(nameOf(c.commissionAccountId)), commission) + cr(esc(nameOf(commissionFrom)), commission)) : '')
@@ -2728,15 +2870,19 @@ async function openPayout(d, month) {
                 const existing = s.legs.find(l => l.accountId === id);
                 // replace the suggestion when it does not match what is being built
                 const amount = Math.min(num(chip.dataset.amount), Math.max(0, left() + (existing ? num(existing.amount) : 0)));
-                if (existing) existing.amount = amount || num(chip.dataset.amount);
-                else s.legs.push({ accountId: id, amount: amount || num(chip.dataset.amount), mode: 'Bank', reference: '' });
+                if (existing) Object.assign(existing, { amount: amount || num(chip.dataset.amount) }, carried(id, amount || num(chip.dataset.amount)));
+                else s.legs.push({ accountId: id, amount: amount || num(chip.dataset.amount), mode: 'Bank', reference: '', ...carried(id, amount || num(chip.dataset.amount)) });
                 redraw();
             });
             legsEl.addEventListener('change', e => {
                 const row = e.target.closest('[data-i]');
                 if (!row) return;
                 const leg = s.legs[Number(row.dataset.i)];
-                if (e.target.matches('[data-leg-account]')) leg.accountId = e.target.value ? Number(e.target.value) : null;
+                if (e.target.matches('[data-leg-account]')) {
+                    leg.accountId = e.target.value ? Number(e.target.value) : null;
+                    Object.assign(leg, leg.accountId ? carried(leg.accountId, num(leg.amount) || num(chitMoney[leg.accountId])) : { paymentIds: [], note: '' });
+                    drawLegs();
+                }
                 if (e.target.matches('[data-leg-mode]')) leg.mode = e.target.value;
                 preview();
             });
@@ -2746,6 +2892,7 @@ async function openPayout(d, month) {
                 const leg = s.legs[Number(row.dataset.i)];
                 if (e.target.matches('[data-leg-amount]')) leg.amount = e.target.value;
                 if (e.target.matches('[data-leg-ref]')) leg.reference = e.target.value;
+                if (e.target.matches('[data-leg-note]')) leg.note = e.target.value;
                 preview();
             });
             legsEl.addEventListener('click', e => {
@@ -2758,7 +2905,78 @@ async function openPayout(d, month) {
     });
 }
 
-function openMember(d, m) {
+/** A bank or wallet account members can pay into: it has a UPI ID, or an account number and IFSC. */
+const payReady = a => !!(a && (a.upiId || (a.accountNumber && a.ifsc)));
+
+/** The accounts members can be asked to pay into (this chit's and common chit accounts, then mine), each with what it carries. */
+function payToOptions(accounts, c, selected, emptyLabel) {
+    const ok = a => a.active && ['BANK', 'WALLET'].includes(a.accountType) && (!a.chitBook || !a.hostedChitId || a.hostedChitId === c.id);
+    const what = a => a.upiId ? `UPI ${a.upiId}` : a.accountNumber && a.ifsc ? `A/c ••${String(a.accountNumber).replace(/\s/g, '').slice(-4)} · ${a.ifsc}` : 'no bank details yet';
+    const opt = a => `<option value="${a.id}" ${a.id === Number(selected) ? 'selected' : ''}>${esc(a.name)} · ${esc(what(a))}</option>`;
+    const group = (label, list) => list.length ? `<optgroup label="${esc(label)}">${list.map(opt).join('')}</optgroup>` : '';
+    return `<option value="">${esc(emptyLabel)}</option>${group('Chit accounts', accounts.filter(a => ok(a) && a.chitBook))}${group('My accounts', accounts.filter(a => ok(a) && !a.chitBook))}`;
+}
+
+/**
+ * Asks for the bank details of an account picked for members to pay into (UPI ID, or account number and IFSC).
+ * Resolves with the saved account, or null when cancelled.
+ */
+function askBankDetails(a) {
+    return new Promise(resolve => {
+        let saved = null;
+        const bank = a.accountType === 'BANK';
+        const modal = openModal({
+            title: `Bank details · ${a.name}`, iconName: 'bank',
+            body: `<p class="hc-note warn">${icon('alert')}<span><b>${esc(a.name)}</b> has no UPI ID${bank ? ' or bank details' : ''}. Members' payment links show these, so add them to use it.
+                    A UPI ID gives members a “Pay now” button; ${bank ? 'with only the account number and IFSC they get the bank details to transfer to.' : 'a wallet needs one.'}</span></p>
+                <form class="form-grid two" onsubmit="return false">
+                    <label class="field span-2"><span>Account holder name</span><input type="text" name="holderName" value="${esc(a.holderName || '')}" maxlength="100" placeholder="As on the passbook" data-plain></label>
+                    <label class="field span-2"><span>UPI ID</span><input type="text" name="upiId" value="${esc(a.upiId || '')}" maxlength="60" placeholder="name@okicici" data-plain></label>
+                    ${bank ? `<label class="field"><span>Bank</span><input type="text" name="institution" value="${esc(a.institution || '')}" maxlength="100" placeholder="e.g. ICICI Bank" data-plain></label>
+                    <label class="field"><span>Account number</span><input type="text" name="accountNumber" value="${esc(a.accountNumber || '')}" maxlength="40" inputmode="numeric" data-plain></label>
+                    <label class="field"><span>IFSC</span><input type="text" name="ifsc" value="${esc(a.ifsc || '')}" maxlength="11" placeholder="ICIC0001234" style="text-transform:uppercase" data-plain></label>` : ''}
+                </form>`,
+            actions: [
+                { label: 'Cancel' },
+                { label: 'Save details', kind: 'primary', iconName: 'check', onClick: async m => {
+                    const v = n => m.el.querySelector(`[name=${n}]`)?.value.trim() || '';
+                    const upi = v('upiId'), ifsc = v('ifsc').toUpperCase(), number = v('accountNumber');
+                    if (upi && !/^[\w.\-]{2,}@[A-Za-z][\w.]{1,}$/.test(upi)) throw new Error('The UPI ID looks like name@bank');
+                    if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) throw new Error('The IFSC is 4 letters, a zero, then 6 letters or digits');
+                    if (number && !/^[A-Za-z0-9 \-]{4,40}$/.test(number)) throw new Error('The account number can have letters, digits, spaces and dashes');
+                    if (!upi && !(number && ifsc)) throw new Error(bank ? 'Enter a UPI ID, or the account number and IFSC' : 'Enter the UPI ID');
+                    saved = await api.put(`/accounts/${a.id}/bank-details`, { institution: bank ? v('institution') || null : a.institution,
+                        accountNumber: bank ? number || null : a.accountNumber, holderName: v('holderName') || null, ifsc: ifsc || null, upiId: upi || null, version: a.version });
+                    await loadAccounts(true);
+                    toast(`Bank details saved on ${saved.name}`);
+                } },
+            ],
+        });
+        // resolve once the dialog is gone (saved or cancelled)
+        const gone = new MutationObserver(() => { if (!modal.el.isConnected) { gone.disconnect(); resolve(saved); } });
+        gone.observe(document.body, { childList: true, subtree: true });
+    });
+}
+
+/** Wires a pay-to select: picking an account without bank details asks for them, and goes back if they are not given. */
+function bindPayTo(select, accounts) {
+    if (!select) return;
+    let before = select.value;
+    select.addEventListener('change', async () => {
+        const a = accounts.find(x => x.id === Number(select.value));
+        if (a && !payReady(a)) {
+            const saved = await askBankDetails(a);
+            if (!saved || !payReady(saved)) { select.value = before; select.dispatchEvent(new Event('change')); return; }
+            Object.assign(a, saved);
+            const opt = select.querySelector(`option[value="${a.id}"]`);
+            if (opt) opt.textContent = `${a.name} · ${a.upiId ? `UPI ${a.upiId}` : `A/c ••${String(a.accountNumber).replace(/\s/g, '').slice(-4)} · ${a.ifsc}`}`;
+        }
+        before = select.value;
+    });
+}
+
+async function openMember(d, m) {
+    const accounts = await loadAccounts().catch(() => []);
     openModal({
         title: 'Edit member', iconName: 'user',
         body: `<form class="form-grid one">
@@ -2767,7 +2985,11 @@ function openMember(d, m) {
             <label class="field"><span>E-mail</span><input type="email" name="email" value="${esc(m.email || '')}" maxlength="120" placeholder="for e-mailed reminders and receipts" data-plain></label>
             <label class="field"><span>Payout to</span><input type="text" name="payoutAccount" value="${esc(m.payoutAccount || '')}" maxlength="120" placeholder="Bank, account no. and IFSC, or UPI ID" data-plain>
                 <small>Filled in when you pay this member the chit</small></label>
+            <label class="field"><span>Pays into</span><select name="payToAccountId" data-plain>${payToOptions(accounts, d.chit, m.payToAccountId,
+                d.chit.payToAccountName ? `The chit's account (${d.chit.payToAccountName})` : 'The chit’s account / UPI ID')}</select>
+                <small>The account on ${esc(m.name.split(' ')[0])}’s payment link (its UPI ID, or bank details to transfer to)</small></label>
         </form>`,
+        onOpen: modal => bindPayTo(modal.el.querySelector('[name=payToAccountId]'), accounts),
         actions: [
             { label: 'Cancel' },
             { label: 'Save', kind: 'primary', iconName: 'check', onClick: async modal => {
@@ -2779,8 +3001,9 @@ function openMember(d, m) {
                 if (email && !EMAIL.test(email)) throw new Error('The e-mail address does not look right');
                 if (d.members.some(x => x.id !== m.id && x.name.trim().toLowerCase() === name.toLowerCase())) throw new Error(`Another member is already called ${name}`);
                 const payoutAccount = modal.el.querySelector('[name=payoutAccount]').value.trim();
+                const payTo = modal.el.querySelector('[name=payToAccountId]').value;
                 await afterChange(await api.put(`/hosted-chits/${d.chit.id}/members/${m.id}`, { name, phone: phone || null, email: email || null,
-                    payoutAccount: payoutAccount || null }), 'Saved');
+                    payoutAccount: payoutAccount || null, payToAccountId: payTo ? Number(payTo) : null }), 'Saved');
             } },
         ],
     });
@@ -2843,6 +3066,7 @@ async function openSettings(d) {
     };
     // once the chit has started its amounts, percentages and dates are fixed: only names, UPI details and accounts change
     const fixed = !!c.termsLocked;
+    const payAccounts = accounts.map(a => ({ ...a }));
     const f = (label, name, value, hint = '', attrs = '') => `<label class="field"><span>${label}</span>
         <input type="number" name="${name}" value="${value}" step="any" min="0" class="num" data-type="number" ${attrs} ${fixed ? 'disabled' : ''}>${hint && !fixed ? `<small>${hint}</small>` : ''}</label>`;
     openModal({
@@ -2871,6 +3095,9 @@ async function openSettings(d) {
                     ${f('Grace days', 'lateGraceDays', c.lateGraceDays || 0, 'before late interest starts', 'max="60"')}
                     <label class="field"><span>My UPI ID</span><input type="text" name="upiId" value="${esc(c.upiId || '')}" placeholder="name@okhdfcbank" data-plain><small>for payment links</small></label>
                     <label class="field"><span>Name shown to members</span><input type="text" name="payeeName" value="${esc(c.payeeName || '')}" maxlength="100" data-plain></label>
+                    <label class="field span-2"><span>Members pay into</span><select name="payToAccountId" data-plain>${payToOptions(payAccounts, c, c.payToAccountId,
+                        'The collection account (else the UPI ID above)')}</select>
+                        <small>Its UPI ID, or its bank details, go on members’ payment links. A member can have their own (Members → Edit).</small></label>
                     <label class="field span-2"><span>Notes</span><input type="text" name="notes" value="${esc(c.notes || '')}" maxlength="255"></label>
                 </div>
                 ${fixed ? `<p class="hc-note">${icon('lock')}<span>${esc(c.name)} has started: its amounts, percentages and dates are what the members agreed to and cannot change. You can still edit the name, notes, UPI details and the accounts.</span></p>`
@@ -2884,6 +3111,7 @@ async function openSettings(d) {
         actions: [
             { label: 'Delete chit…', kind: 'danger', left: true, iconName: 'trash', onClick: () => { setTimeout(() => openDelete(d), 0); } },
             { label: c.receiptSignature ? 'Receipt signature ✓' : 'Receipt signature…', iconName: 'signature', onClick: () => { setTimeout(() => openSignature(d), 0); } },
+            { label: 'Copy as a new chit', iconName: 'copy', onClick: () => { setTimeout(() => openWizard(d), 0); } },
             { label: 'Cancel' },
             { label: 'Save', kind: 'primary', iconName: 'check', onClick: async modal => {
                 const form = modal.el.querySelector('form');
@@ -2900,6 +3128,7 @@ async function openSettings(d) {
                     winnerExtraType: auction || isPlanned(c) ? 'NONE' : v('winnerExtraType'), winnerExtraValue: auction || isPlanned(c) ? 0 : Number(v('winnerExtraValue') || 0),
                     lateFeePercent: Number(v('lateFeePercent') || 0), lateGraceDays: Number(v('lateGraceDays') || 0),
                     upiId: v('upiId').trim() || null, payeeName: v('payeeName').trim() || null,
+                    payToAccountId: v('payToAccountId') ? Number(v('payToAccountId')) : null,
                     notes: v('notes').trim() || null, postToBooks: s.postToBooks,
                     separateCollectionAccount: s.postToBooks && s.collection === 'SEPARATE', accountId: s.collection === 'EXISTING' ? s.accountId : c.accountId,
                     separateCommissionAccount: s.postToBooks && s.commissionTo === 'SEPARATE',
@@ -2912,6 +3141,7 @@ async function openSettings(d) {
         ],
         onOpen: modal => {
             const form = modal.el.querySelector('form');
+            bindPayTo(form.payToAccountId, payAccounts);
             if (fixed) ['winnerExtraType', 'winnerExtraValue'].forEach(n => { if (form[n]) form[n].disabled = true; });
             form.winnerExtraType?.addEventListener('change', () => {
                 form.winnerExtraValue.value = form.winnerExtraType.value === 'NONE' ? ''
@@ -2994,7 +3224,7 @@ async function openSend(d, { kind = 'REMINDER', memberId = null, paymentIds = nu
     const fill = (text, r) => {
         const link = linkOf(r);
         const linkText = st.kind === 'REMINDER'
-            ? (link ? ` ${c.upiId ? 'Pay or see your statement here' : 'Your statement'}: ${link}` : ' [payment link]')
+            ? (link ? ` ${(c.upiId || c.payToAccountId) ? 'Pay or see your statement here' : 'Your statement'}: ${link}` : ' [payment link]')
             : (link || '[receipt link]');
         return text.replaceAll('{name}', r.m.name.split(' ')[0]).replaceAll('{amount}', money(r.amount)).replaceAll('{months}', r.vars.months || '')
             .replaceAll('{date}', r.vars.date || '').replaceAll('{month}', String(r.vars.month ?? '')).replaceAll('{receipt}', r.vars.receipt || '')
@@ -3383,9 +3613,9 @@ function openStatement(d, m) {
         actions: [
             { label: 'Print / PDF', left: true, iconName: 'printer', onClick: modal => { printElement(modal.el.querySelector('[data-statement]'), `${m.name} · ${c.name}`); return true; } },
             { label: 'Close' },
-            { label: c.upiId && owe ? 'Send statement with payment link' : 'Send statement', kind: 'primary', iconName: 'share', onClick: async modal => {
+            { label: (c.upiId || c.payToAccountId) && owe ? 'Send statement with payment link' : 'Send statement', kind: 'primary', iconName: 'share', onClick: async modal => {
                 const { url, share } = await makeLink(d, { memberId: m.id }, 24 * 30);
-                const text = `Hi ${m.name.split(' ')[0]}, your statement for ${c.name}${owe ? `: ${money(owe)} is due` : ''}.${c.upiId && owe ? ' You can pay from the link.' : ''} ${url}`;
+                const text = `Hi ${m.name.split(' ')[0]}, your statement for ${c.name}${owe ? `: ${money(owe)} is due` : ''}.${(c.upiId || c.payToAccountId) && owe ? ' You can pay from the link.' : ''} ${url}`;
                 modal.el.querySelector('[data-link-result]').innerHTML = linkResultHtml(url, text, m, share.expiresAt);
                 return true;
             } },

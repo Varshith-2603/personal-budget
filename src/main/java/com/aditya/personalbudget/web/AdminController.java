@@ -32,7 +32,11 @@ public class AdminController {
     private final AppSettingsService appSettings;
     private final com.aditya.personalbudget.service.TenantMailService mail;
 
-    public AdminController(UserService users, AppSettingsService appSettings, com.aditya.personalbudget.service.TenantMailService mail) {
+    private final com.aditya.personalbudget.service.HostedChitService chits;
+
+    public AdminController(UserService users, AppSettingsService appSettings, com.aditya.personalbudget.service.TenantMailService mail,
+                           com.aditya.personalbudget.service.HostedChitService chits) {
+        this.chits = chits;
         this.mail = mail;
         this.users = users;
         this.appSettings = appSettings;
@@ -43,6 +47,14 @@ public class AdminController {
     @RequiresPermission(Permission.MANAGE_USERS)
     public AppSettingsService.AppSettings updateAppSettings(@RequestBody AppSettingsService.AppSettings settings) {
         return appSettings.update(settings);
+    }
+
+    /** Host a Chit: the household's chit-funds company name, which new chits are named after. */
+    @PutMapping("/chit-settings")
+    @RequiresPermission(Permission.MANAGE_USERS)
+    public com.aditya.personalbudget.service.HostedChitService.ChitSettings saveChitSettings(
+            @jakarta.validation.Valid @RequestBody com.aditya.personalbudget.service.HostedChitService.ChitSettingsRequest request) {
+        return chits.saveChitSettings(request);
     }
 
     /** The household's own e-mail account for chit reminders and receipts (password never returned). */
