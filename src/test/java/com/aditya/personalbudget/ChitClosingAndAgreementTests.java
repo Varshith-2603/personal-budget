@@ -76,6 +76,8 @@ class ChitClosingAndAgreementTests {
     @Autowired ClaimService claims;
     @Autowired ClaimAgreementService loanAgreements;
     @Autowired com.aditya.personalbudget.service.HostedChitBookService book;
+    @Autowired com.aditya.personalbudget.service.ChitTrailService trails;
+    @Autowired com.aditya.personalbudget.service.LedgerService ledgerService;
 
     @BeforeEach
     void signIn() {
@@ -188,13 +190,27 @@ class ChitClosingAndAgreementTests {
         assertThatThrownBy(() -> chits.payout(chitId, 1, gathered)).isInstanceOf(BusinessException.class).hasMessageContaining("first");
 
         // the ICICI payment is moved into the collections for the month 1 payout
-        Long iciciPayment = d.payments().stream().filter(p -> "TO_MOVE".equals(p.movement())).findFirst().orElseThrow().id();
+        var awaiting = d.payments().stream().filter(p -> "TO_MOVE".equals(p.movement())).findFirst().orElseThrow();
+        Long iciciPayment = awaiting.id();
+        Long paymentEntry = awaiting.journalEntryId();
+        assertThat(trails.forEntryIds(List.of(paymentEntry)).get(paymentEntry).label()).isEqualTo("Awaiting move");
         var move = book.transfer(new TransferRequest(chitId, LocalDate.now(), collections,
                 List.of(new LegInput(icici, bd(10000), "UPI", "G1", List.of(iciciPayment), null)), true, "UPI", null, "gathered", null, 1));
         d = chits.detail(chitId);
         var moved = d.payments().stream().filter(p -> p.id().equals(iciciPayment)).findFirst().orElseThrow();
         assertThat(moved.movement()).isEqualTo("MOVED");
         assertThat(moved.movedForMonth()).isEqualTo(1);
+        // the journal tells it too: the payment moved, the transfer gathered and waiting for its payout (no payout details yet)
+        var payTrail = trails.forEntryIds(List.of(paymentEntry)).get(paymentEntry);
+        assertThat(payTrail.status()).isEqualTo("MOVED");
+        assertThat(payTrail.movedBy()).isEqualTo(move.entryNo());
+        assertThat(payTrail.payoutEntryNo()).isNull();
+        var moveTrail = move.chitTrail();
+        assertThat(moveTrail.moveType()).isEqualTo("Gathered into collections");
+        assertThat(moveTrail.status()).isEqualTo("AWAITING_PAYOUT");
+        assertThat(moveTrail.payoutEntryNo()).isNull();
+        var view = ledgerService.toViews(List.of(ledgerService.get(move.journalEntryId()))).getFirst();
+        assertThat(view.chitTrail().moveType()).isEqualTo("Gathered into collections");
 
         // paying from another account is refused once gathered; from the collections it goes, and the commission waits
         assertThatThrownBy(() -> chits.payout(chitId, 1, new PayoutRequest(LocalDate.now(), "Bank", null, true, false, null, null,
@@ -202,6 +218,12 @@ class ChitClosingAndAgreementTests {
         d = chits.payout(chitId, 1, gathered);
         assertThat(d.schedule().getFirst().commissionPending()).isTrue();
         assertThat(spot(d.money(), collections)).isEqualByComparingTo("1500");
+        // the payout is made: now the transfer and the payment carry its details
+        var paidMove = trails.forEntryIds(List.of(move.journalEntryId())).get(move.journalEntryId());
+        assertThat(paidMove.status()).isEqualTo("PAID_OUT");
+        assertThat(paidMove.payoutEntryNo()).isNotNull();
+        assertThat(paidMove.winner()).isEqualTo("Lakshmi");
+        assertThat(trails.forEntryIds(List.of(paymentEntry)).get(paymentEntry).payoutDate()).isEqualTo(LocalDate.now());
         assertThatThrownBy(() -> book.deleteTransfer(move.id())).isInstanceOf(BusinessException.class).hasMessageContaining("Undo that payout");
 
         // the commission moves to the chit's commission account and on to SBI

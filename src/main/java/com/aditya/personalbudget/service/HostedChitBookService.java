@@ -181,7 +181,9 @@ public class HostedChitBookService {
                                String reference, String note, String entryNo, Long journalEntryId, String createdBy,
                                LocalDateTime createdAt, Long version,
                                /* gathered for this month's payout */
-                               Integer payoutMonthNo) {
+                               Integer payoutMonthNo,
+                               /* the move's type and, for money gathered for a payout, the payout once it is made */
+                               ChitTrailService.Trail chitTrail) {
     }
 
     /** A personal account holding (or having advanced) chit money. */
@@ -202,7 +204,9 @@ public class HostedChitBookService {
     public record StatementLine(Long entryId, String entryNo, LocalDate date, String voucherLabel, String narration,
                                 String party, String reference, String memo, String counterpart, BigDecimal moneyIn,
                                 BigDecimal moneyOut, BigDecimal balance, Long hostedChitId, String chitName,
-                                String sourceType, Long sourceId) {
+                                String sourceType, Long sourceId,
+                                /* a hosted chit's money: where it stands */
+                                ChitTrailService.Trail chitTrail) {
     }
 
     public record Statement(Long accountId, String accountName, LocalDate from, LocalDate to, BigDecimal opening,
@@ -217,6 +221,7 @@ public class HostedChitBookService {
     private final HostedChitLegRepository legs;
     private final com.aditya.personalbudget.repository.HostedChitPaymentRepository payments;
     private final com.aditya.personalbudget.repository.HostedChitMonthRepository months;
+    private final ChitTrailService trails;
     private final AccountService accountService;
     private final LedgerService ledger;
     private final ActivityService activity;
@@ -225,7 +230,8 @@ public class HostedChitBookService {
                                  HostedChitRepository chits, HostedChitTransferRepository transfers, HostedChitLegRepository legs,
                                  AccountService accountService, LedgerService ledger, ActivityService activity,
                                  com.aditya.personalbudget.repository.HostedChitPaymentRepository payments,
-                                 com.aditya.personalbudget.repository.HostedChitMonthRepository months) {
+                                 com.aditya.personalbudget.repository.HostedChitMonthRepository months, ChitTrailService trails) {
+        this.trails = trails;
         this.months = months;
         this.payments = payments;
         this.accounts = accounts;
@@ -519,6 +525,7 @@ public class HostedChitBookService {
                         .thenComparing(JournalLine::getJournalEntryId).thenComparing(JournalLine::getLineNo))
                 .toList();
         BigDecimal running = Money.ZERO;
+        Map<Long, ChitTrailService.Trail> chitTrails = trails.forEntryIds(mine.stream().map(JournalLine::getJournalEntryId).toList());
         for (JournalLine l : mine) {
             JournalEntry e = b.entryById.get(l.getJournalEntryId());
             BigDecimal change = debitNormal ? l.getDebit().subtract(l.getCredit()) : l.getCredit().subtract(l.getDebit());
@@ -540,7 +547,7 @@ public class HostedChitBookService {
                     e.getParty(), e.getReference(), l.getMemo(), counterpart, change.signum() >= 0 ? change : Money.ZERO,
                     change.signum() < 0 ? change.negate() : Money.ZERO, running, l.getHostedChitId(),
                     l.getHostedChitId() == null ? null : chitNames.getOrDefault(l.getHostedChitId(), "Chit #" + l.getHostedChitId()),
-                    e.getSourceType(), e.getSourceId()));
+                    e.getSourceType(), e.getSourceId(), chitTrails.get(e.getId())));
         }
         return new Statement(accountId, account.getName(), start, end, opening, running, in, out, rows);
     }
@@ -932,6 +939,7 @@ public class HostedChitBookService {
         Map<Long, String> entryNos = new HashMap<>();
         entries.findAllById(list.stream().map(HostedChitTransfer::getJournalEntryId).filter(Objects::nonNull).toList())
                 .forEach(e -> entryNos.put(e.getId(), e.getEntryNo()));
+        Map<Long, ChitTrailService.Trail> chitTrails = trails.forEntryIds(list.stream().map(HostedChitTransfer::getJournalEntryId).toList());
         Map<Long, List<HostedChitLeg>> legsByTransfer = legs.findByTenantId(UserContext.tenantId()).stream()
                 .filter(l -> l.getTransferId() != null).collect(Collectors.groupingBy(HostedChitLeg::getTransferId));
         return list.stream()
@@ -944,7 +952,7 @@ public class HostedChitBookService {
                             t.getTransferDate(), Boolean.TRUE.equals(t.getChitMoney()), kind(t, byId, from), t.getToAccountId(),
                             to == null ? "?" : to.getName(), from.stream().map(l -> legView(l, byId)).toList(), t.getAmount(),
                             t.getMode(), t.getReference(), t.getNote(), entryNos.get(t.getJournalEntryId()), t.getJournalEntryId(),
-                            t.getCreatedBy(), t.getCreatedAt(), t.getVersion(), t.getPayoutMonthNo());
+                            t.getCreatedBy(), t.getCreatedAt(), t.getVersion(), t.getPayoutMonthNo(), chitTrails.get(t.getJournalEntryId()));
                 }).toList();
     }
 

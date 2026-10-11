@@ -369,7 +369,9 @@ public class HostedChitService {
                               /* where its money stands for the payout: IN_COLLECTIONS (came straight in), TO_MOVE (in another
                                  account, to be moved into the collections), MOVED (moved there), DIRECT (paid to the winner);
                                  and the month whose payout it was gathered for */
-                              String movement, Integer movedForMonth) {
+                              String movement, Integer movedForMonth,
+                              /* where its money stands, with the payout once it is made */
+                              ChitTrailService.Trail chitTrail) {
     }
 
     /** Late interest on one member's month: accrued so far, collected or let off, still due. */
@@ -435,6 +437,7 @@ public class HostedChitService {
     private final com.aditya.personalbudget.repository.TenantRepository tenants;
     private final AttachmentService files;
     private final AppSettingsService settings;
+    private final ChitTrailService trails;
 
     public HostedChitService(HostedChitRepository chits, HostedChitMemberRepository members, HostedChitMonthRepository months,
                              HostedChitPaymentRepository payments, HostedChitShareRepository shares,
@@ -444,7 +447,8 @@ public class HostedChitService {
                              LedgerService ledger, ActivityService activity, JournalLineRepository lines,
                              HostedChitBookService book, HostedChitLegRepository legs,
                              com.aditya.personalbudget.repository.TenantRepository tenants, AttachmentService files,
-                             AppSettingsService settings) {
+                             AppSettingsService settings, ChitTrailService trails) {
+        this.trails = trails;
         this.files = files;
         this.settings = settings;
         this.tenants = tenants;
@@ -3059,6 +3063,7 @@ public class HostedChitService {
             }).toList();
 
             Map<Long, Integer> files = entryIds.isEmpty() ? Map.of() : attachments.countsByEntry(c.getTenantId());
+            Map<Long, ChitTrailService.Trail> paymentTrails = trails.forEntryIds(paymentList.stream().map(HostedChitPayment::getJournalEntryId).toList());
             List<PaymentView> paymentViews = paymentList.stream().map(p -> new PaymentView(p.getId(), p.getMemberId(),
                     names.get(p.getMemberId()), p.getMonthNo(), p.getAmount(), p.getLateFee(), p.getLateFeeWaived(), p.getReference(),
                     p.getReceiptNo(), p.getPaidDate(), p.getMode(), p.getNote(), entryNos.get(p.getJournalEntryId()), p.getJournalEntryId(),
@@ -3068,7 +3073,8 @@ public class HostedChitService {
                         + (movedBy.get(p.getId()).entryNo() != null ? " · " + movedBy.get(p.getId()).entryNo() : "") : null,
                     movedBy.containsKey(p.getId()) ? movedBy.get(p.getId()).id() : null, paidOutIn.get(p.getId()),
                     lockReason(p) != null, lockReason(p), movementOf(p, movedBy.get(p.getId())),
-                    movedBy.containsKey(p.getId()) ? movedBy.get(p.getId()).payoutMonthNo() : null)).toList();
+                    movedBy.containsKey(p.getId()) ? movedBy.get(p.getId()).payoutMonthNo() : null,
+                    p.getJournalEntryId() == null ? null : paymentTrails.get(p.getJournalEntryId()))).toList();
             List<LateFeeView> lateFees = new ArrayList<>();
             if (Money.isPositive(c.getLateFeePercent())) {
                 for (HostedChitMember m : memberList) {

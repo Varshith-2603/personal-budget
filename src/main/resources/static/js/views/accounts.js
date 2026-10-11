@@ -12,6 +12,7 @@ import { kindChip, entryKind } from '../core/entry-kind.js';
 import { exportButton, bindExport } from '../core/export.js';
 import { icon, accountTypeIcon } from '../core/icons.js';
 import { money, moneyShort, date, shortDate, shortDateYear, percent, firstOfMonth, isoDate, number, daysFromToday } from '../core/format.js';
+import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
 import { openQuickEntry } from '../components/transaction-forms.js';
 import { toggleEntryRow } from '../components/entry-inline.js';
 import { claimContextHtml, claimBadge, reminderText } from '../components/claim-panel.js';
@@ -529,7 +530,7 @@ async function drawDetail(target, account, reload, all = []) {
     const baseColumns = [
         { label: 'Date', render: r => date(r.date), cls: 'nowrap c-date' },
         { label: 'Entry', cls: 'c-entry', render: r => `<div class="entry-cell">${kindChip(r.voucherType, 'sm', r.voucherLabel)}
-            <span class="entry-text"><b class="ellipsis">${esc(r.narration)}</b>${personOf(r)}${peopleAccount ? '' : inlineStatus(r)}${r.counterAccounts ? `<span class="entry-party ellipsis" title="The other side">${icon(isIn(r) ? 'arrow-in' : 'arrow-out')}${esc(r.counterAccounts)}</span>` : ''}</span></div>` },
+            <span class="entry-text"><b class="ellipsis">${esc(r.narration)}</b>${personOf(r)}${peopleAccount ? '' : inlineStatus(r)}${chitTrailChips(r.chitTrail)}${r.counterAccounts ? `<span class="entry-party ellipsis" title="The other side">${icon(isIn(r) ? 'arrow-in' : 'arrow-out')}${esc(r.counterAccounts)}</span>` : ''}</span></div>` },
         { label: debitNormal ? 'In (Dr)' : 'Out (Dr)', align: 'r', render: r => Number(r.debit) ? `<span class="dr-amt">${money(r.debit)}</span>` : '' },
         { label: debitNormal ? 'Out (Cr)' : 'In (Cr)', align: 'r', render: r => Number(r.credit) ? `<span class="cr-amt">${money(r.credit)}</span>` : '' },
         { label: 'Balance', align: 'r', render: r => `<b>${money(r.balance)}</b>` },

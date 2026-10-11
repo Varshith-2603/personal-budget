@@ -75,12 +75,14 @@ public class LedgerService {
     private final CategoryRepository categories;
     private final ChitRepository chits;
     private final HostedChitRepository hostedChits;
+    private final ChitTrailService trails;
 
     public LedgerService(AccountRepository accounts, JournalEntryRepository entries, JournalLineRepository lines,
                          ClaimRepaymentRepository repayments, CategoryRepository categories, ChitRepository chits,
                          com.aditya.personalbudget.repository.ClaimInterestPostingRepository interestPostings,
                          com.aditya.personalbudget.repository.AttachmentRepository attachments, AttachmentService attachmentService,
-                         HostedChitRepository hostedChits) {
+                         HostedChitRepository hostedChits, ChitTrailService trails) {
+        this.trails = trails;
         this.hostedChits = hostedChits;
         this.attachments = attachments;
         this.attachmentService = attachmentService;
@@ -203,6 +205,7 @@ public class LedgerService {
                 .collect(Collectors.toMap(JournalEntry::getSourceId, Function.identity(), (a, b) -> a));
         Map<Long, String> numbers = all.stream().collect(Collectors.toMap(JournalEntry::getId, JournalEntry::getEntryNo));
         Map<Long, Integer> evidence = attachments.countsByEntry(UserContext.tenantId());
+        Map<Long, ChitTrailService.Trail> chitTrails = trails.forEntries(list);
 
         return list.stream().map(e -> {
             List<LineView> lineViews = linesByEntry.getOrDefault(e.getId(), List.of()).stream()
@@ -221,7 +224,7 @@ public class LedgerService {
                     voucherLabel(e), e.getNarration(), e.getReference(), e.getParty(), e.getAmount(),
                     e.getSourceType(), e.getSourceId(), isManual(e), e.getCreatedBy(), e.getCreatedAt(), lineViews,
                     lock.reason(), lock.manageAt(), lock.reversible(), lock.reversedBy(), lock.reversalOf(),
-                    claimIdOf(e), e.getVersion(), evidence.getOrDefault(e.getId(), 0));
+                    claimIdOf(e), e.getVersion(), evidence.getOrDefault(e.getId(), 0), chitTrails.get(e.getId()));
         }).toList();
     }
 

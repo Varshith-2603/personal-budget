@@ -41,7 +41,9 @@ public final class JournalDtos {
                             String sourceType, Long sourceId, boolean editable, String createdBy,
                             LocalDateTime createdAt, List<LineView> lines,
                             String lockReason, String manageAt, boolean reversible, String reversedBy,
-                            String reversalOf, Long claimId, Long version, int attachmentCount) {
+                            String reversalOf, Long claimId, Long version, int attachmentCount,
+                            /* a hosted chit's money: where it stands (collection moved or awaiting, the move's type and payout) */
+                            com.aditya.personalbudget.service.ChitTrailService.Trail chitTrail) {
     }
 
     /** An expense posted from the Expenses screen. {@code notes} is kept as the memo of the expense line. */

@@ -27,6 +27,7 @@ import { qrSvg } from '../core/qr.js';
 import { getPref, setPref } from '../core/prefs.js';
 import { evidenceFieldHtml, bindEvidenceField } from '../components/evidence.js';
 import { openEntryDetail } from '../components/transaction-forms.js';
+import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
 import { bondHtml, printBond, padHtml, bindPad, evidenceRows } from '../core/bond.js';
 import { kycTilesHtml, bindKycTiles, fileUrls, kycAnnexures, DOC_LABELS } from '../components/agreement-ui.js';
 import * as chitAccounts from './chit-accounts.js';
@@ -1437,7 +1438,7 @@ function historyHtml(d) {
             <div class="hc-lg-row" data-act="lg-expand" title="Show the details">
                 <span class="hc-avatar xs">${esc(initials(p.memberName || '?'))}</span>
                 <b class="hc-lg-name">${esc(p.memberName)}</b>
-                <span class="hc-lg-mode">${esc(p.mode)}</span>${movementChip(p, d)}
+                <span class="hc-lg-mode">${esc(p.mode)}</span>${movementChip(p, d)}${p.chitTrail?.payoutDate ? chitTrailChips({ ...p.chitTrail, kind: 'PAYOUT' }) : ''}
                 ${p.paidToMemberId ? `<span class="hc-lg-chip direct" title="${esc(where)}">${icon('hand')}direct</span>` : ''}
                 ${p.batchId ? '<span class="hc-lg-chip" title="Marked paid with everyone at once">all</span>' : ''}
                 ${p.movedTo ? `<span class="hc-lg-chip" title="Moved ${esc(p.movedTo)}">${icon('merge')}moved</span>` : ''}
@@ -2758,7 +2759,7 @@ async function openPayment(d, memberId, monthNo, editing = null) {
         </div>
         <p class="muted hc-small">Pay by ${date(month.dueDate)}${why ? ` · ${why}` : ''}${late ? ` · ${late.daysLate || 0} days late, ${num(c.lateFeePercent)}% a month after ${c.lateGraceDays} days` : ''}</p>
         ${list.length ? `<div class="section-title">${icon('check')}Payments received</div><div class="cs-list">${list.map(p => `<div class="cs-row ${editing?.id === p.id ? 'active' : ''}">
-            <span class="grow min-0"><b>${money(num(p.amount) + num(p.lateFee))}</b> ${movementChip(p, d)} <small class="muted">${esc(p.receiptNo || '')} · ${date(p.paidDate)} · ${esc(p.mode)}${p.accountName ? ` · into ${esc(p.accountName)}` : ''}${p.reference ? ' · ref ' + esc(p.reference) : ''}${num(p.lateFee) ? ` · incl. ${money(p.lateFee)} late interest` : ''}${p.note ? ' · ' + esc(p.note) : ''}</small></span>
+            <span class="grow min-0"><b>${money(num(p.amount) + num(p.lateFee))}</b> ${movementChip(p, d)}${p.chitTrail?.payoutDate ? chitTrailChips({ ...p.chitTrail, kind: 'PAYOUT' }) : ''} <small class="muted">${esc(p.receiptNo || '')} · ${date(p.paidDate)} · ${esc(p.mode)}${p.accountName ? ` · into ${esc(p.accountName)}` : ''}${p.reference ? ' · ref ' + esc(p.reference) : ''}${num(p.lateFee) ? ` · incl. ${money(p.lateFee)} late interest` : ''}${p.note ? ' · ' + esc(p.note) : ''}</small></span>
             ${p.attachmentCount ? `<button type="button" class="btn sm ghost icon" data-entry="${p.journalEntryId}" title="${p.attachmentCount} file(s) of evidence">${icon('paperclip')}</button>` : ''}
             <button type="button" class="btn sm ghost" data-pay-receipt="${p.id}">${icon('receipt')}Receipt</button>
             ${p.locked ? lockChip(p) : `<button type="button" class="btn sm ghost icon" data-pay-edit="${p.id}" title="Change">${icon('edit')}</button>
@@ -3115,7 +3116,7 @@ async function openGather(d, month) {
                     <small>${plural(direct.length, 'txn')} · ${money(sum(direct))} · set off against the payout</small></div></header>
                     <div class="hc-gx-rows">${direct.map(row).join('')}</div></section>` : ''}</div>
             ${moves.length ? `<div class="section-title">${icon('transfer')}Moves made</div><div class="cs-list">${moves.map(t => `<div class="cs-row">
-                <span class="grow min-0"><b>${money(t.amount)}</b> <small class="muted">${esc(t.entryNo || '')} · ${date(t.date)} · from ${esc(t.from.map(l => l.accountName).join(' + '))}${t.note ? ` · “${esc(t.note)}”` : ''}</small></span>
+                <span class="grow min-0"><b>${money(t.amount)}</b> ${chitTrailChips(t.chitTrail)} <small class="muted">${esc(t.entryNo || '')} · ${date(t.date)} · from ${esc(t.from.map(l => l.accountName).join(' + '))}${t.note ? ` · “${esc(t.note)}”` : ''}</small></span>
                 ${manage() ? `<button type="button" class="btn sm ghost" data-undo-move="${t.id}" title="Undo it, to make it again with changes">${icon('undo')}Undo</button>` : ''}</div>`).join('')}</div>` : ''}
             <label class="field" data-common-note ${toMove.size ? '' : 'hidden'}><span>Date of the move</span><input type="date" name="moveDate" value="${isoDate()}" max="${isoDate()}"></label>
         </div>`,

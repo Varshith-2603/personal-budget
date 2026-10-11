@@ -11,6 +11,7 @@ import { kindChip, movementHtml, entryKind } from '../core/entry-kind.js';
 import { exportButton, bindExport } from '../core/export.js';
 import { icon } from '../core/icons.js';
 import { money, date, firstOfMonth, isoDate } from '../core/format.js';
+import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
 import { openQuickEntry, openJournalEditor } from '../components/transaction-forms.js';
 import { toggleEntryRow } from '../components/entry-inline.js';
 import { openExpenseDialog } from '../components/expense-dialog.js';
@@ -178,5 +179,6 @@ function postButton(kind, iconName, tone, title, sub) {
 export function entryCell(e) {
     return `<div class="entry-cell">${kindChip(e.voucherType, 'sm', e.voucherLabel)}
         <span class="entry-text"><b class="ellipsis">${esc(e.narration)}</b>${e.party ? `<span class="entry-party ellipsis">${esc(e.party)}</span>` : ''}</span>
+        ${chitTrailChips(e.chitTrail)}
         ${evidenceBadge(e.attachmentCount)}${e.reversedBy ? `<span class="mini-flag" title="Reversed">${icon('undo')}</span>` : ''}</div>`;
 }

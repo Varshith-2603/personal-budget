@@ -1808,3 +1808,20 @@ tr.sched-current td:first-child { box-shadow: inset 3px 0 0 #f2c94c; }
 .la-steps li { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.45; }
 .la-steps li svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; color: var(--ocean-600); }
 .la-make { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+
+/* where a hosted chit's money stands, against entries and payments (js/core/chit-trail.js) */
+.ct-chips { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; flex: 0 0 auto; }
+.ct-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 650; white-space: nowrap; line-height: 1.6; }
+.ct-chip svg { width: 11px; height: 11px; }
+.ct-chip small { font-weight: 600; opacity: 0.8; }
+.ct-chip.warn { background: #fdf0d8; color: #8a5a00; }
+.ct-chip.good { background: #e3f6ec; color: #126b3d; }
+.ct-chip.teal { background: #e1f5f3; color: #0b6f66; }
+.ct-chip.muted, .ct-chip.type { background: #eef1f5; color: #44576a; }
+.ct-chip.type { background: #e8eefa; color: #2d4e8a; }
+.ct-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; padding: 6px 10px; border-radius: 10px; background: #f7f9fc; border: 1px solid var(--hairline); font-size: 12px; }
+.ct-chit { display: inline-flex; align-items: center; gap: 4px; font-weight: 650; color: var(--ocean-800, #0a4a73); }
+.ct-chit svg { width: 13px; height: 13px; }
+.ct-facts { color: var(--text-secondary); }
+.entry-cell .ct-chips { margin-left: 6px; }
+.ca-stmt-what .ct-chips, td .ct-chips { margin-left: 4px; }

@@ -14,6 +14,7 @@ import { can } from '../core/store.js';
 import { esc, toast, confirmDialog, narrativeHtml } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, date, dateTime } from '../core/format.js';
+import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
 import { openJournalEditor } from './transaction-forms.js';
 import { claimEntryRole, claimFiguresHtml, claimBadge, KIND_META } from './claim-panel.js';
 
@@ -130,6 +131,7 @@ function detailHtml(e) {
             <span class="ed-arrow" title="Debit ← Credit">${icon('chevron-left')}</span>
             <div class="ed-side">${credits}</div>
         </div>
+        ${chitTrailHtml(e.chitTrail)}
         <div class="ed-bar">
             ${fact('journal', `<b>${esc(e.entryNo)}</b> ${esc(e.voucherLabel)}`)}
             ${fact('calendar', date(e.entryDate))}
