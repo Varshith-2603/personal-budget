@@ -171,6 +171,13 @@ public class HostedChit implements TenantOwned {
     @References(Account.class)
     private Long commissionAccountId;
 
+    /**
+     * One of the organiser's own bank accounts the commission goes on to, out of the chit's commission account (after
+     * each payout, when the organiser moves it). Empty: it stays in the commission account.
+     */
+    @References(Account.class)
+    private Long commissionBankAccountId;
+
     /** The income category the commission is booked under (one of the existing categories). */
     @References(Category.class)
     private Long commissionCategoryId;

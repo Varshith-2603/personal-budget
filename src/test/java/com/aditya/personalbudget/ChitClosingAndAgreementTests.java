@@ -25,6 +25,7 @@ import com.aditya.personalbudget.service.ClaimService;
 import com.aditya.personalbudget.service.HostedChitBookService.ChitMoney;
 import com.aditya.personalbudget.service.HostedChitBookService.LegInput;
 import com.aditya.personalbudget.service.HostedChitBookService.Spot;
+import com.aditya.personalbudget.service.HostedChitBookService.TransferRequest;
 import com.aditya.personalbudget.service.HostedChitService;
 import com.aditya.personalbudget.service.HostedChitService.ChitRequest;
 import com.aditya.personalbudget.service.HostedChitService.CloseRequest;
@@ -74,6 +75,7 @@ class ChitClosingAndAgreementTests {
     @Autowired ReportService reports;
     @Autowired ClaimService claims;
     @Autowired ClaimAgreementService loanAgreements;
+    @Autowired com.aditya.personalbudget.service.HostedChitBookService book;
 
     @BeforeEach
     void signIn() {
@@ -162,37 +164,59 @@ class ChitClosingAndAgreementTests {
     }
 
     @Test
-    void theCommissionStaysInTheAccountMembersPaidInto() {
+    void paymentsAreGatheredIntoTheCollectionsThenPaidOutAndTheCommissionMovesToMyBank() {
+        Long icici = bank("ICICI Gather " + System.nanoTime());
         Long sbi = bank("SBI Commission " + System.nanoTime());
-        ChitRequest base = chit("Kept commission " + System.nanoTime());
-        // the commission account is a personal bank account that members also pay into
+        ChitRequest base = chit("Gathered " + System.nanoTime());
+        // an older request naming a bank account for the commission: the chit still gets its own commission account
         ChitRequest r = new ChitRequest(base.name(), "FIXED", base.startMonth(), 5, 3, 3, bd(10000), bd(30000), BigDecimal.ZERO, bd(1500),
                 "NONE", null, null, null, 0, null, null, true, null, true, sbi, false, null, null, false, null, base.members(), null, null, null);
         Detail d = chits.create(r);
         Long chitId = d.chit().id();
         Long collections = d.chit().accountId();
-        assertThat(d.chit().commissionAccountId()).isEqualTo(sbi);
+        Long commission = d.chit().commissionAccountId();
+        assertThat(commission).isNotNull().isNotEqualTo(sbi);
+        assertThat(d.chit().commissionBankAccountId()).isEqualTo(sbi);
         List<Long> ids = d.members().stream().map(HostedChitService.MemberView::id).toList();
-        pay(chitId, ids.get(0), 1, sbi);
+        pay(chitId, ids.get(0), 1, icici);
         pay(chitId, ids.get(1), 1);
-        pay(chitId, ids.get(2), 1);
+        d = pay(chitId, ids.get(2), 1);
+        assertThat(d.payments().stream().map(HostedChitService.PaymentView::movement)).containsExactlyInAnyOrder("TO_MOVE", "IN_COLLECTIONS", "IN_COLLECTIONS");
         chits.setWinner(chitId, 1, new WinnerRequest(ids.get(1), false, null));
-        // 28,500 to the winner: 8,500 of the SBI money and 20,000 of the collections; the 1,500 commission stays in SBI
-        d = chits.payout(chitId, 1, new PayoutRequest(LocalDate.now(), "Bank", null, true, false, null, null,
-                List.of(new LegInput(sbi, bd(8500), "UPI", null), new LegInput(collections, bd(20000), "Bank", null)), null, sbi));
-        var month = d.schedule().getFirst();
-        assertThat(month.commissionRetained()).isTrue();
-        assertThat(spot(d.money(), sbi)).isEqualByComparingTo("0");          // no chit money left in SBI: the rest is mine
+        PayoutRequest gathered = new PayoutRequest(LocalDate.now(), "Bank", null, true, false, null, null,
+                List.of(new LegInput(collections, bd(28500), "Bank", "P1")), null, null, true, true);
+        assertThatThrownBy(() -> chits.payout(chitId, 1, gathered)).isInstanceOf(BusinessException.class).hasMessageContaining("first");
+
+        // the ICICI payment is moved into the collections for the month 1 payout
+        Long iciciPayment = d.payments().stream().filter(p -> "TO_MOVE".equals(p.movement())).findFirst().orElseThrow().id();
+        var move = book.transfer(new TransferRequest(chitId, LocalDate.now(), collections,
+                List.of(new LegInput(icici, bd(10000), "UPI", "G1", List.of(iciciPayment), null)), true, "UPI", null, "gathered", null, 1));
+        d = chits.detail(chitId);
+        var moved = d.payments().stream().filter(p -> p.id().equals(iciciPayment)).findFirst().orElseThrow();
+        assertThat(moved.movement()).isEqualTo("MOVED");
+        assertThat(moved.movedForMonth()).isEqualTo(1);
+
+        // paying from another account is refused once gathered; from the collections it goes, and the commission waits
+        assertThatThrownBy(() -> chits.payout(chitId, 1, new PayoutRequest(LocalDate.now(), "Bank", null, true, false, null, null,
+                List.of(new LegInput(icici, bd(28500), "Bank", null)), null, null, true, true))).isInstanceOf(BusinessException.class);
+        d = chits.payout(chitId, 1, gathered);
+        assertThat(d.schedule().getFirst().commissionPending()).isTrue();
+        assertThat(spot(d.money(), collections)).isEqualByComparingTo("1500");
+        assertThatThrownBy(() -> book.deleteTransfer(move.id())).isInstanceOf(BusinessException.class).hasMessageContaining("Undo that payout");
+
+        // the commission moves to the chit's commission account and on to SBI
+        d = chits.moveCommission(chitId, 1, new HostedChitService.CommissionMoveRequest(LocalDate.now(), "Bank", "C1", "first commission", true, null));
+        assertThat(d.schedule().getFirst().commissionPending()).isFalse();
+        assertThat(d.schedule().getFirst().commissionBankTransferId()).isNotNull();
         assertThat(spot(d.money(), collections)).isEqualByComparingTo("0");
-        assertThat(d.money().owedToMembers()).isEqualByComparingTo("0");
         assertThat(accounts.list().stream().filter(a -> a.id().equals(sbi)).findFirst().orElseThrow().balance()).isEqualByComparingTo("1500");
         assertThat(reports.balanceSheet(LocalDate.now(), null).balanced()).isTrue();
 
-        // more paid out of SBI than leaves room for the commission: refused with what to do
-        chits.undoPayout(chitId, 1);
-        assertThatThrownBy(() -> chits.payout(chitId, 1, new PayoutRequest(LocalDate.now(), "Bank", null, true, false, null, null,
-                List.of(new LegInput(sbi, bd(10000), "UPI", null), new LegInput(collections, bd(18500), "Bank", null)), null, sbi)))
-                .isInstanceOf(BusinessException.class).hasMessageContaining("less than your");
+        // and back: it waits in the collections again
+        d = chits.undoCommissionMove(chitId, 1);
+        assertThat(d.schedule().getFirst().commissionPending()).isTrue();
+        assertThat(accounts.list().stream().filter(a -> a.id().equals(sbi)).findFirst().orElseThrow().balance()).isEqualByComparingTo("0");
+        assertThat(reports.balanceSheet(LocalDate.now(), null).balanced()).isTrue();
     }
 
     @Test

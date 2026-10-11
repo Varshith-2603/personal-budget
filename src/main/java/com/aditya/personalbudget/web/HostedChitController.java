@@ -193,6 +193,19 @@ public class HostedChitController {
         return service.updatePayout(id, monthNo, request);
     }
 
+    /** After the payout: the month's commission into the chit's commission account, and optionally on to my bank. */
+    @PostMapping("/hosted-chits/{id}/months/{monthNo}/commission-move")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail moveCommission(@PathVariable Long id, @PathVariable int monthNo, @Valid @RequestBody HostedChitService.CommissionMoveRequest request) {
+        return service.moveCommission(id, monthNo, request);
+    }
+
+    @DeleteMapping("/hosted-chits/{id}/months/{monthNo}/commission-move")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail undoCommissionMove(@PathVariable Long id, @PathVariable int monthNo) {
+        return service.undoCommissionMove(id, monthNo);
+    }
+
     // ---------------------------------------------------------------- closing
 
     /** Closes a finished chit: nothing in it changes until it is re-opened. */

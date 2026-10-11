@@ -60,6 +60,9 @@ public class HostedChitTransfer implements TenantOwned {
     @Column(nullable = false)
     private Boolean chitMoney;
 
+    /** Money gathered into the collections account for this month's payout (its payments are then "moved"). */
+    private Integer payoutMonthNo;
+
     /** Cash, UPI or Bank. */
     @Column(nullable = false, length = 10)
     private String mode;

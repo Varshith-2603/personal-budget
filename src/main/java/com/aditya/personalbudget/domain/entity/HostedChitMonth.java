@@ -86,6 +86,15 @@ public class HostedChitMonth implements TenantOwned {
      */
     private Boolean commissionRetained;
 
+    /**
+     * The commission was left in the collections account at the payout, to be moved by the organiser afterwards
+     * (the commission step of the payout). Cleared once it is moved.
+     */
+    private Boolean commissionDeferred;
+
+    /** The commission moved on to the organiser's bank account: that {@link HostedChitTransfer} (kept by id only). */
+    private Long commissionBankTransferId;
+
     /** Cash, UPI or Bank. */
     @Column(length = 10)
     private String payoutMode;

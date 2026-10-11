@@ -102,7 +102,14 @@ public class HostedChitBookService {
      */
     public record TransferRequest(Long chitId, LocalDate date, @NotNull Long toAccountId, @NotEmpty List<@Valid LegInput> from,
                                   Boolean chitMoney, String mode, @Size(max = 60) String reference,
-                                  @Size(max = 255) String note, Long version) {
+                                  @Size(max = 255) String note, Long version,
+                                  /* gathered into the collections account for this month's payout */
+                                  Integer payoutMonthNo) {
+
+        public TransferRequest(Long chitId, LocalDate date, Long toAccountId, List<LegInput> from, Boolean chitMoney, String mode,
+                               String reference, String note, Long version) {
+            this(chitId, date, toAccountId, from, chitMoney, mode, reference, note, version, null);
+        }
     }
 
     /** A chit-book account: hostedChitId empty for a common account (any chit); role for a chit's own account. */
@@ -172,7 +179,9 @@ public class HostedChitBookService {
     public record TransferView(Long id, Long chitId, String chitName, LocalDate date, boolean chitMoney, String kind,
                                Long toAccountId, String toAccountName, List<LegView> from, BigDecimal amount, String mode,
                                String reference, String note, String entryNo, Long journalEntryId, String createdBy,
-                               LocalDateTime createdAt, Long version) {
+                               LocalDateTime createdAt, Long version,
+                               /* gathered for this month's payout */
+                               Integer payoutMonthNo) {
     }
 
     /** A personal account holding (or having advanced) chit money. */
@@ -207,6 +216,7 @@ public class HostedChitBookService {
     private final HostedChitTransferRepository transfers;
     private final HostedChitLegRepository legs;
     private final com.aditya.personalbudget.repository.HostedChitPaymentRepository payments;
+    private final com.aditya.personalbudget.repository.HostedChitMonthRepository months;
     private final AccountService accountService;
     private final LedgerService ledger;
     private final ActivityService activity;
@@ -214,7 +224,9 @@ public class HostedChitBookService {
     public HostedChitBookService(AccountRepository accounts, JournalEntryRepository entries, JournalLineRepository lines,
                                  HostedChitRepository chits, HostedChitTransferRepository transfers, HostedChitLegRepository legs,
                                  AccountService accountService, LedgerService ledger, ActivityService activity,
-                                 com.aditya.personalbudget.repository.HostedChitPaymentRepository payments) {
+                                 com.aditya.personalbudget.repository.HostedChitPaymentRepository payments,
+                                 com.aditya.personalbudget.repository.HostedChitMonthRepository months) {
+        this.months = months;
         this.payments = payments;
         this.accounts = accounts;
         this.entries = entries;
@@ -675,6 +687,7 @@ public class HostedChitBookService {
             throw new ConcurrentUpdateException("hosted_chit_transfers", id);
         }
         requireOpenChit(t.getChitId());
+        requireGatherOpen(t);
         Draft d = check(r, id);
         BigDecimal before = t.getAmount();
         fill(t, r, d);
@@ -695,6 +708,7 @@ public class HostedChitBookService {
     public void deleteTransfer(Long id) {
         HostedChitTransfer t = requireTransfer(id);
         requireOpenChit(t.getChitId());
+        requireGatherOpen(t);
         String to = accounts.findById(t.getToAccountId()).map(Account::getName).orElse("?");
         dropTransfer(t);
         activity.record("DELETED", AREA, "Undid a chit transfer · " + ActivityService.money(t.getAmount()) + " → " + to);
@@ -786,6 +800,15 @@ public class HostedChitBookService {
         t.setMode(mode(r.mode()));
         t.setReference(blank(r.reference()));
         t.setNote(blank(r.note()));
+        if (r.payoutMonthNo() != null && d.chit != null) {
+            if (r.payoutMonthNo() < 1 || r.payoutMonthNo() > d.chit.getMonths()) {
+                throw new BusinessException("Month must be between 1 and " + d.chit.getMonths());
+            }
+            if (!Boolean.TRUE.equals(t.getChitMoney()) || !d.to.getId().equals(d.chit.getAccountId())) {
+                throw new BusinessException("Money gathered for a payout is the chit's money, moved into its collections account");
+            }
+        }
+        t.setPayoutMonthNo(d.chit == null ? null : r.payoutMonthNo());
     }
 
     private void saveLegs(HostedChitTransfer t, List<LegInput> list) {
@@ -850,7 +873,8 @@ public class HostedChitBookService {
         Long chitId = t.getChitId();
         boolean chitMoney = Boolean.TRUE.equals(t.getChitMoney());
         String from = d.legs.stream().map(l -> d.account(l.accountId()).getName()).collect(Collectors.joining(" + "));
-        String narration = kindLabel(t, d) + ": " + from + " → " + d.to.getName() + (d.chit != null ? " (" + d.chit.getName() + ")" : "");
+        String narration = kindLabel(t, d) + ": " + from + " → " + d.to.getName() + (d.chit != null ? " (" + d.chit.getName()
+                + (t.getPayoutMonthNo() != null ? ", for the " + HostedChitService.payCode(HostedChitService.shortCodeOf(d.chit), t.getPayoutMonthNo()) + " payout" : "") + ")" : "");
         JournalDraft draft = JournalDraft.of(t.getTransferDate(), VoucherType.TRANSFER, ActivityService.cut(narration, 255))
                 .debit(d.to.getId(), t.getAmount(), legMemo(t.getMode(), t.getReference())).hostedChit(tag(d.to.getId(), chitId, chitMoney));
         for (LegInput l : d.legs) {
@@ -920,7 +944,7 @@ public class HostedChitBookService {
                             t.getTransferDate(), Boolean.TRUE.equals(t.getChitMoney()), kind(t, byId, from), t.getToAccountId(),
                             to == null ? "?" : to.getName(), from.stream().map(l -> legView(l, byId)).toList(), t.getAmount(),
                             t.getMode(), t.getReference(), t.getNote(), entryNos.get(t.getJournalEntryId()), t.getJournalEntryId(),
-                            t.getCreatedBy(), t.getCreatedAt(), t.getVersion());
+                            t.getCreatedBy(), t.getCreatedAt(), t.getVersion(), t.getPayoutMonthNo());
                 }).toList();
     }
 
@@ -947,6 +971,15 @@ public class HostedChitBookService {
     /** A closed chit's money stays as it is: its transfers cannot change until it is re-opened. */
     private void requireOpenChit(Long chitId) {
         if (chitId != null) chits.findById(chitId).ifPresent(HostedChitService::requireOpen);
+    }
+
+    /** Money gathered for a payout that is made stays where the payout took it from. */
+    private void requireGatherOpen(HostedChitTransfer t) {
+        if (t.getChitId() == null || t.getPayoutMonthNo() == null) return;
+        months.findByChitId(t.getChitId()).stream().filter(m -> m.getMonthNo().equals(t.getPayoutMonthNo()) && m.getPayoutDate() != null)
+                .findFirst().ifPresent(m -> {
+                    throw new BusinessException("This money was gathered for the month " + m.getMonthNo() + " payout, which is made. Undo that payout first to change the movement");
+                });
     }
 
     private HostedChitTransfer requireTransfer(Long id) {
