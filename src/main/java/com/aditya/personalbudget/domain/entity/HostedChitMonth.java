@@ -74,6 +74,18 @@ public class HostedChitMonth implements TenantOwned {
 
     private LocalDate payoutDate;
 
+    /**
+     * When the payout was recorded: the members' payments of the month recorded until then are what it paid out, so
+     * they are locked (late payments recorded afterwards stay editable).
+     */
+    private java.time.LocalDateTime payoutRecordedAt;
+
+    /**
+     * The commission stayed in the commission account because members paid into it: no money moved, the journal only
+     * marks that much of it as the organiser's own (see {@code HostedChitService#commissionTransferDraft}).
+     */
+    private Boolean commissionRetained;
+
     /** Cash, UPI or Bank. */
     @Column(length = 10)
     private String payoutMode;

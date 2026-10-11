@@ -1796,3 +1796,15 @@ tr.sched-current td:first-child { box-shadow: inset 3px 0 0 #f2c94c; }
 .upi-logos { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .upi-logos .upi-logo svg { height: 18px; }
 .upi-brands { display: flex; justify-content: center; margin: 2px 0 6px; }
+.tag.gold { background: #fbf0d6; color: #7a5600; }
+.tag.good { background: #e3f6ec; color: #126b3d; }
+.tag.gold svg, .tag.good svg { width: 11px; height: 11px; vertical-align: -1px; }
+/* the loan agreement dialog (components/loan-agreement.js) */
+.la-form .section-title { margin: 4px 0 -2px; }
+.la-req { display: flex; flex-direction: column; gap: 4px; }
+.la-panel { display: flex; flex-direction: column; gap: 10px; }
+.la-linkcard { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); }
+.la-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.la-steps li { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; line-height: 1.45; }
+.la-steps li svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; color: var(--ocean-600); }
+.la-make { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }

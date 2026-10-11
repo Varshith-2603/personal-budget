@@ -132,6 +132,95 @@ public class AttachmentService implements ApplicationRunner {
         }
     }
 
+    // ================================================================== agreements: ID proof and photos
+
+    /** Kinds of files an agreement keeps. */
+    public static final Set<String> DOC_TYPES = Set.of("AADHAAR_FRONT", "AADHAAR_BACK", "PAN", "SELFIE", "OTHER");
+
+    /** A file of an agreement, with what it is and its SHA-256 (sealed into the acceptance). */
+    public record AgreementFile(Long id, String docType, String fileName, String contentType, long sizeBytes, boolean image,
+                                boolean pdf, boolean hasThumbnail, String sha256, String source, String createdBy,
+                                LocalDateTime createdAt) {
+    }
+
+    public List<AgreementFile> listForAgreement(String kind, Long ownerId) {
+        return attachments.findByOwnerKind(kind, ownerId).stream().map(AttachmentService::agreementFile).toList();
+    }
+
+    /**
+     * Adds an ID proof or photo to an agreement ({@code kind} CHIT_AGREEMENT or LOAN_AGREEMENT); the caller has checked
+     * the agreement belongs to the household in context. A new file of the same type (other than OTHER) replaces the old one.
+     */
+    @Transactional
+    public AgreementFile addToAgreement(String kind, Long ownerId, String docType, String originalName, byte[] bytes, String source) {
+        String type = docType == null ? "OTHER" : docType.trim().toUpperCase();
+        if (!DOC_TYPES.contains(type)) {
+            throw new BusinessException("Say what the file is: Aadhaar (front or back), PAN, selfie or other");
+        }
+        List<Attachment> existing = attachments.findByOwnerKind(kind, ownerId);
+        if (!"OTHER".equals(type)) {
+            List<Attachment> same = existing.stream().filter(a -> type.equals(a.getDocType())).toList();
+            if (!same.isEmpty()) {
+                attachments.deleteAllById(same.stream().map(Attachment::getId).toList());
+                afterCommitDelete(same);
+                existing = existing.stream().filter(a -> !type.equals(a.getDocType())).toList();
+            }
+        }
+        String name = originalName == null || originalName.isBlank() ? type.toLowerCase().replace('_', '-') : originalName;
+        AttachmentView v = store(UserContext.tenantId(), null, null, "This agreement", existing, name, bytes, source,
+                switch (type) {
+                    case "AADHAAR_FRONT" -> "Aadhaar card (front)";
+                    case "AADHAAR_BACK" -> "Aadhaar card (back)";
+                    case "PAN" -> "PAN card";
+                    case "SELFIE" -> "Selfie";
+                    default -> "Document";
+                });
+        Attachment a = attachments.findById(v.id()).orElseThrow();
+        if (kind.equals(a.getOwnerKind()) && ownerId.equals(a.getOwnerId()) && type.equals(a.getDocType())) {
+            return agreementFile(a);   // the very same file was already there
+        }
+        if (a.getOwnerKind() != null) {
+            // store() keeps one copy of the same bytes per agreement: the file is already there as another document
+            throw new BusinessException("This file is already attached as the " + a.getCaption() + "; add a separate photo for each side or card");
+        }
+        a.setOwnerKind(kind);
+        a.setOwnerId(ownerId);
+        a.setDocType(type);
+        return agreementFile(attachments.save(a));
+    }
+
+    @Transactional
+    public void deleteFromAgreement(String kind, Long ownerId, Long attachmentId) {
+        Attachment a = attachments.findById(attachmentId)
+                .filter(x -> kind.equals(x.getOwnerKind()) && ownerId.equals(x.getOwnerId()) && UserContext.tenantId().equals(x.getTenantId()))
+                .orElseThrow(() -> new NotFoundException("File", attachmentId));
+        attachments.deleteById(a.getId());
+        afterCommitDelete(List.of(a));
+    }
+
+    /** When an agreement is deleted, its files go too. */
+    public void deleteAllForAgreement(String kind, Long ownerId) {
+        List<Attachment> list = attachments.findByOwnerKind(kind, ownerId);
+        if (!list.isEmpty()) {
+            attachments.deleteAllById(list.stream().map(Attachment::getId).toList());
+            afterCommitDelete(list);
+        }
+    }
+
+    /** The bytes of an agreement's file (for printing the stamp-paper copy with its annexures). */
+    public FileContent agreementFileContent(String kind, Long ownerId, Long attachmentId, boolean thumbnail) {
+        Attachment a = attachments.findById(attachmentId)
+                .filter(x -> kind.equals(x.getOwnerKind()) && ownerId.equals(x.getOwnerId()) && UserContext.tenantId().equals(x.getTenantId()))
+                .orElseThrow(() -> new NotFoundException("File", attachmentId));
+        return fileOf(a, thumbnail);
+    }
+
+    private static AgreementFile agreementFile(Attachment a) {
+        return new AgreementFile(a.getId(), a.getDocType(), a.getFileName(), a.getContentType(), a.getSizeBytes(),
+                a.getContentType().startsWith("image/"), a.getContentType().equals("application/pdf"),
+                Boolean.TRUE.equals(a.getHasThumbnail()), a.getSha256(), a.getSource(), a.getCreatedBy(), a.getCreatedAt());
+    }
+
     /** The bytes of a document scan for a share link (no signed-in user). */
     public FileContent sharedFile(Long tenantId, Long documentId, Long attachmentId, boolean thumbnail) {
         Attachment a = attachments.findById(attachmentId)

@@ -49,6 +49,19 @@ public class Attachment implements TenantOwned {
     @References(PersonalDocument.class)
     private Long documentId;
 
+    /**
+     * ID proof and photos attached to an agreement: "CHIT_AGREEMENT" ({@link HostedChitAgreement}) or "LOAN_AGREEMENT"
+     * ({@link ClaimAgreement}), with the row's id. The agreement removes them when it goes.
+     */
+    @Column(length = 20)
+    private String ownerKind;
+
+    private Long ownerId;
+
+    /** What the file is: AADHAAR_FRONT, AADHAAR_BACK, PAN, SELFIE or OTHER (agreements). */
+    @Column(length = 20)
+    private String docType;
+
     /** Name of the file as the user had it (or "Photo 2026-10-07 14.32.jpg" for the camera). */
     @Column(nullable = false, length = 200)
     private String fileName;

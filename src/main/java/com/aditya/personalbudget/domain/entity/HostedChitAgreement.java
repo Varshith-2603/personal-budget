@@ -138,6 +138,60 @@ public class HostedChitAgreement implements TenantOwned {
     @Column(length = 64)
     private String acceptanceSeal;
 
+    // ---- the stamp-paper copy: stamp, the organiser's and the witness's signatures, and the member's ID proof
+
+    /** The value of the non-judicial stamp paper it is printed on (e.g. 100), and the stamp paper's serial number. */
+    private BigDecimal stampDuty;
+
+    @Column(length = 40)
+    private String stampSerial;
+
+    /** The organiser's drawn signature (an SVG path in a 1000 x 300 box), frozen on the agreement, and the name under it. */
+    @Column(length = 20000)
+    private String organiserSignature;
+
+    @Column(length = 100)
+    private String organiserName;
+
+    @Column(length = 100)
+    private String witnessName;
+
+    @Column(length = 20)
+    private String witnessPhone;
+
+    @Column(length = 150)
+    private String witnessAddress;
+
+    @Column(length = 20000)
+    private String witnessSignature;
+
+    /** Aadhaar: only the last 4 digits and a salted SHA-256 of the number are kept, never the number. */
+    @Column(length = 4)
+    private String aadhaarLast4;
+
+    @Column(length = 64)
+    private String aadhaarHash;
+
+    /** PAN, masked (ABCDE••••F) and its SHA-256. */
+    @Column(length = 10)
+    private String panMasked;
+
+    @Column(length = 64)
+    private String panHash;
+
+    /** The member is asked to add their Aadhaar and PAN (and a selfie) through the link before accepting. */
+    private Boolean kycFromMember;
+
+    /**
+     * The evidence of the acceptance as exact JSON (figures, wording hash, who, when, where, device, file hashes) and
+     * this installation's ECDSA P-256 signature over it: anyone can check it in a browser with the public key.
+     */
+    @Column(length = 4000)
+    private String evidencePayload;
+
+    @Column(length = 120)
+    private String digitalSignature;
+
     @Column(nullable = false, length = 50)
     private String createdBy;
 

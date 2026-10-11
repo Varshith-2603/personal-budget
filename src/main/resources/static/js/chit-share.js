@@ -11,6 +11,7 @@
  */
 import { upiLogo } from './core/upi-logos.js';
 import { qrSvg } from './core/qr.js';
+import { printBond, openCamera, shrinkImage, verifyEvidence } from './core/bond.js';
 
 const $ = id => document.getElementById(id);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -97,7 +98,7 @@ function draw() {
     const main = $('sh-main');
     const foot = `<p class="sh-meta hc-share-note">As of ${day(ch.asOf)} · shared by ${esc(ch.sharedBy)}${ch.sharedWith ? ` with ${esc(ch.sharedWith)}` : ''} · this link works until ${when(ch.expiresAt)}</p>`;
     if (ch.kind === 'RECEIPT') { main.innerHTML = receiptHtml() + foot; return; }
-    if (ch.kind === 'AGREEMENT') { main.innerHTML = agreementHtml() + foot; bindAccept(); return; }
+    if (ch.kind === 'AGREEMENT') { main.innerHTML = agreementHtml() + foot; bindAccept(); bindKyc(); checkEvidence(); return; }
     main.innerHTML = (ch.kind === 'MEMBER' ? memberHtml() : chitHtml()) + foot;
     main.querySelectorAll('[data-desktop]').forEach(b => b.addEventListener('click', () => {
         const tip = $('cs-pay-tip');
@@ -424,14 +425,18 @@ function agreementHtml() {
                 <div class="st-side"><span>Still to pay</span><b>${a.remainingInstallments} months</b><small>about ${money(a.remainingAmount)}</small></div>
             </div>
             <div class="cs-terms">${esc(a.terms)}</div>
+            ${!done && a.kycFromMember ? `<div class="cs-kyc" data-kyc-box>${kycHtml()}</div>` : ''}
             ${done ? `<div class="cs-accepted">✓ ${a.status === 'SIGNED' ? 'Signed on paper' : 'Accepted'} by <b>${esc(a.acceptedName)}</b> on ${when(a.acceptedAt)}
                 ${a.acceptedPhoneMasked ? ` · mobile ${esc(a.acceptedPhoneMasked)}` : ''}${a.locationShared ? ' · location shared' : ''}
                 ${a.signature ? `<div class="cs-sign-show">${signatureSvg(a.signature)}</div>` : ''}
-                ${a.acceptanceSeal ? `<small>Acceptance seal (SHA-256) <code>${esc(a.acceptanceSeal)}</code></small>` : ''}</div>` : `
+                ${a.acceptanceSeal ? `<small>Acceptance seal (SHA-256) <code>${esc(a.acceptanceSeal)}</code></small>` : ''}
+                ${a.digitalSignature ? `<div class="cs-sig-status wait" data-ev-status><b>Checking the digital signature…</b></div>` : ''}</div>` : `
             <form class="cs-accept" id="cs-accept" onsubmit="return false">
                 <label class="cs-check"><input type="checkbox" name="agree"> I have read this agreement, I received the amount above in full, and I accept it.</label>
                 <div class="cs-fields">
                     <label class="cs-name"><span>Your full name <small>check it is right</small></span><input name="name" maxlength="100" autocomplete="name" value="${esc(a.memberName)}"></label>
+                    ${a.kycFromMember ? `<label class="cs-name"><span>Aadhaar number <small>12 digits${a.aadhaarLast4 ? `, ending ${esc(a.aadhaarLast4)}` : ''}</small></span><input name="aadhaar" inputmode="numeric" maxlength="14" autocomplete="off" placeholder="XXXX XXXX XXXX"></label>
+                    <label class="cs-name"><span>PAN <small>as on your card</small></span><input name="pan" maxlength="10" autocomplete="off" placeholder="ABCDE1234F" style="text-transform:uppercase"></label>` : ''}
                     <label class="cs-name"><span>Your mobile number <small>your phone can fill it in</small></span>
                         <span class="cs-phone"><input name="phone" type="tel" inputmode="tel" maxlength="16" autocomplete="tel" placeholder="10 digits">
                         ${'contacts' in navigator && 'select' in navigator.contacts ? '<button type="button" id="cs-pick-phone" title="Pick your number from your contacts (your own card)">Contacts</button>' : ''}</span></label>
@@ -445,9 +450,101 @@ function agreementHtml() {
                     (browser, system, screen, language and time zone)${''}, and your location if you allow it. They are sealed with a fingerprint so any change shows.</small>
             </form>`}
             <p class="cs-hash">Made ${when(a.createdAt)} · fingerprint (SHA-256) <code>${esc(a.contentHash)}</code></p>
-            <button class="cs-print" onclick="window.print()">Print or save as PDF</button>
+            <div class="cs-print-row"><button class="cs-print" onclick="window.print()">Print or save as PDF</button>
+                <button class="cs-print" type="button" id="cs-bond">Stamp-paper copy</button></div>
         </section>`;
 }
+
+const KYC = { AADHAAR_FRONT: ['Aadhaar card · front', 'the side with your photo', true], AADHAAR_BACK: ['Aadhaar card · back', 'the side with your address', false],
+    PAN: ['PAN card', 'the side with the number', true], SELFIE: ['Selfie', 'a live photo of you, from the front camera', false] };
+
+/** The ID proof the organiser asked for: what is added, and a button for each (a photo, or the camera for a selfie). */
+function kycHtml() {
+    const have = new Set(ch.agreement.kycDocs || []);
+    return `<div class="cs-kyc-head"><b>Your ID proof</b><small>The organiser asked for your Aadhaar and PAN cards. Only the last 4 digits of your Aadhaar number are kept.</small></div>
+        <div class="kyc-grid">${Object.entries(KYC).map(([t, [label, hint, need]]) => `<div class="kyc-tile ${have.has(t) ? 'done' : ''} ${need ? 'need' : ''}">
+            <b>${esc(label)}</b><small>${have.has(t) ? '✓ added' : esc(hint)}</small>
+            <div class="kyc-acts">${t === 'SELFIE' ? `<button type="button" data-cs-cam="${t}">${have.has(t) ? 'Retake' : 'Open camera'}</button>`
+                : `<label>${have.has(t) ? 'Replace' : 'Add photo'}<input type="file" accept="image/*,application/pdf" data-cs-file="${t}"></label>`}</div>
+        </div>`).join('')}</div>
+        <div class="kyc-cam" data-cs-camera hidden><div class="kyc-frame"><video autoplay playsinline muted></video></div>
+            <div class="kyc-cam-acts"><button type="button" class="cs-print" data-cs-shoot>Take the photo</button><button type="button" class="cs-print" data-cs-stop>Cancel</button></div></div>
+        <p class="cs-error" data-kyc-error></p>`;
+}
+
+function bindKyc() {
+    const box = document.querySelector('[data-kyc-box]');
+    $('cs-bond')?.addEventListener('click', () => printBond(bondDoc(), `Agreement ${ch.agreement.agreementNo}`));
+    if (!box) return;
+    let cam = null;
+    const error = text => { box.querySelector('[data-kyc-error]').textContent = text || ''; };
+    const send = async (type, blob, name) => {
+        error('');
+        const form = new FormData();
+        form.append('docType', type);
+        form.append('file', blob, name);
+        const r = await fetch(`/api/public/hosted-chits/${encodeURIComponent(token)}/kyc`, { method: 'POST', body: form });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.message || 'The photo could not be added');
+        ch = data;
+        box.innerHTML = kycHtml();
+    };
+    box.addEventListener('change', async e => {
+        const input = e.target.closest('[data-cs-file]');
+        if (!input?.files?.[0]) return;
+        try { await send(input.dataset.csFile, await shrinkImage(input.files[0]), input.files[0].name); } catch (err) { error(err.message); }
+    });
+    box.addEventListener('click', async e => {
+        try {
+            if (e.target.closest('[data-cs-cam]')) {
+                box.querySelector('[data-cs-camera]').hidden = false;
+                cam = await openCamera(box.querySelector('video'), { facing: 'user' });
+            }
+            if (e.target.closest('[data-cs-stop]')) { cam?.stop(); cam = null; box.querySelector('[data-cs-camera]').hidden = true; }
+            if (e.target.closest('[data-cs-shoot]') && cam) {
+                const blob = await cam.capture(`${ch.agreement.agreementNo} · ${ch.agreement.memberName}`);
+                cam.stop();
+                cam = null;
+                await send('SELFIE', blob, 'selfie.jpg');
+            }
+        } catch (err) { error(err.message); }
+    });
+}
+
+/** The member's own copy: the evidence's digital signature, checked in this browser. */
+async function checkEvidence() {
+    const a = ch.agreement;
+    const el = document.querySelector('[data-ev-status]');
+    if (!el) return;
+    const ok = await verifyEvidence(a.evidencePayload, a.digitalSignature, a.publicKey);
+    el.className = `cs-sig-status ${ok === false ? 'bad' : ok ? 'ok' : 'wait'}`;
+    el.innerHTML = ok === null ? '<b>This browser cannot check the digital signature</b><small>Open the link in Chrome or Safari over https.</small>'
+        : ok ? `<b>✓ Digital signature verified</b><small>The record of your acceptance is signed with the organiser's key <code>${esc(a.keyFingerprint)}</code>; any change to it would show here.</small>`
+        : '<b>✗ The signature does not match</b><small>The record was changed after it was signed. Tell the organiser.</small>';
+}
+
+/** The agreement as a stamp-paper deed, for the member to print. */
+function bondDoc() {
+    const a = ch.agreement;
+    const done = a.status !== 'DRAFT';
+    return {
+        title: 'Chit prize amount receipt and agreement', number: a.agreementNo, date: a.payoutDate || String(a.createdAt).slice(0, 10),
+        stampDuty: a.stampDuty, stampSerial: a.stampSerial,
+        firstParty: { role: 'Organiser (foreman)', name: a.organiserName || ch.sharedBy, address: ch.household, signature: a.organiserSignature, seal: ch.household },
+        secondParty: { role: 'Member (prize winner)', name: done ? a.acceptedName : a.memberName, signature: a.status === 'ACCEPTED' ? a.signature : null,
+            accepted: a.status === 'ACCEPTED' ? `accepted online ${when(a.acceptedAt)}` : '' },
+        witness: { name: a.witnessName, signature: a.witnessSignature },
+        intro: `This agreement is made between the organiser of the chit “${ch.name}” and ${a.memberName}, a member of the chit, who won month ${a.monthNo} and has received the prize amount below.`,
+        particulars: [['Chit value', money(a.chitValue)], [ch.chitType === 'AUCTION' ? 'Winning bid' : 'Commission', money(a.deduction)],
+            ['Prize amount received', `${money(a.payoutAmount)} (${a.payoutInWords})`], ['Installments still to pay', `${a.remainingInstallments} months · about ${money(a.remainingAmount)}`],
+            ...(a.aadhaarLast4 ? [['Aadhaar', `XXXX XXXX ${a.aadhaarLast4}`]] : []), ...(a.panMasked ? [['PAN', a.panMasked]] : [])],
+        terms: a.terms, fingerprint: a.contentHash,
+        annexures: a.acceptanceSeal ? [{ title: 'Evidence of the online acceptance', rows: [['Accepted by', esc(a.acceptedName)], ['Accepted at', esc(when(a.acceptedAt))],
+            ['Mobile', esc(a.acceptedPhoneMasked || '')], ['Acceptance seal (SHA-256)', `<code>${esc(a.acceptanceSeal)}</code>`],
+            ...(a.digitalSignature ? [['Digital signature', `<code>${esc(a.digitalSignature.slice(0, 44))}…</code><br>key ${esc(a.keyFingerprint || '')}`]] : [])] }] : [],
+    };
+}
+
 
 function bindAccept() {
     const form = $('cs-accept');
@@ -476,12 +573,20 @@ function bindAccept() {
         if (form.name.value.trim().length < 2) { error.textContent = 'Type your full name'; return; }
         if (!/^(\+?91)?[6-9]\d{9}$/.test(form.phone.value.replace(/[\s-]/g, ''))) { error.textContent = 'Enter your 10-digit mobile number'; return; }
         if (sig.empty()) { error.textContent = 'Sign in the box'; return; }
+        if (ch.agreement.kycFromMember) {
+            const have = new Set(ch.agreement.kycDocs || []);
+            if (!have.has('AADHAAR_FRONT')) { error.textContent = 'Add a photo of your Aadhaar card (the side with your photo) above'; return; }
+            if (!have.has('PAN')) { error.textContent = 'Add a photo of your PAN card above'; return; }
+            if (!/^[2-9]\d{11}$/.test(form.aadhaar.value.replace(/[\s-]/g, ''))) { error.textContent = 'Enter your 12-digit Aadhaar number'; return; }
+            if (!/^[A-Za-z]{5}\d{4}[A-Za-z]$/.test(form.pan.value.trim())) { error.textContent = 'Enter your PAN as on the card (ABCDE1234F)'; return; }
+        }
         button.disabled = true;
         button.textContent = 'Recording…';
         try {
             const location = form.location.checked ? await locate() : null;
             ch = await call(`/api/public/hosted-chits/${encodeURIComponent(token)}/accept`, {
                 name: form.name.value, agree: true, phone: form.phone.value, signature: sig.path(), location, device: JSON.stringify(deviceInfo()),
+                aadhaarNumber: form.aadhaar ? form.aadhaar.value : null, pan: form.pan ? form.pan.value : null,
             });
             draw();
             window.scrollTo(0, 0);

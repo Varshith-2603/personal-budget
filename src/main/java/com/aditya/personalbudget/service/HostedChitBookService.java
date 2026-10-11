@@ -481,6 +481,14 @@ public class HostedChitBookService {
         return new Books().money(c, fundsAccount());
     }
 
+    /** An account's balance now (all its postings, whoever's money). */
+    public BigDecimal balanceOf(Long accountId) {
+        boolean debitNormal = accounts.findById(accountId).map(a -> a.getAccountClass().isDebitNormal()).orElse(true);
+        return lines.findByAccountId(accountId).stream()
+                .map(l -> debitNormal ? l.getDebit().subtract(l.getCredit()) : l.getCredit().subtract(l.getDebit()))
+                .reduce(Money.ZERO, BigDecimal::add);
+    }
+
     /** The postings on a chit-book (or any) account between two dates, with the running balance. */
     public Statement statement(Long accountId, LocalDate from, LocalDate to) {
         Account account = accountService.require(accountId);
@@ -666,6 +674,7 @@ public class HostedChitBookService {
         if (r.version() != null && !Objects.equals(r.version(), t.getVersion())) {
             throw new ConcurrentUpdateException("hosted_chit_transfers", id);
         }
+        requireOpenChit(t.getChitId());
         Draft d = check(r, id);
         BigDecimal before = t.getAmount();
         fill(t, r, d);
@@ -685,6 +694,7 @@ public class HostedChitBookService {
     @Transactional
     public void deleteTransfer(Long id) {
         HostedChitTransfer t = requireTransfer(id);
+        requireOpenChit(t.getChitId());
         String to = accounts.findById(t.getToAccountId()).map(Account::getName).orElse("?");
         dropTransfer(t);
         activity.record("DELETED", AREA, "Undid a chit transfer · " + ActivityService.money(t.getAmount()) + " → " + to);
@@ -718,6 +728,7 @@ public class HostedChitBookService {
             throw new BusinessException("The transfer date cannot be in the future");
         }
         d.chit = r.chitId() == null ? null : requireChit(r.chitId());
+        if (d.chit != null) HostedChitService.requireOpen(d.chit);
         // a chit's own account says whose money it is
         Set<Long> ids = new HashSet<>();
         ids.add(r.toAccountId());
@@ -726,6 +737,7 @@ public class HostedChitBookService {
             Account a = accountService.require(id);
             if (a.getHostedChitId() != null) {
                 if (d.chit == null) d.chit = requireChit(a.getHostedChitId());
+                HostedChitService.requireOpen(d.chit);
             }
         }
         Long chitId = d.chit == null ? null : d.chit.getId();
@@ -930,6 +942,11 @@ public class HostedChitBookService {
 
     private HostedChit requireChit(Long id) {
         return chits.findByIdAndTenantId(id, UserContext.tenantId()).orElseThrow(() -> new NotFoundException("Hosted chit", id));
+    }
+
+    /** A closed chit's money stays as it is: its transfers cannot change until it is re-opened. */
+    private void requireOpenChit(Long chitId) {
+        if (chitId != null) chits.findById(chitId).ifPresent(HostedChitService::requireOpen);
     }
 
     private HostedChitTransfer requireTransfer(Long id) {

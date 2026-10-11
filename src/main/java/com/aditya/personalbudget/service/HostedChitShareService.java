@@ -83,7 +83,9 @@ public class HostedChitShareService {
      * and what their device reports (browser, platform, screen, time zone, language, local time).
      */
     public record AcceptRequest(@Size(min = 2, max = 100) String name, Boolean agree, @Size(max = 20) String phone,
-                                @Size(max = 20000) String signature, @Size(max = 100) String location, @Size(max = 2000) String device) {
+                                @Size(max = 20000) String signature, @Size(max = 100) String location, @Size(max = 2000) String device,
+                                /* when the organiser asked for ID proof: the Aadhaar number (only its last 4 digits are kept) and PAN */
+                                @Size(max = 20) String aadhaarNumber, @Size(max = 12) String pan) {
     }
 
     public record ShareView(Long id, Long chitId, String kind, Long memberId, String memberName, Long paymentId, Long agreementId,
@@ -125,7 +127,14 @@ public class HostedChitShareService {
                                   String payoutReference, Integer remainingInstallments, BigDecimal remainingAmount,
                                   String guarantorName, String terms, String contentHash, String status, String acceptedName,
                                   LocalDateTime acceptedAt, String acceptedPhoneMasked, String signature, String acceptanceSeal,
-                                  boolean locationShared, LocalDateTime createdAt) {
+                                  boolean locationShared, LocalDateTime createdAt,
+                                  /* the stamp-paper look: stamp, the organiser's and the witness's signatures */
+                                  BigDecimal stampDuty, String stampSerial, String organiserName, String organiserSignature,
+                                  String witnessName, String witnessSignature,
+                                  /* ID proof: asked of the member, what is attached so far, the numbers masked */
+                                  boolean kycFromMember, List<String> kycDocs, String aadhaarLast4, String panMasked,
+                                  /* the signed evidence and how to check it */
+                                  String evidencePayload, String digitalSignature, String publicKey, String keyFingerprint) {
     }
 
     /** What the link shows; the part for its kind is filled in. */
@@ -167,12 +176,14 @@ public class HostedChitShareService {
     private final ActivityService activity;
     private final AppSettingsService settings;
     private final AccountRepository accountRepo;
+    private final AttachmentService files;
     private final SecureRandom random = new SecureRandom();
 
     public HostedChitShareService(HostedChitShareRepository shares, HostedChitRepository chits, HostedChitMemberRepository members,
                                   HostedChitPaymentRepository payments, HostedChitAgreementRepository agreements,
                                   TenantRepository tenants, HostedChitService service, ActivityService activity,
-                                  AppSettingsService settings, AccountRepository accountRepo) {
+                                  AppSettingsService settings, AccountRepository accountRepo, AttachmentService files) {
+        this.files = files;
         this.settings = settings;
         this.accountRepo = accountRepo;
         this.shares = shares;
@@ -348,6 +359,34 @@ public class HostedChitShareService {
         return asTenant(tenant, () -> toPublic(service.detail(s.getChitId()), s, tenant));
     }
 
+    /**
+     * The member adds their Aadhaar or PAN card (or a selfie) on the agreement link, when the organiser asked for it and
+     * the agreement waits for them.
+     */
+    @Transactional
+    public PublicChit addKyc(String token, String docType, String fileName, byte[] bytes) {
+        HostedChitShare s = active(token);
+        if (!AGREEMENT.equals(kind(s)) || s.getAgreementId() == null) {
+            throw new BusinessException("This link is not an agreement");
+        }
+        HostedChitAgreement a = agreements.findById(s.getAgreementId()).orElseThrow(() -> new BusinessException("This agreement no longer exists"));
+        if (!HostedChitAgreement.DRAFT.equals(a.getStatus())) {
+            throw new BusinessException("This agreement is already accepted");
+        }
+        if (!Boolean.TRUE.equals(a.getKycFromMember())) {
+            throw new BusinessException("The organiser did not ask for ID proof on this agreement");
+        }
+        String type = docType == null ? "" : docType.trim().toUpperCase();
+        if (!java.util.Set.of("AADHAAR_FRONT", "AADHAAR_BACK", "PAN", "SELFIE").contains(type)) {
+            throw new BusinessException("Add your Aadhaar card, PAN card or a selfie");
+        }
+        Tenant tenant = tenant(s);
+        return asTenant(tenant, () -> {
+            files.addToAgreement(HostedChitService.AGREEMENT_FILES, a.getId(), type, fileName, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD");
+            return toPublic(service.detail(s.getChitId()), s, tenant);
+        });
+    }
+
     /** The member accepts the agreement behind the link by typing their name. */
     @Transactional
     public PublicChit accept(String token, AcceptRequest r, String ip, String userAgent) {
@@ -382,6 +421,25 @@ public class HostedChitShareService {
         String device = r.device() == null ? null : ActivityService.cut(r.device(), 2000);
         HostedChitMember member = members.findById(a.getMemberId()).orElse(null);
         String onRecord = member == null || member.getPhone() == null ? null : member.getPhone().replaceAll("\\D", "");
+        // ID proof the organiser asked for: the Aadhaar and PAN cards attached, and their numbers (checked against any on record)
+        List<AttachmentService.AgreementFile> kyc = asTenant(tenant(s), () -> files.listForAgreement(HostedChitService.AGREEMENT_FILES, a.getId()));
+        if (Boolean.TRUE.equals(a.getKycFromMember())) {
+            java.util.Set<String> have = kyc.stream().map(AttachmentService.AgreementFile::docType).collect(java.util.stream.Collectors.toSet());
+            if (!have.contains("AADHAAR_FRONT")) throw new BusinessException("Add a photo of your Aadhaar card (the side with your photo) first");
+            if (!have.contains("PAN")) throw new BusinessException("Add a photo of your PAN card first");
+            String aadhaar = Kyc.aadhaar(r.aadhaarNumber());
+            if (a.getAadhaarHash() != null && !a.getAadhaarHash().equals(Kyc.hash(a.getAgreementNo(), aadhaar))) {
+                throw new BusinessException("That Aadhaar number is not the one the organiser has on record (ending " + a.getAadhaarLast4() + ")");
+            }
+            String pan = Kyc.pan(r.pan());
+            if (a.getPanHash() != null && !a.getPanHash().equals(Kyc.hash(a.getAgreementNo(), pan))) {
+                throw new BusinessException("That PAN is not the one the organiser has on record (" + a.getPanMasked() + ")");
+            }
+            a.setAadhaarLast4(aadhaar.substring(8));
+            a.setAadhaarHash(Kyc.hash(a.getAgreementNo(), aadhaar));
+            a.setPanMasked(Kyc.maskPan(pan));
+            a.setPanHash(Kyc.hash(a.getAgreementNo(), pan));
+        }
         LocalDateTime now = LocalDateTime.now();
         a.setStatus(HostedChitAgreement.ACCEPTED);
         a.setAcceptedName(ActivityService.cut(name, 100));
@@ -394,8 +452,31 @@ public class HostedChitShareService {
         a.setDeviceHash(device == null ? null : HostedChitService.sha256(device));
         a.setAcceptedLocation(location);
         a.setSignature(signature);
+        String fileHashes = kyc.stream().map(f -> f.docType() + ":" + f.sha256()).collect(java.util.stream.Collectors.joining(","));
         a.setAcceptanceSeal(HostedChitService.sha256(String.join("|", a.getContentHash(), name, phone, now.toString(), String.valueOf(ip),
-                String.valueOf(a.getDeviceHash()), String.valueOf(location), HostedChitService.sha256(signature))));
+                String.valueOf(a.getDeviceHash()), String.valueOf(location), HostedChitService.sha256(signature))
+                + (fileHashes.isEmpty() ? "" : "|" + fileHashes + "|" + a.getAadhaarHash() + "|" + a.getPanHash())));
+        // the evidence as exact text, digitally signed with this installation's key (the member's browser can check it)
+        java.util.Map<String, Object> ev = new java.util.LinkedHashMap<>();
+        ev.put("v", 1);
+        ev.put("kind", "CHIT_AGREEMENT_ACCEPTANCE");
+        ev.put("agreementNo", a.getAgreementNo());
+        ev.put("contentHash", a.getContentHash());
+        ev.put("amount", a.getPayoutAmount());
+        ev.put("acceptedName", name);
+        ev.put("phoneLast4", phone.substring(6));
+        ev.put("phoneMatchesRecord", a.getPhoneMatches());
+        ev.put("acceptedAt", now.withNano(0).toString());
+        ev.put("ip", ip);
+        ev.put("deviceHash", a.getDeviceHash());
+        ev.put("location", location);
+        ev.put("signatureHash", HostedChitService.sha256(signature));
+        ev.put("aadhaarLast4", a.getAadhaarLast4());
+        ev.put("panMasked", a.getPanMasked());
+        ev.put("files", kyc.stream().map(f -> java.util.Map.of("type", f.docType(), "sha256", f.sha256())).toList());
+        ev.put("seal", a.getAcceptanceSeal());
+        a.setEvidencePayload(ActivityService.cut(Kyc.json(ev), 4000));
+        a.setDigitalSignature(settings.signPayLink(a.getEvidencePayload()));
         agreements.save(a);
         Tenant tenant = tenant(s);
         return asTenant(tenant, () -> {
@@ -423,7 +504,11 @@ public class HostedChitShareService {
                     HostedChitService.inWords(a.payoutAmount()), a.payoutDate(), a.payoutMode(), a.payoutReference(), a.remainingInstallments(),
                     a.remainingAmount(), a.guarantorName(), a.terms(), a.contentHash(), a.status(), a.acceptedName(), a.acceptedAt(),
                     a.acceptedPhone() == null ? null : "••••••" + a.acceptedPhone().substring(Math.max(0, a.acceptedPhone().length() - 4)),
-                    a.signature(), a.acceptanceSeal(), a.acceptedLocation() != null, a.createdAt());
+                    a.signature(), a.acceptanceSeal(), a.acceptedLocation() != null, a.createdAt(),
+                    a.stampDuty(), a.stampSerial(), a.organiserName(), a.organiserSignature(), a.witnessName(), a.witnessSignature(),
+                    a.kycFromMember(), a.files().stream().map(AttachmentService.AgreementFile::docType).distinct().toList(),
+                    a.aadhaarLast4(), a.panMasked(), a.evidencePayload(), a.digitalSignature(),
+                    settings.payLinkPublicKey(), settings.payLinkFingerprint());
         }
         boolean full = CHIT.equals(kind) || MEMBER.equals(kind);
         return new PublicChit(kind, t.getName(), s.getCreatedByName(), s.getSharedWith(), s.getMessage(), t.getCurrency(),

@@ -186,6 +186,28 @@ public class HostedChitController {
         return service.undoPayout(id, monthNo);
     }
 
+    /** Changes a payout already made (date, accounts it was paid from, references, where the commission came from). */
+    @PutMapping("/hosted-chits/{id}/months/{monthNo}/payout")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail updatePayout(@PathVariable Long id, @PathVariable int monthNo, @RequestBody PayoutRequest request) {
+        return service.updatePayout(id, monthNo, request);
+    }
+
+    // ---------------------------------------------------------------- closing
+
+    /** Closes a finished chit: nothing in it changes until it is re-opened. */
+    @PostMapping("/hosted-chits/{id}/close")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail close(@PathVariable Long id, @Valid @RequestBody(required = false) HostedChitService.CloseRequest request) {
+        return service.close(id, request);
+    }
+
+    @PostMapping("/hosted-chits/{id}/reopen")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail reopen(@PathVariable Long id) {
+        return service.reopen(id);
+    }
+
     // ---------------------------------------------------------------- share links
 
     @GetMapping("/hosted-chits/{id}/shares")
@@ -278,6 +300,35 @@ public class HostedChitController {
         return service.markAgreementSigned(id, agreementId, request.name());
     }
 
+    /** The stamp-paper copy: stamp, signatures, witness and the member's ID numbers. */
+    @PutMapping("/hosted-chits/{id}/agreements/{agreementId}/bond")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail agreementBond(@PathVariable Long id, @PathVariable Long agreementId, @Valid @RequestBody HostedChitService.BondRequest request) {
+        return service.setBond(id, agreementId, request);
+    }
+
+    /** Adds the member's Aadhaar, PAN or photo to the agreement (docType AADHAAR_FRONT, AADHAAR_BACK, PAN, SELFIE or OTHER). */
+    @PostMapping(value = "/hosted-chits/{id}/agreements/{agreementId}/files", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail agreementFile(@PathVariable Long id, @PathVariable Long agreementId, @RequestParam String docType,
+                                @org.springframework.web.bind.annotation.RequestPart("file") org.springframework.web.multipart.MultipartFile file,
+                                @RequestParam(required = false) String source) throws java.io.IOException {
+        return service.addAgreementFile(id, agreementId, docType, file.getOriginalFilename(), file.getBytes(), source);
+    }
+
+    @DeleteMapping("/hosted-chits/{id}/agreements/{agreementId}/files/{fileId}")
+    @RequiresPermission(Permission.MANAGE_CHITS)
+    public Detail deleteAgreementFile(@PathVariable Long id, @PathVariable Long agreementId, @PathVariable Long fileId) {
+        return service.deleteAgreementFile(id, agreementId, fileId);
+    }
+
+    @GetMapping("/hosted-chits/{id}/agreements/{agreementId}/files/{fileId}")
+    @RequiresPermission(Permission.VIEW)
+    public ResponseEntity<byte[]> agreementFileContent(@PathVariable Long id, @PathVariable Long agreementId, @PathVariable Long fileId,
+                                                       @RequestParam(defaultValue = "false") boolean thumb) {
+        return AgreementFiles.inline(service.agreementFile(id, agreementId, fileId, thumb));
+    }
+
     // ---------------------------------------------------------------- public side (no sign-in)
 
     /** The page behind a share link. */
@@ -296,6 +347,13 @@ public class HostedChitController {
     @GetMapping("/public/hosted-chits/{token}/receipt.pdf")
     public ResponseEntity<byte[]> publicReceiptPdf(@PathVariable String token) {
         return pdf(shares.publicReceiptPdf(token), "receipt.pdf");
+    }
+
+    /** The member adds their Aadhaar or PAN card (or a selfie) on the agreement link. */
+    @PostMapping(value = "/public/hosted-chits/{token}/kyc", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public PublicChit addKyc(@PathVariable String token, @RequestParam String docType,
+                             @org.springframework.web.bind.annotation.RequestPart("file") org.springframework.web.multipart.MultipartFile file) throws java.io.IOException {
+        return shares.addKyc(token, docType, file.getOriginalFilename(), file.getBytes());
     }
 
     /** The member accepts the agreement behind the link; when, from where and as whom is recorded. */

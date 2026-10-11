@@ -247,6 +247,25 @@ public class HostedChitService {
                                    @Size(max = 6000) String terms) {
     }
 
+    /** allowDues: the organiser confirmed closing with dues or money still held. */
+    public record CloseRequest(@Size(max = 255) String note, Boolean allowDues) {
+    }
+
+    /**
+     * The stamp-paper copy of an agreement: the stamp's value and serial, the organiser's signature (drawn, or the
+     * receipt signature when {@code useReceiptSignature}), the witness, and the member's ID numbers (only the last
+     * 4 digits of Aadhaar and a masked PAN are kept). kycFromMember: the member adds Aadhaar, PAN and a selfie on the link.
+     * A field left empty keeps what is there; clear* fields remove it.
+     */
+    public record BondRequest(@PositiveOrZero BigDecimal stampDuty, @Size(max = 40) String stampSerial,
+                              @Size(max = 100) String organiserName, @Size(max = 20000) String organiserSignature,
+                              Boolean useReceiptSignature,
+                              @Size(max = 100) String witnessName, @Size(max = 20) String witnessPhone,
+                              @Size(max = 150) String witnessAddress, @Size(max = 20000) String witnessSignature,
+                              @Size(max = 20) String aadhaarNumber, @Size(max = 12) String pan, Boolean kycFromMember,
+                              Boolean clearWitnessSignature, Boolean clearOrganiserSignature) {
+    }
+
     // ================================================================== views
 
     public record ChitView(Long id, String name, String chitType, LocalDate startMonth, int dueDay, int memberCount, int months,
@@ -272,7 +291,9 @@ public class HostedChitService {
                            /* the account members pay into by default (else the UPI ID above) */
                            Long payToAccountId, String payToAccountName,
                            /* the chit in payment notes: AC5L gives AC5L-M03 for month 3 (8 characters, fits bank statements) */
-                           String shortCode) {
+                           String shortCode,
+                           /* closed by the organiser: nothing in it changes until it is re-opened */
+                           boolean closed, LocalDateTime closedAt, String closedBy, String closeNote) {
     }
 
     public record MemberView(Long id, int slot, String name, String phone, String email, String payoutAccount, Long payToAccountId,
@@ -292,7 +313,9 @@ public class HostedChitService {
                             BigDecimal commission, Long winnerMemberId, String winnerName, String drawMethod,
                             String status, boolean due, BigDecimal collected, BigDecimal expected, int paidCount,
                             LocalDate payoutDate, String payoutMode, String payoutReference, String payoutEntryNo,
-                            Long payoutEntryId, String payoutTo, List<LegView> legs, Long version) {
+                            Long payoutEntryId, String payoutTo, List<LegView> legs, Long version,
+                            /* where the commission was moved from; retained: it stayed in the commission account (members paid into it) */
+                            Long commissionFromAccountId, boolean commissionRetained) {
     }
 
     /** accountId / accountName: where the money came into. */
@@ -302,7 +325,9 @@ public class HostedChitService {
                               String createdBy, LocalDateTime createdAt, Long version, Long accountId, String accountName,
                               Long paidToMemberId, String paidToName, String batchId,
                               /* where the money went on: moved by a transfer ("to … · TR-000005"), paid out in a month */
-                              String movedTo, Long transferId, Integer paidOutMonth) {
+                              String movedTo, Long transferId, Integer paidOutMonth,
+                              /* part of a payout (or the chit is closed): it cannot change; why, in words */
+                              boolean locked, String lockedReason) {
     }
 
     /** Late interest on one member's month: accrued so far, collected or let off, still due. */
@@ -316,7 +341,15 @@ public class HostedChitService {
                                 String guarantorName, String guarantorPhone, String terms, String contentHash, String status,
                                 String acceptedName, LocalDateTime acceptedAt, String acceptedFrom, String acceptedPhone,
                                 Boolean phoneMatches, String acceptedIp, String acceptedDevice, String deviceHash, String acceptedLocation,
-                                String signature, String acceptanceSeal, LocalDateTime createdAt) {
+                                String signature, String acceptanceSeal, LocalDateTime createdAt,
+                                /* the stamp-paper copy */
+                                BigDecimal stampDuty, String stampSerial, String organiserName, String organiserSignature,
+                                String witnessName, String witnessPhone, String witnessAddress, String witnessSignature,
+                                /* ID proof: numbers masked, the files (Aadhaar, PAN, selfie) */
+                                String aadhaarLast4, String panMasked, boolean kycFromMember,
+                                List<AttachmentService.AgreementFile> files,
+                                /* the evidence as signed JSON, and this installation's digital signature over it */
+                                String evidencePayload, String digitalSignature) {
     }
 
     /**
@@ -358,6 +391,8 @@ public class HostedChitService {
     private final HostedChitBookService book;
     private final HostedChitLegRepository legs;
     private final com.aditya.personalbudget.repository.TenantRepository tenants;
+    private final AttachmentService files;
+    private final AppSettingsService settings;
 
     public HostedChitService(HostedChitRepository chits, HostedChitMemberRepository members, HostedChitMonthRepository months,
                              HostedChitPaymentRepository payments, HostedChitShareRepository shares,
@@ -366,7 +401,10 @@ public class HostedChitService {
                              JournalEntryRepository entries, AccountService accountService, CategoryService categoryService,
                              LedgerService ledger, ActivityService activity, JournalLineRepository lines,
                              HostedChitBookService book, HostedChitLegRepository legs,
-                             com.aditya.personalbudget.repository.TenantRepository tenants) {
+                             com.aditya.personalbudget.repository.TenantRepository tenants, AttachmentService files,
+                             AppSettingsService settings) {
+        this.files = files;
+        this.settings = settings;
         this.tenants = tenants;
         this.lines = lines;
         this.book = book;
@@ -482,7 +520,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail update(Long id, ChitRequest r) {
-        HostedChit c = require(id);
+        HostedChit c = editable(id);
         if (r.version() != null && !Objects.equals(r.version(), c.getVersion())) {
             throw new ConcurrentUpdateException("hosted_chits", id);
         }
@@ -512,13 +550,78 @@ public class HostedChitService {
     }
 
     /**
+     * Closes a finished chit (every month paid out): its books are final and nothing in it changes until it is
+     * re-opened. Dues still owed, or members' money still held, need {@code allowDues}.
+     */
+    @Transactional
+    public Detail close(Long id, CloseRequest r) {
+        HostedChit c = require(id);
+        if (closed(c)) {
+            throw new BusinessException(c.getName() + " is already closed");
+        }
+        Calc calc = new Calc(c);
+        if (calc.completedMonths < c.getMonths()) {
+            int left = c.getMonths() - calc.completedMonths;
+            throw new BusinessException(c.getName() + " still has " + left + " month" + (left == 1 ? "" : "s")
+                    + " to pay out; a chit is closed once every winner is paid");
+        }
+        ChitView v = calc.view();
+        List<String> open = new ArrayList<>();
+        if (v.pendingDues().signum() > 0) {
+            open.add(ActivityService.money(v.pendingDues()) + " still owed (" + v.pendingCount() + " payment" + (v.pendingCount() == 1 ? "" : "s") + ")");
+        }
+        if (v.lateFeesDue().signum() > 0) open.add(ActivityService.money(v.lateFeesDue()) + " late interest not collected");
+        if (v.held().signum() != 0) open.add(ActivityService.money(v.held().abs()) + (v.held().signum() > 0 ? " of members' money still with you" : " paid out more than collected"));
+        if (!open.isEmpty() && (r == null || !Boolean.TRUE.equals(r.allowDues()))) {
+            throw new BusinessException(String.join("; ", open) + ". Confirm to close the chit anyway: it can be re-opened to settle them.");
+        }
+        c.setStatus(HostedChit.CLOSED);
+        c.setClosedAt(LocalDateTime.now());
+        c.setClosedBy(UserContext.get().fullName());
+        c.setCloseNote(r == null ? null : blank(r.note()));
+        chits.save(c);
+        activity.record("CHANGED", AREA, "Closed the chit · " + c.getName() + " · commission " + ActivityService.money(v.commissionEarned())
+                + (open.isEmpty() ? "" : " · closed with " + String.join(", ", open)));
+        return detail(id);
+    }
+
+    /** Re-opens a closed chit, so payments, payouts and settings can change again. */
+    @Transactional
+    public Detail reopen(Long id) {
+        HostedChit c = require(id);
+        if (!closed(c)) {
+            throw new BusinessException(c.getName() + " is not closed");
+        }
+        Calc calc = new Calc(c);
+        c.setStatus(calc.completedMonths >= c.getMonths() ? HostedChit.COMPLETED : HostedChit.ACTIVE);
+        c.setClosedAt(null);
+        c.setClosedBy(null);
+        c.setCloseNote(null);
+        chits.save(c);
+        activity.record("CHANGED", AREA, "Re-opened the chit · " + c.getName());
+        return detail(id);
+    }
+
+    static boolean closed(HostedChit c) {
+        return HostedChit.CLOSED.equals(c.getStatus());
+    }
+
+    /** Nothing in a closed chit changes: the organiser re-opens it first. */
+    static void requireOpen(HostedChit c) {
+        if (closed(c)) {
+            throw new BusinessException(c.getName() + " is closed" + (c.getClosedAt() != null ? " (" + c.getClosedAt().toLocalDate() + ")" : "")
+                    + ": its payments, payouts and settings are final. Re-open it to make a change.");
+        }
+    }
+
+    /**
      * Deletes a chit. Accepted or signed agreements are legal records: a chit with any cannot be deleted. When money
      * is recorded (payments or payouts), the chit is only deleted with {@code revert} and its name typed as
      * {@code confirm}: every payment and payout is undone and its journal entries are taken out of the books first.
      */
     @Transactional
     public void delete(Long id, boolean revert, String confirm) {
-        HostedChit c = require(id);
+        HostedChit c = editable(id);
         String name = c.getName();
         long signed = agreements.findByChitId(id).stream().filter(a -> !HostedChitAgreement.DRAFT.equals(a.getStatus())).count();
         if (signed > 0) {
@@ -597,7 +700,7 @@ public class HostedChitService {
      */
     @Transactional
     public Detail updatePlan(Long chitId, PlanRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         if (!planned(c)) {
             throw new BusinessException("Only a planned chit has a chit table to edit");
         }
@@ -688,6 +791,7 @@ public class HostedChitService {
             if (m.getCommissionTransferEntryId() != null) journal.add(m.getCommissionTransferEntryId());
         }
         shares.deleteAll(shares.findByChitId(c.getId()));
+        agreements.findByChitId(c.getId()).forEach(a -> files.deleteAllForAgreement(AGREEMENT_FILES, a.getId()));
         agreements.deleteAll(agreements.findByChitId(c.getId()));
         legs.deleteAll(legs.findByChitId(c.getId()));
         book.removeTransfers(c.getId());
@@ -705,7 +809,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail updateMember(Long chitId, Long memberId, MemberInput r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         HostedChitMember m = requireMember(c, memberId);
         String before = m.getName();
         String name = r.name().trim().replaceAll("\\s+", " ");
@@ -730,7 +834,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail setReceiptSignature(Long chitId, SignatureRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         String signature = r.signature() == null ? "" : r.signature().trim();
         if (!signature.isEmpty() && (signature.length() < 20 || !signature.matches("[MLml0-9 .\\-]+"))) {
             throw new BusinessException("Draw your signature in the box");
@@ -746,7 +850,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail addPayment(Long chitId, PaymentRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         HostedChitMember member = requireMember(c, r.memberId());
         requireMonthNo(c, r.monthNo());
         BigDecimal amount = Money.round(r.amount());
@@ -931,17 +1035,23 @@ public class HostedChitService {
         return out;
     }
 
+    /**
+     * A payment the month's payout paid out (recorded before the payout, or carried by a payout's part) cannot change:
+     * the payout, its journal and the winner's agreement rest on it. Undo the payout first, or record a new payment.
+     */
     private static void requireDirectOpen(Calc calc, HostedChitPayment p) {
-        if (p.getPaidToMemberId() != null && calc.month(p.getMonthNo()).getPayoutDate() != null) {
-            throw new BusinessException("This was paid directly to the winner and is part of the month " + p.getMonthNo()
-                    + " payout; undo the payout first");
+        String why = calc.lockReason(p);
+        if (why != null) {
+            String receipt = p.getReceiptNo() != null ? p.getReceiptNo() : "This payment";
+            throw new BusinessException(receipt + " can no longer change: " + why + ". Undo that payout first"
+                    + (p.getPaidToMemberId() == null ? ", or record a separate payment for any difference" : ""));
         }
     }
 
     /** Reverts payments recorded together ("Everyone has paid"), with their journal entries. */
     @Transactional
     public Detail revertBatch(Long chitId, int monthNo, String batchId) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         Calc calc = new Calc(c);
         List<HostedChitPayment> list = calc.paymentList.stream()
                 .filter(p -> batchId.equals(p.getBatchId()) && p.getMonthNo() == monthNo).toList();
@@ -964,7 +1074,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail updatePayment(Long chitId, Long paymentId, PaymentRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         HostedChitPayment p = requirePayment(c, paymentId);
         if (r.version() != null && !Objects.equals(r.version(), p.getVersion())) {
             throw new ConcurrentUpdateException("hosted_chit_payments", paymentId);
@@ -1013,7 +1123,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail deletePayment(Long chitId, Long paymentId) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         HostedChitPayment p = requirePayment(c, paymentId);
         HostedChitMember member = requireMember(c, p.getMemberId());
         requireDirectOpen(new Calc(c), p);
@@ -1031,7 +1141,7 @@ public class HostedChitService {
     /** Records whatever each member still owes for the month, in one go. */
     @Transactional
     public Detail collectAll(Long chitId, int monthNo, CollectAllRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         requireMonthNo(c, monthNo);
         Calc calc = new Calc(c);
         requireAuctionDone(c, calc, monthNo);
@@ -1199,6 +1309,16 @@ public class HostedChitService {
      * The money leaving is the chit's; on arrival it is the organiser's (untagged when that is a personal account).
      */
     JournalDraft commissionTransferDraft(HostedChit c, HostedChitMonth month, LocalDate date, BigDecimal commission) {
+        if (Boolean.TRUE.equals(month.getCommissionRetained())) {
+            // members paid into the commission account: the commission stays there; the entry only marks that much of
+            // the chit's money in it as the organiser's own (the same account, without the chit)
+            Long account = c.getCommissionAccountId();
+            return JournalDraft.of(date, VoucherType.TRANSFER, "Chit commission kept where it was paid - " + c.getName() + " month " + month.getMonthNo())
+                    .debit(account, commission, "Commission kept: now my money").hostedChit(null)
+                    .credit(account, commission, "Members' money in this account").hostedChit(c.getId())
+                    .party(c.getName())
+                    .source(SOURCE_COMMISSION, month.getId());
+        }
         Long from = month.getCommissionFromAccountId() != null ? month.getCommissionFromAccountId() : c.getAccountId();
         return JournalDraft.of(date, VoucherType.TRANSFER, "Chit commission to its account - " + c.getName() + " month " + month.getMonthNo())
                 .debit(c.getCommissionAccountId(), commission, "Commission kept").hostedChit(book.tag(c.getCommissionAccountId(), c.getId(), false))
@@ -1339,7 +1459,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail setWinner(Long chitId, int monthNo, WinnerRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         Calc calc = new Calc(c);
         HostedChitMonth month = calc.month(monthNo);
         if (month.getPayoutDate() != null) {
@@ -1382,7 +1502,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail clearWinner(Long chitId, int monthNo) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         Calc calc = new Calc(c);
         HostedChitMonth month = calc.month(monthNo);
         if (month.getPayoutDate() != null) {
@@ -1402,7 +1522,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail payout(Long chitId, int monthNo, PayoutRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         Calc calc = new Calc(c);
         HostedChitMonth month = calc.month(monthNo);
         if (month.getPayoutDate() != null) {
@@ -1439,26 +1559,16 @@ public class HostedChitService {
         // planned chits: what was collected less the payout, negative when the payout is more than the collection
         BigDecimal commission = planned(c) ? value.subtract(payout) : c.getCommission().min(value);
         LocalDate date = r.payoutDate() != null ? r.payoutDate() : LocalDate.now();
-        List<HostedChitLeg> parts = payoutLegs(c, month, payout, r, commission);
+        List<HostedChitLeg> parts = payoutLegs(c, month, payout, r, commission, Map.of());
         month.setPayoutAmount(payout);
         month.setCommissionAmount(commission);
         month.setPayoutDate(date);
+        month.setPayoutRecordedAt(LocalDateTime.now());
         // members pointed at this winner pay into the chit again from now on
         members.findByChitId(c.getId()).stream().filter(x -> month.getWinnerMemberId() != null && month.getWinnerMemberId().equals(x.getPayToMemberId()))
                 .forEach(x -> { x.setPayToMemberId(null); members.save(x); });
-        month.setPayoutMode(parts.stream().map(HostedChitLeg::getMode).filter(m -> !DIRECT_MODE.equals(m)).findFirst()
-                .orElse(parts.isEmpty() ? mode(r.mode()) : DIRECT_MODE));
-        month.setPayoutReference(payoutReference(r.reference(), parts));
-        month.setPayoutTo(blank(r.payoutTo()) != null ? ActivityService.cut(r.payoutTo().trim(), 120) : winner.getPayoutAccount());
-        month.setCommissionFromAccountId(null);
-        if (Boolean.TRUE.equals(c.getPostToBooks()) && separateCommission(c) && r.commissionFromAccountId() != null
-                && !r.commissionFromAccountId().equals(c.getAccountId())) {
-            Long from = book.requireMoneyAccount(r.commissionFromAccountId(), c.getId(), "Commission from").getId();
-            if (from.equals(c.getCommissionAccountId())) {
-                throw new BusinessException("The commission is already in its own account; move it from the account that holds the collections");
-            }
-            month.setCommissionFromAccountId(from);
-        }
+        describePayout(month, r, parts, winner);
+        commissionSource(c, month, r, parts, commission, Map.of());
         months.save(month);
         if (!parts.isEmpty()) {
             legs.saveAll(parts);
@@ -1468,7 +1578,7 @@ public class HostedChitService {
             month.setPayoutEntryId(paid.getId());
             if (commission.signum() != 0) {
                 month.setCommissionEntryId(ledger.post(commissionEntryDraft(c, month, date, commission)).getId());
-                if (commission.signum() > 0 && separateCommission(c)) {
+                if (needsCommissionTransfer(c, month)) {
                     month.setCommissionTransferEntryId(ledger.post(commissionTransferDraft(c, month, date, commission)).getId());
                 }
             }
@@ -1492,18 +1602,28 @@ public class HostedChitService {
      * The accounts the payout comes from (not yet saved). Without legs in the request: all of it from the chit's
      * collections account. With legs: each account once, and together exactly the payout.
      */
-    private List<HostedChitLeg> payoutLegs(HostedChit c, HostedChitMonth month, BigDecimal payout, PayoutRequest r, BigDecimal commission) {
+    /**
+     * returning: what each account gets back when an existing payout is changed (its old parts), so the balance checks
+     * see the money that will be there.
+     */
+    private List<HostedChitLeg> payoutLegs(HostedChit c, HostedChitMonth month, BigDecimal payout, PayoutRequest r, BigDecimal commission,
+                                           Map<Long, BigDecimal> returning) {
         if (!Boolean.TRUE.equals(c.getPostToBooks())) return List.of();
         // what members paid the winner directly is already with the winner: that part comes out of the clearing account
         List<HostedChitPayment> direct = payments.findByChitId(c.getId()).stream()
                 .filter(p -> p.getMonthNo().equals(month.getMonthNo()) && month.getWinnerMemberId().equals(p.getPaidToMemberId())).toList();
         BigDecimal directTotal = direct.stream().map(HostedChitPayment::getAmount).reduce(Money.ZERO, BigDecimal::add);
         BigDecimal rest = payout.subtract(directTotal);
-        // a negative commission (planned chits): the part above the collection comes out of the commission account
+        // a negative commission (planned chits): the part above the collection comes out of the commission account, as far
+        // as it holds money; the rest from the collections
         BigDecimal shortfall = commission.signum() < 0 && c.getCommissionAccountId() != null ? commission.negate().min(rest) : Money.ZERO;
+        BigDecimal inCommission = shortfall.signum() > 0
+                ? book.balanceOf(c.getCommissionAccountId()).add(returning.getOrDefault(c.getCommissionAccountId(), Money.ZERO)).max(Money.ZERO)
+                : Money.ZERO;
+        BigDecimal fromCommission = shortfall.min(inCommission);
         List<LegInput> defaults = new ArrayList<>();
-        if (rest.subtract(shortfall).signum() > 0) defaults.add(new LegInput(c.getAccountId(), rest.subtract(shortfall), r.mode(), r.reference()));
-        if (shortfall.signum() > 0) defaults.add(new LegInput(c.getCommissionAccountId(), shortfall, r.mode(), null));
+        if (rest.subtract(fromCommission).signum() > 0) defaults.add(new LegInput(c.getAccountId(), rest.subtract(fromCommission), r.mode(), r.reference()));
+        if (fromCommission.signum() > 0) defaults.add(new LegInput(c.getCommissionAccountId(), fromCommission, r.mode(), null));
         List<LegInput> input = r.legs() == null || r.legs().isEmpty() ? defaults : r.legs();
         List<HostedChitLeg> out = new ArrayList<>();
         Set<Long> seen = new HashSet<>();
@@ -1547,7 +1667,154 @@ public class HostedChitService {
                     + ActivityService.money(payout) + (total.compareTo(payout) < 0 ? " (" + ActivityService.money(payout.subtract(total)) + " short)"
                     : " (" + ActivityService.money(total.subtract(payout)) + " too much)"));
         }
+        // the commission account cannot pay more than it holds: say how much is missing and where to take it from
+        if (c.getCommissionAccountId() != null && !c.getCommissionAccountId().equals(c.getAccountId())) {
+            BigDecimal fromIt = out.stream().filter(l -> l.getAccountId().equals(c.getCommissionAccountId()))
+                    .map(HostedChitLeg::getAmount).reduce(Money.ZERO, BigDecimal::add);
+            if (fromIt.signum() > 0) {
+                BigDecimal has = book.balanceOf(c.getCommissionAccountId()).add(returning.getOrDefault(c.getCommissionAccountId(), Money.ZERO));
+                if (fromIt.compareTo(has) > 0) {
+                    String name = accounts.findById(c.getCommissionAccountId()).map(Account::getName).orElse("The commission account");
+                    String winner = members.findById(month.getWinnerMemberId()).map(HostedChitMember::getName).orElse("the winner");
+                    BigDecimal missing = fromIt.subtract(has.max(Money.ZERO));
+                    throw new BusinessException(name + " (your commission account) holds only " + ActivityService.money(has.max(Money.ZERO))
+                            + ", not the " + ActivityService.money(fromIt) + " put on it" + (commission.signum() < 0
+                            ? " to give " + winner + " the " + ActivityService.money(commission.negate()) + " this month pays out above its collections" : "")
+                            + ". Take the other " + ActivityService.money(missing) + " from an account that has the money: add it as another part of the payout.");
+                }
+            }
+        }
         return out;
+    }
+
+    /** The payout's mode (the first part paid by the organiser), reference and the winner's account it went to. */
+    private void describePayout(HostedChitMonth month, PayoutRequest r, List<HostedChitLeg> parts, HostedChitMember winner) {
+        month.setPayoutMode(parts.stream().map(HostedChitLeg::getMode).filter(m -> !DIRECT_MODE.equals(m)).findFirst()
+                .orElse(parts.isEmpty() ? mode(r.mode()) : DIRECT_MODE));
+        month.setPayoutReference(payoutReference(r.reference(), parts));
+        month.setPayoutTo(blank(r.payoutTo()) != null ? ActivityService.cut(r.payoutTo().trim(), 120) : winner.getPayoutAccount());
+    }
+
+    /**
+     * Where the month's commission comes from when it has its own account: the collections account (default), another
+     * account holding the chit's money, or the commission account itself. The last happens when members pay into the
+     * commission account: the commission simply stays there ({@code commissionRetained}), and only as much as the chit's
+     * money there (after this payout) can be kept that way.
+     */
+    private void commissionSource(HostedChit c, HostedChitMonth month, PayoutRequest r, List<HostedChitLeg> parts, BigDecimal commission,
+                                  Map<Long, BigDecimal> returning) {
+        month.setCommissionFromAccountId(null);
+        month.setCommissionRetained(null);
+        if (!Boolean.TRUE.equals(c.getPostToBooks()) || !separateCommission(c) || commission.signum() <= 0
+                || r.commissionFromAccountId() == null || r.commissionFromAccountId().equals(c.getAccountId())) {
+            return;
+        }
+        Account from = book.requireMoneyAccount(r.commissionFromAccountId(), c.getId(), "Commission from");
+        month.setCommissionFromAccountId(from.getId());
+        if (!from.getId().equals(c.getCommissionAccountId())) {
+            return;
+        }
+        month.setCommissionRetained(true);
+        if (from.isChitBook()) {
+            return;   // a chit-book account: the money is already where it belongs, nothing to mark
+        }
+        BigDecimal chitMoney = book.money(c).spots().stream().filter(s -> s.accountId().equals(from.getId()))
+                .map(HostedChitBookService.Spot::amount).findFirst().orElse(Money.ZERO)
+                .add(returning.getOrDefault(from.getId(), Money.ZERO));
+        BigDecimal paidFromIt = parts.stream().filter(l -> l.getAccountId().equals(from.getId())).map(HostedChitLeg::getAmount)
+                .reduce(Money.ZERO, BigDecimal::add);
+        BigDecimal left = chitMoney.subtract(paidFromIt);
+        if (left.compareTo(commission) < 0) {
+            throw new BusinessException("Only " + ActivityService.money(left.max(Money.ZERO)) + " of the members' money is left in " + from.getName()
+                    + " after this payout, less than your " + ActivityService.money(commission) + " commission. Pay less of the payout from "
+                    + from.getName() + ", or move the commission from " + accounts.findById(c.getAccountId()).map(Account::getName).orElse("the collections account") + ".");
+        }
+    }
+
+    /** A transfer entry is needed when the commission has its own account, unless it stayed in a chit-book commission account. */
+    private boolean needsCommissionTransfer(HostedChit c, HostedChitMonth month) {
+        if (!separateCommission(c) || Money.nz(month.getCommissionAmount()).signum() <= 0) return false;
+        if (!Boolean.TRUE.equals(month.getCommissionRetained())) return true;
+        return accounts.findById(c.getCommissionAccountId()).map(a -> !a.isChitBook()).orElse(false);
+    }
+
+    /**
+     * Changes a payout already made: its date, the winner's account, the accounts it was paid from (amounts, modes,
+     * UTRs, narratives) and where the commission came from. The amount stays (it is the chit's figure). Not once the
+     * winner has accepted or signed the agreement, which records the payout. Its journal entries are posted again.
+     */
+    @Transactional
+    public Detail updatePayout(Long chitId, int monthNo, PayoutRequest r) {
+        HostedChit c = editable(chitId);
+        Calc calc = new Calc(c);
+        HostedChitMonth month = calc.month(monthNo);
+        if (month.getPayoutDate() == null) {
+            throw new BusinessException("Month " + monthNo + " is not paid out yet");
+        }
+        HostedChitMember winner = requireMember(c, month.getWinnerMemberId());
+        HostedChitAgreement ag = agreementOf(c, monthNo);
+        if (ag != null && !HostedChitAgreement.DRAFT.equals(ag.getStatus())) {
+            throw new BusinessException(winner.getName() + " has " + ag.getStatus().toLowerCase() + " the agreement " + ag.getAgreementNo()
+                    + ", which records this payout (amount, date and references), so it cannot change");
+        }
+        if (r.payoutDate() != null && r.payoutDate().isAfter(LocalDate.now())) {
+            throw new BusinessException("The payout date cannot be in the future");
+        }
+        if (r.payoutDate() != null && r.payoutDate().isBefore(c.getStartMonth())) {
+            throw new BusinessException("The payout date is before the chit starts (" + c.getStartMonth() + ")");
+        }
+        BigDecimal payout = Money.nz(month.getPayoutAmount());
+        BigDecimal commission = Money.nz(month.getCommissionAmount());
+        LocalDate date = r.payoutDate() != null ? r.payoutDate() : month.getPayoutDate();
+        List<HostedChitLeg> old = legs.findByMonthId(month.getId());
+        // the old parts go back to their accounts (and the commission kept in place goes back to being the chit's)
+        Map<Long, BigDecimal> returning = new HashMap<>();
+        old.forEach(l -> returning.merge(l.getAccountId(), l.getAmount(), BigDecimal::add));
+        if (Boolean.TRUE.equals(month.getCommissionRetained()) && c.getCommissionAccountId() != null) {
+            returning.merge(c.getCommissionAccountId(), commission, BigDecimal::add);
+        }
+        Map<Long, BigDecimal> returningCash = new HashMap<>(returning);
+        if (Boolean.TRUE.equals(month.getCommissionRetained()) && c.getCommissionAccountId() != null) {
+            returningCash.merge(c.getCommissionAccountId(), commission.negate(), BigDecimal::add);   // the money itself never left
+        }
+        List<HostedChitLeg> parts = payoutLegs(c, month, payout, r, commission, returningCash);
+        String before = month.getPayoutDate() + " " + old.stream().map(l -> l.getAccountId() + ":" + l.getAmount().toPlainString())
+                .collect(Collectors.joining(","));
+        month.setPayoutDate(date);
+        describePayout(month, r, parts, winner);
+        commissionSource(c, month, r, parts, commission, returning);
+        months.save(month);
+        legs.deleteAll(old);
+        if (!parts.isEmpty()) {
+            legs.saveAll(parts);
+        }
+        if (Boolean.TRUE.equals(c.getPostToBooks())) {
+            if (month.getPayoutEntryId() != null) ledger.repost(month.getPayoutEntryId(), payoutDraft(c, month, winner, parts));
+            else month.setPayoutEntryId(ledger.post(payoutDraft(c, month, winner, parts)).getId());
+            if (commission.signum() != 0) {
+                if (month.getCommissionEntryId() != null) ledger.repost(month.getCommissionEntryId(), commissionEntryDraft(c, month, date, commission));
+                else month.setCommissionEntryId(ledger.post(commissionEntryDraft(c, month, date, commission)).getId());
+            }
+            Long transfer = month.getCommissionTransferEntryId();
+            if (needsCommissionTransfer(c, month)) {
+                if (transfer != null) ledger.repost(transfer, commissionTransferDraft(c, month, date, commission));
+                else month.setCommissionTransferEntryId(ledger.post(commissionTransferDraft(c, month, date, commission)).getId());
+            } else if (transfer != null) {
+                month.setCommissionTransferEntryId(null);
+                months.save(month);
+                ledger.delete(transfer);
+            }
+        }
+        months.save(month);
+        if (ag != null) {
+            makeAgreement(c, month, winner, ag.getGuarantorName(), ag.getGuarantorPhone(), null);   // the draft follows the payout
+        }
+        String after = month.getPayoutDate() + " " + parts.stream().map(l -> l.getAccountId() + ":" + l.getAmount().toPlainString())
+                .collect(Collectors.joining(","));
+        activity.record("CHANGED", AREA, "Changed the payout · " + winner.getName() + " · " + c.getName() + " month " + monthNo + " · "
+                + ActivityService.money(payout) + (before.equals(after) ? "" : " · now from " + parts.size() + " part" + (parts.size() == 1 ? "" : "s")
+                + " on " + date));
+        return detail(chitId);
     }
 
     /** The mode of the payout part members paid the winner directly. */
@@ -1564,7 +1831,7 @@ public class HostedChitService {
     /** Undoes the payout of the last closed month (and the journal entries it posted). */
     @Transactional
     public Detail undoPayout(Long chitId, int monthNo) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         Calc calc = new Calc(c);
         HostedChitMonth month = calc.month(monthNo);
         if (month.getPayoutDate() == null) {
@@ -1591,6 +1858,8 @@ public class HostedChitService {
         month.setPayoutReference(null);
         month.setPayoutTo(null);
         month.setCommissionFromAccountId(null);
+        month.setCommissionRetained(null);
+        month.setPayoutRecordedAt(null);
         month.setPayoutEntryId(null);
         month.setCommissionEntryId(null);
         month.setCommissionTransferEntryId(null);
@@ -1610,7 +1879,7 @@ public class HostedChitService {
     /** Makes (or, while not yet accepted, remakes) the winner's agreement for a paid-out month. */
     @Transactional
     public Detail createAgreement(Long chitId, int monthNo, AgreementRequest r) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         HostedChitMonth month = new Calc(c).month(monthNo);
         if (month.getPayoutDate() == null || month.getWinnerMemberId() == null) {
             throw new BusinessException("Pay the winner of month " + monthNo + " first; the agreement records that payout");
@@ -1621,7 +1890,7 @@ public class HostedChitService {
 
     @Transactional
     public Detail deleteAgreement(Long chitId, Long agreementId) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         HostedChitAgreement a = requireAgreement(c, agreementId);
         if (!HostedChitAgreement.DRAFT.equals(a.getStatus())) {
             throw new BusinessException("An accepted or signed agreement is kept as a record and cannot be deleted");
@@ -1634,7 +1903,7 @@ public class HostedChitService {
     /** The member signed a paper copy: recorded by the organiser. */
     @Transactional
     public Detail markAgreementSigned(Long chitId, Long agreementId, String signedBy) {
-        HostedChit c = require(chitId);
+        HostedChit c = editable(chitId);
         HostedChitAgreement a = requireAgreement(c, agreementId);
         if (!HostedChitAgreement.DRAFT.equals(a.getStatus())) {
             throw new BusinessException("This agreement is already " + a.getStatus().toLowerCase());
@@ -1664,6 +1933,9 @@ public class HostedChitService {
             a.setContentHash("pending");
             a.setCreatedBy(UserContext.username());
             a.setCreatedAt(LocalDateTime.now());
+            // the stamp-paper copy carries the organiser's receipt signature until another is drawn for it
+            a.setOrganiserName(c.getReceiptSigner() != null ? c.getReceiptSigner() : UserContext.get().fullName());
+            a.setOrganiserSignature(c.getReceiptSignature());
         }
         Calc calc = new Calc(c);
         int remaining = c.getMonths() - month.getMonthNo();
@@ -1752,6 +2024,7 @@ public class HostedChitService {
 
     private void dropAgreement(HostedChit c, HostedChitAgreement a) {
         shares.deleteAll(shares.findByChitId(c.getId()).stream().filter(x -> a.getId().equals(x.getAgreementId())).toList());
+        files.deleteAllForAgreement(AGREEMENT_FILES, a.getId());
         agreements.deleteById(a.getId());
     }
 
@@ -1791,12 +2064,110 @@ public class HostedChitService {
         return "Rupees " + b.toString().trim() + " only";
     }
 
-    private static AgreementView agreementView(HostedChitAgreement a, Map<Long, String> names) {
+    private AgreementView agreementView(HostedChitAgreement a, Map<Long, String> names) {
         return new AgreementView(a.getId(), a.getMonthNo(), a.getMemberId(), names.get(a.getMemberId()), a.getAgreementNo(), a.getChitValue(),
                 a.getDeduction(), a.getPayoutAmount(), a.getPayoutDate(), a.getPayoutMode(), a.getPayoutReference(), a.getRemainingInstallments(),
                 a.getRemainingAmount(), a.getGuarantorName(), a.getGuarantorPhone(), a.getTerms(), a.getContentHash(), a.getStatus(),
                 a.getAcceptedName(), a.getAcceptedAt(), a.getAcceptedFrom(), a.getAcceptedPhone(), a.getPhoneMatches(), a.getAcceptedIp(),
-                a.getAcceptedDevice(), a.getDeviceHash(), a.getAcceptedLocation(), a.getSignature(), a.getAcceptanceSeal(), a.getCreatedAt());
+                a.getAcceptedDevice(), a.getDeviceHash(), a.getAcceptedLocation(), a.getSignature(), a.getAcceptanceSeal(), a.getCreatedAt(),
+                a.getStampDuty(), a.getStampSerial(), a.getOrganiserName(), a.getOrganiserSignature(), a.getWitnessName(), a.getWitnessPhone(),
+                a.getWitnessAddress(), a.getWitnessSignature(), a.getAadhaarLast4(), a.getPanMasked(), Boolean.TRUE.equals(a.getKycFromMember()),
+                files.listForAgreement(AGREEMENT_FILES, a.getId()), a.getEvidencePayload(), a.getDigitalSignature());
+    }
+
+    /** Attachment owner kind of a chit agreement's ID proof. */
+    public static final String AGREEMENT_FILES = "CHIT_AGREEMENT";
+
+    /**
+     * The stamp-paper copy of an agreement: the stamp's value and serial, the organiser's signature and name, the
+     * witness (name, phone, address, signature) and the member's ID numbers. These are not part of the agreement's
+     * wording (its fingerprint stays), so they can be added or corrected after it is accepted; the ID numbers only
+     * while it waits for the member.
+     */
+    @Transactional
+    public Detail setBond(Long chitId, Long agreementId, BondRequest r) {
+        HostedChit c = editable(chitId);
+        HostedChitAgreement a = requireAgreement(c, agreementId);
+        boolean draft = HostedChitAgreement.DRAFT.equals(a.getStatus());
+        if (r.stampDuty() != null) a.setStampDuty(r.stampDuty().signum() > 0 ? Money.round(r.stampDuty()) : null);
+        if (r.stampSerial() != null) a.setStampSerial(blank(r.stampSerial()));
+        if (r.organiserName() != null) a.setOrganiserName(blank(r.organiserName()));
+        if (Boolean.TRUE.equals(r.clearOrganiserSignature())) a.setOrganiserSignature(null);
+        if (Boolean.TRUE.equals(r.useReceiptSignature())) {
+            if (c.getReceiptSignature() == null) throw new BusinessException("Draw your receipt signature in the chit's settings first, or draw one here");
+            a.setOrganiserSignature(c.getReceiptSignature());
+            if (a.getOrganiserName() == null) a.setOrganiserName(c.getReceiptSigner());
+        } else if (blank(r.organiserSignature()) != null) {
+            a.setOrganiserSignature(drawn(r.organiserSignature(), "your signature"));
+        }
+        if (r.witnessName() != null) a.setWitnessName(blank(r.witnessName()));
+        if (r.witnessPhone() != null) a.setWitnessPhone(blank(r.witnessPhone()) == null ? null : cleanPhone(r.witnessPhone(), "The witness"));
+        if (r.witnessAddress() != null) a.setWitnessAddress(blank(r.witnessAddress()));
+        if (Boolean.TRUE.equals(r.clearWitnessSignature())) a.setWitnessSignature(null);
+        else if (blank(r.witnessSignature()) != null) {
+            if (a.getWitnessName() == null) throw new BusinessException("Enter the witness's name with their signature");
+            a.setWitnessSignature(drawn(r.witnessSignature(), "the witness's signature"));
+        }
+        if (blank(r.aadhaarNumber()) != null || blank(r.pan()) != null || r.kycFromMember() != null) {
+            if (!draft && (blank(r.aadhaarNumber()) != null || blank(r.pan()) != null)) {
+                throw new BusinessException("The agreement is already " + a.getStatus().toLowerCase() + "; its ID numbers are part of the record");
+            }
+            if (blank(r.aadhaarNumber()) != null) {
+                String aadhaar = Kyc.aadhaar(r.aadhaarNumber());
+                a.setAadhaarLast4(aadhaar.substring(8));
+                a.setAadhaarHash(Kyc.hash(a.getAgreementNo(), aadhaar));
+            }
+            if (blank(r.pan()) != null) {
+                String pan = Kyc.pan(r.pan());
+                a.setPanMasked(Kyc.maskPan(pan));
+                a.setPanHash(Kyc.hash(a.getAgreementNo(), pan));
+            }
+            if (r.kycFromMember() != null && draft) a.setKycFromMember(r.kycFromMember());
+        }
+        agreements.save(a);
+        activity.record("CHANGED", AREA, "Stamp-paper details of the agreement " + a.getAgreementNo() + " · " + c.getName() + " month " + a.getMonthNo()
+                + (a.getWitnessSignature() != null ? " · witness signed" : "") + (a.getAadhaarLast4() != null ? " · Aadhaar ••" + a.getAadhaarLast4() : ""));
+        return detail(chitId);
+    }
+
+    /** Adds the member's Aadhaar, PAN or photo to an agreement (by the organiser), while it waits for the member. */
+    @Transactional
+    public Detail addAgreementFile(Long chitId, Long agreementId, String docType, String fileName, byte[] bytes, String source) {
+        HostedChit c = editable(chitId);
+        HostedChitAgreement a = requireAgreement(c, agreementId);
+        if (!HostedChitAgreement.DRAFT.equals(a.getStatus())) {
+            throw new BusinessException("The agreement is already " + a.getStatus().toLowerCase() + "; its ID proof is part of the record");
+        }
+        AttachmentService.AgreementFile f = files.addToAgreement(AGREEMENT_FILES, a.getId(), docType, fileName, bytes, source);
+        activity.record("ADDED", AREA, "Added " + f.docType().replace('_', ' ').toLowerCase() + " to the agreement " + a.getAgreementNo() + " · " + c.getName());
+        return detail(chitId);
+    }
+
+    @Transactional
+    public Detail deleteAgreementFile(Long chitId, Long agreementId, Long fileId) {
+        HostedChit c = editable(chitId);
+        HostedChitAgreement a = requireAgreement(c, agreementId);
+        if (!HostedChitAgreement.DRAFT.equals(a.getStatus())) {
+            throw new BusinessException("The agreement is already " + a.getStatus().toLowerCase() + "; its ID proof is part of the record");
+        }
+        files.deleteFromAgreement(AGREEMENT_FILES, a.getId(), fileId);
+        activity.record("DELETED", AREA, "Removed a file from the agreement " + a.getAgreementNo() + " · " + c.getName());
+        return detail(chitId);
+    }
+
+    /** The bytes of one of an agreement's files (to print the stamp-paper copy with its annexures). */
+    public AttachmentService.FileContent agreementFile(Long chitId, Long agreementId, Long fileId, boolean thumb) {
+        HostedChitAgreement a = requireAgreement(require(chitId), agreementId);
+        return files.agreementFileContent(AGREEMENT_FILES, a.getId(), fileId, thumb);
+    }
+
+    /** A drawn signature (an SVG path), checked. */
+    static String drawn(String path, String what) {
+        String s = path == null ? "" : path.trim();
+        if (s.length() < 20 || !s.matches("[MLml0-9 .\\-]+")) {
+            throw new BusinessException("Draw " + what + " in the box");
+        }
+        return s;
     }
 
     // ================================================================== report
@@ -1919,6 +2290,13 @@ public class HostedChitService {
 
     private HostedChit require(Long id) {
         return chits.findByIdAndTenantId(id, UserContext.tenantId()).orElseThrow(() -> new NotFoundException("Hosted chit", id));
+    }
+
+    /** A chit to change: it must not be closed. */
+    private HostedChit editable(Long id) {
+        HostedChit c = require(id);
+        requireOpen(c);
+        return c;
     }
 
     private HostedChitMember requireMember(HostedChit c, Long memberId) {
@@ -2228,6 +2606,30 @@ public class HostedChitService {
             this.completedMonths = (int) monthList.stream().filter(m -> m.getPayoutDate() != null).count();
             this.currentMonth = monthList.stream().filter(m -> m.getPayoutDate() == null).mapToInt(HostedChitMonth::getMonthNo)
                     .min().orElse(c.getMonths() + 1);
+            Map<Long, Integer> monthNoById = new HashMap<>();
+            monthList.forEach(m -> monthNoById.put(m.getId(), m.getMonthNo()));
+            legs.findByChitId(c.getId()).stream().filter(l -> l.getMonthId() != null)
+                    .forEach(l -> HostedChitBookService.ids(l.getPaymentIds()).forEach(id -> paidOutIn.put(id, monthNoById.get(l.getMonthId()))));
+        }
+
+        /** Payment id → the month whose payout carried it (a payout part names it). */
+        final Map<Long, Integer> paidOutIn = new HashMap<>();
+
+        /**
+         * Why a payment cannot change, or null: it was recorded before its month's payout (the payout paid it out), a
+         * payout part carries it, or the chit is closed.
+         */
+        String lockReason(HostedChitPayment p) {
+            if (closed(c)) return "the chit is closed";
+            HostedChitMonth m = monthList.stream().filter(x -> x.getMonthNo().equals(p.getMonthNo())).findFirst().orElse(null);
+            if (m != null && m.getPayoutDate() != null
+                    && (m.getPayoutRecordedAt() == null || p.getCreatedAt() == null || !p.getCreatedAt().isAfter(m.getPayoutRecordedAt()))) {
+                return "month " + m.getMonthNo() + " was paid out on " + m.getPayoutDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy"))
+                        + " with it" + (p.getPaidToMemberId() != null ? " (paid directly to the winner)" : "");
+            }
+            Integer carried = paidOutIn.get(p.getId());
+            if (carried != null) return "it went out in the month " + carried + " payout";
+            return null;
         }
 
         BigDecimal paid(Long memberId, int monthNo) {
@@ -2407,7 +2809,7 @@ public class HostedChitService {
                     c.getCreatedBy(), c.getCreatedAt(), c.getVersion(), Money.nz(c.getInstallmentIncrement()),
                     !today.isBefore(c.getStartMonth()) || locked, c.getPayToAccountId(),
                     c.getPayToAccountId() == null ? null : accounts.findById(c.getPayToAccountId()).map(Account::getName).orElse(null),
-                    shortCodeOf(c));
+                    shortCodeOf(c), closed(c), c.getClosedAt(), c.getClosedBy(), c.getCloseNote());
         }
 
         Detail detail() {
@@ -2453,7 +2855,8 @@ public class HostedChitService {
                         m.getWinnerMemberId(), names.get(m.getWinnerMemberId()), m.getDrawMethod(), status, due(no),
                         collected(no), expected(no), paidCount, m.getPayoutDate(), m.getPayoutMode(), m.getPayoutReference(),
                         entryNos.get(m.getPayoutEntryId()), m.getPayoutEntryId(), m.getPayoutTo(),
-                        legsByMonth.getOrDefault(m.getId(), List.of()), m.getVersion());
+                        legsByMonth.getOrDefault(m.getId(), List.of()), m.getVersion(), m.getCommissionFromAccountId(),
+                        Boolean.TRUE.equals(m.getCommissionRetained()));
             }).toList();
 
             Map<Long, Integer> files = entryIds.isEmpty() ? Map.of() : attachments.countsByEntry(c.getTenantId());
@@ -2464,7 +2867,8 @@ public class HostedChitService {
                     p.getVersion(), accountOf(p), accountNames.get(accountOf(p)), p.getPaidToMemberId(), names.get(p.getPaidToMemberId()),
                     p.getBatchId(), movedBy.containsKey(p.getId()) ? "to " + movedBy.get(p.getId()).toAccountName()
                         + (movedBy.get(p.getId()).entryNo() != null ? " · " + movedBy.get(p.getId()).entryNo() : "") : null,
-                    movedBy.containsKey(p.getId()) ? movedBy.get(p.getId()).id() : null, paidOutIn.get(p.getId()))).toList();
+                    movedBy.containsKey(p.getId()) ? movedBy.get(p.getId()).id() : null, paidOutIn.get(p.getId()),
+                    lockReason(p) != null, lockReason(p))).toList();
             List<LateFeeView> lateFees = new ArrayList<>();
             if (Money.isPositive(c.getLateFeePercent())) {
                 for (HostedChitMember m : memberList) {

@@ -372,7 +372,8 @@ public class LedgerService {
             if (line.hostedChitId() != null && hostedChits.findByIdAndTenantId(line.hostedChitId(), tenantId).isEmpty()) {
                 throw new NotFoundException("Hosted chit", line.hostedChitId());
             }
-            distinct.add(account.getId() + "/" + categoryId + "/" + chitId);
+            // the hosted chit counts too: Dr X / Cr X (chit) moves money within an account from a chit to the organiser
+            distinct.add(account.getId() + "/" + categoryId + "/" + chitId + "/" + line.hostedChitId());
             debit = debit.add(Money.nz(line.debit()));
             credit = credit.add(Money.nz(line.credit()));
             resolved.add(new JournalDraft.Line(account.getId(), categoryId, chitId, line.debit(), line.credit(), line.memo(),

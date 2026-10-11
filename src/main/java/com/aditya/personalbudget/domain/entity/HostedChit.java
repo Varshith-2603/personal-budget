@@ -45,6 +45,11 @@ public class HostedChit implements TenantOwned {
 
     public static final String ACTIVE = "ACTIVE";
     public static final String COMPLETED = "COMPLETED";
+    /**
+     * Closed by the organiser once every month is paid out: the chit's books are final, nothing in it changes
+     * (payments, payouts, winners, settings, transfers) until it is re-opened.
+     */
+    public static final String CLOSED = "CLOSED";
     /** The chit value grows by a fixed step each month and the winner is picked (or drawn). */
     public static final String TYPE_FIXED = "FIXED";
     /** Auction (bidding) chit, Margadarsi style: members bid a discount, the discount less commission is shared. */
@@ -174,9 +179,19 @@ public class HostedChit implements TenantOwned {
     @References(Account.class)
     private Long lateFeeAccountId;
 
-    /** ACTIVE or COMPLETED. */
+    /** ACTIVE, COMPLETED or CLOSED. */
     @Column(nullable = false, length = 10)
     private String status;
+
+    /** When the chit was closed, and by whom (empty while it is open). */
+    private LocalDateTime closedAt;
+
+    @Column(length = 100)
+    private String closedBy;
+
+    /** Why it was closed, or what was settled (shown on the closed chit). */
+    @Column(length = 255)
+    private String closeNote;
 
     /** Sample data, removable with "Clear demo data". */
     private Boolean demo;
