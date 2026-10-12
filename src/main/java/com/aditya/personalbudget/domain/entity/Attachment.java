@@ -62,6 +62,13 @@ public class Attachment implements TenantOwned {
     @Column(length = 20)
     private String docType;
 
+    /**
+     * An image rendered from a PDF the member gave (a page of their Aadhaar or PAN card): the SHA-256 of that PDF,
+     * which stays attached unchanged as the original.
+     */
+    @Column(length = 64)
+    private String derivedFromSha;
+
     /** Name of the file as the user had it (or "Photo 2026-10-07 14.32.jpg" for the camera). */
     @Column(nullable = false, length = 200)
     private String fileName;

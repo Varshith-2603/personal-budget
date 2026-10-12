@@ -21,14 +21,28 @@ export const DOC_LABELS = {
 /**
  * types: which tiles, in order; need: the ones required; urls: id → image URL; editable: add / replace / remove.
  */
+/** The file given for a type (not the pages rendered from a PDF), and the pages if it is a PDF. */
+function given(files, t) {
+    const f = files.find(x => x.docType === t && !x.derivedFromSha);
+    return { f, pages: f ? files.filter(x => x.derivedFromSha && x.derivedFromSha === f.sha256) : [] };
+}
+
+/** A small mark: the file on disk still matches the fingerprint taken when it came in. */
+function sealMark(f, pages = []) {
+    const ok = f.intact !== false && pages.every(p => p.intact !== false);
+    return `<span class="kyc-seal ${ok ? 'ok' : 'bad'}" title="${ok ? 'Unchanged since it was added (SHA-256 checked)' : 'The stored file no longer matches its fingerprint'}">${icon(ok ? 'shield' : 'alert')}${ok ? 'Intact' : 'Changed'}</span>`;
+}
+
 export function kycTilesHtml(files, { types = ['AADHAAR_FRONT', 'AADHAAR_BACK', 'PAN', 'SELFIE'], need = new Set(), urls = {}, editable = true } = {}) {
     return `<div class="kyc-grid">${types.map(t => {
-        const f = files.find(x => x.docType === t);
+        const { f, pages } = given(files, t);
+        const shown = f && (f.image ? f : pages[0]);
         const [label, hint, ic] = DOC_LABELS[t];
         return `<div class="kyc-tile ${f ? 'done' : ''} ${need.has(t) ? 'need' : ''}" data-kyc="${t}">
             <b>${icon(ic)} ${esc(label)}</b>
-            ${f ? (f.image && urls[f.id] ? `<img src="${esc(urls[f.id])}" alt="${esc(label)}">` : `<small>${f.pdf ? 'PDF' : 'File'} · ${esc(f.fileName)}</small>`)
-                + `<small>${esc(f.source === 'CAMERA' ? 'camera' : 'upload')} · ${dateTime(f.createdAt)}${f.createdBy && /link/.test(f.createdBy) ? ' · by the member' : ''}</small>`
+            ${f ? (shown && urls[shown.id] ? `<img src="${esc(urls[shown.id])}" alt="${esc(label)}">` : '')
+                + (f.pdf ? `<small>PDF · ${esc(f.fileName)}${pages.length ? ` · ${pages.length > 1 ? `${pages.length} images` : "1 image"} taken from it` : ''}</small>` : (shown ? '' : `<small>File · ${esc(f.fileName)}</small>`))
+                + `<small>${esc(f.source === 'CAMERA' ? 'camera' : 'upload')} · ${dateTime(f.createdAt)}${f.createdBy && /link/.test(f.createdBy) ? ' · by the member' : ''} ${sealMark(f, pages)}</small>`
                 : `<small>${esc(hint)}</small>`}
             ${editable ? `<div class="kyc-acts">${t === 'SELFIE'
                 ? `<button type="button" data-kyc-camera="${t}">${icon('camera')}${f ? 'Retake' : 'Camera'}</button>`
@@ -105,14 +119,26 @@ export async function fileUrls(files, fetchBlob, { thumb = false } = {}) {
 }
 
 /** The annexures of a deed: ID proof and the photograph, with each file's fingerprint. */
-export function kycAnnexures(files, urls, { who = '', aadhaarLast4 = null, panMasked = null } = {}) {
-    const pic = t => files.filter(f => f.docType === t).map(f => ({ src: urls[f.id] || '', pdf: !f.image || !urls[f.id], caption: DOC_LABELS[t]?.[0] || t, hash: f.sha256 }));
-    const ids = [...pic('AADHAAR_FRONT'), ...pic('AADHAAR_BACK'), ...pic('PAN')];
+export function kycAnnexures(files, urls, { who = '', aadhaarLast4 = null, panMasked = null, mark = '' } = {}) {
+    const pic = t => {
+        const { f, pages } = given(files, t);
+        if (!f) return [];
+        const caption = DOC_LABELS[t]?.[0] || t;
+        // a PDF: its pages, rendered (and watermarked) by the server, each tied to the original PDF's fingerprint
+        if (f.pdf && pages.length) {
+            return pages.map((p, i) => ({ src: urls[p.id] || '', pdf: !urls[p.id], caption: p.caption || (pages.length > 1 ? `${caption} · page ${i + 1}` : caption),
+                hash: f.sha256, from: 'PDF', pageHash: p.sha256, fullPage: /-page-\d+\.(png|jpe?g)$/i.test(p.fileName || ''), intact: f.intact !== false && p.intact !== false, mark }));
+        }
+        return [{ src: urls[f.id] || '', pdf: !f.image || !urls[f.id], caption, hash: f.sha256, intact: f.intact !== false, mark }];
+    };
+    // the cards first (photos and close-ups, which share a page), then the full pages of the PDFs, a page each
+    const all = [...pic('AADHAAR_FRONT'), ...pic('AADHAAR_BACK'), ...pic('PAN')];
+    const ids = [...all.filter(x => !x.fullPage), ...all.filter(x => x.fullPage)];
     const out = [];
     if (ids.length || aadhaarLast4 || panMasked) {
         out.push({ title: 'Identity proof', note: [who, aadhaarLast4 ? `Aadhaar XXXX XXXX ${aadhaarLast4}` : '', panMasked ? `PAN ${panMasked}` : ''].filter(Boolean).join(' · '), images: ids });
     }
     const selfie = pic('SELFIE');
-    if (selfie.length) out.push({ title: 'Photograph', note: `${who}: a live photo taken with the camera when the agreement was made`, images: selfie });
+    if (selfie.length) out.push({ title: 'Photograph', note: `${who}: a live photo taken with the camera when the agreement was made`, images: selfie.map(x => ({ ...x, photo: true })) });
     return out;
 }

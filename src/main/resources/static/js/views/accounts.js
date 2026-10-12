@@ -12,7 +12,7 @@ import { kindChip, entryKind } from '../core/entry-kind.js';
 import { exportButton, bindExport } from '../core/export.js';
 import { icon, accountTypeIcon } from '../core/icons.js';
 import { money, moneyShort, date, shortDate, shortDateYear, percent, firstOfMonth, isoDate, number, daysFromToday } from '../core/format.js';
-import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
+import { chitStatus, chitTrailHtml, hasChitStatus, shortNarration, shortAccount, chitCodeOf } from '../core/chit-trail.js';
 import { openQuickEntry } from '../components/transaction-forms.js';
 import { toggleEntryRow } from '../components/entry-inline.js';
 import { claimContextHtml, claimBadge, reminderText } from '../components/claim-panel.js';
@@ -527,17 +527,24 @@ async function drawDetail(target, account, reload, all = []) {
         const hit = entryClaims.get(r.entryId);
         return hit ? `<span class="ls-cell" title="${esc(`${hit.claim.party} · ${hit.claim.narration} · ${hit.role}`)}">${claimBadge(hit.claim)}<span class="ls-role">${esc(hit.role)}</span></span>` : '';
     } };
+    /** The other side, a chit's own accounts shortened ("MH75 collections"). */
+    const shortCounter = r => String(r.counterAccounts || '').split(', ').map(n => shortAccount(n, chitCodeOf(r.chitTrail))).join(', ');
     const baseColumns = [
         { label: 'Date', render: r => date(r.date), cls: 'nowrap c-date' },
         { label: 'Entry', cls: 'c-entry', render: r => `<div class="entry-cell">${kindChip(r.voucherType, 'sm', r.voucherLabel)}
-            <span class="entry-text"><b class="ellipsis">${esc(r.narration)}</b>${personOf(r)}${peopleAccount ? '' : inlineStatus(r)}${chitTrailChips(r.chitTrail)}${r.counterAccounts ? `<span class="entry-party ellipsis" title="The other side">${icon(isIn(r) ? 'arrow-in' : 'arrow-out')}${esc(r.counterAccounts)}</span>` : ''}</span></div>` },
+            <span class="entry-text"><b class="ellipsis" title="${esc(r.narration)}">${esc(shortNarration(r.narration, r.chitTrail))}</b>${personOf(r)}${peopleAccount ? '' : inlineStatus(r)}${r.counterAccounts ? `<span class="entry-party ellipsis" title="${esc(`The other side: ${r.counterAccounts}`)}">${icon(isIn(r) ? 'arrow-in' : 'arrow-out')}${esc(shortCounter(r))}</span>` : ''}</span></div>` },
         { label: debitNormal ? 'In (Dr)' : 'Out (Dr)', align: 'r', render: r => Number(r.debit) ? `<span class="dr-amt">${money(r.debit)}</span>` : '' },
         { label: debitNormal ? 'Out (Cr)' : 'In (Cr)', align: 'r', render: r => Number(r.credit) ? `<span class="cr-amt">${money(r.credit)}</span>` : '' },
         { label: 'Balance', align: 'r', render: r => `<b>${money(r.balance)}</b>` },
         { label: '', align: 'r', render: () => `<span class="expand-caret">${icon('chevron-down')}</span>` },
     ];
     // the Status column on receivables / payables; elsewhere (bank, interest accounts) the status sits inline
-    const columns = () => (peopleAccount ? [baseColumns[0], baseColumns[1], statusCol, ...baseColumns.slice(2)] : baseColumns);
+    const chitCol = { label: '', cls: 'c-ctst', render: r => chitStatus(r.chitTrail) };
+    const columns = () => {
+        const cols = peopleAccount ? [baseColumns[0], baseColumns[1], statusCol, ...baseColumns.slice(2)] : [...baseColumns];
+        if (hasChitStatus(ledger?.rows)) cols.splice(peopleAccount ? 3 : 2, 0, chitCol);
+        return cols;
+    };
 
     // free text: description, the other side, kind, entry number (EX-000123) or id (#123)
     const textMatch = r => {

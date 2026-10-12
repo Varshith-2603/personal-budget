@@ -25,6 +25,7 @@ import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -327,7 +328,7 @@ public class ClaimAgreementService {
     public AgreementView addFile(Long claimId, String docType, String name, byte[] bytes, String source) {
         ClaimAgreement a = require(claimId);
         requireDraft(a);
-        AgreementFile f = files.addToAgreement(FILES, a.getId(), docType, name, bytes, source);
+        AgreementFile f = files.addToAgreement(FILES, a.getId(), docType, name, bytes, source, "loan agreement " + a.getAgreementNo());
         activity.record("ADDED", AREA, "Added " + f.docType().replace('_', ' ').toLowerCase() + " to " + a.getAgreementNo());
         return view(a);
     }
@@ -380,7 +381,7 @@ public class ClaimAgreementService {
         }
         Tenant tenant = tenant(a);
         return asTenant(tenant, () -> {
-            AgreementFile f = files.addToAgreement(FILES, a.getId(), type, name, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD");
+            AgreementFile f = files.addToAgreement(FILES, a.getId(), type, name, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD", "loan agreement " + a.getAgreementNo());
             activity.record(linkUser(tenant, a.getBorrowerName()), "ADDED", AREA, a.getBorrowerName() + " added "
                     + f.docType().replace('_', ' ').toLowerCase() + " to " + a.getAgreementNo(), "POST", "/public/loan-agreements");
             return full(a, tenant);
@@ -481,9 +482,13 @@ public class ClaimAgreementService {
 
     // ================================================================== helpers
 
-    /** The standard wording, with the figures filled in. */
+    /**
+     * The standard wording, with the figures filled in: numbered clauses, each "HEADING: text" (the deed shows the
+     * heading in bold), in the form of an Indian loan agreement / acknowledgement of debt.
+     */
     private static String terms(ClaimAgreement a, ClaimView c, String extra) {
-        String rupees = ActivityService.money(a.getAmount()) + " (" + HostedChitService.inWords(a.getAmount()) + ")";
+        String rupees = ActivityService.money(a.getAmount()) + " (Rupees " + HostedChitService.inWords(a.getAmount()).replaceFirst("(?i)^rupees\\s+", "")
+                .replaceFirst("(?i)\\s+only$", "") + " only)";
         String mode = switch (String.valueOf(c.paidFromType())) {
             case "BANK" -> " by bank transfer";
             case "CASH" -> " in cash";
@@ -491,42 +496,59 @@ public class ClaimAgreementService {
             case "CREDIT_CARD" -> " by card";
             default -> "";
         };
-        StringBuilder t = new StringBuilder();
-        int n = 1;
+        boolean interest = a.getInterestRate() != null;
+        String due = a.getDueDate() != null ? a.getDueDate().format(DAY) : null;
+        String place = a.getPlace() != null && !a.getPlace().isBlank() ? a.getPlace().trim() : null;
+        List<String> t = new ArrayList<>();
         if (c.kind() == ClaimKind.PAID_FOR) {
-            t.append(n++).append(". I, ").append(a.getBorrowerName()).append(a.getBorrowerAddress() != null ? ", of " + a.getBorrowerAddress() : "")
-                    .append(" (the Borrower), confirm that ").append(a.getLenderName()).append(a.getLenderAddress() != null ? ", of " + a.getLenderAddress() : "")
-                    .append(" (the Lender), paid ").append(rupees).append(" on my behalf on ").append(a.getLoanDate().format(DAY))
-                    .append(" towards ").append(c.narration()).append(mode).append(", and that I owe this amount to the Lender.\n");
+            t.add("ACKNOWLEDGEMENT OF DEBT: The Borrower acknowledges that on " + a.getLoanDate().format(DAY) + " the Lender paid a sum of " + rupees
+                    + " on behalf of and at the request of the Borrower towards " + c.narration() + mode
+                    + " (the \"Amount\"), and that the Amount is a debt lawfully due and payable by the Borrower to the Lender.");
         } else {
-            t.append(n++).append(". I, ").append(a.getBorrowerName()).append(a.getBorrowerAddress() != null ? ", of " + a.getBorrowerAddress() : "")
-                    .append(" (the Borrower), have received a loan of ").append(rupees).append(" from ").append(a.getLenderName())
-                    .append(a.getLenderAddress() != null ? ", of " + a.getLenderAddress() : "").append(" (the Lender) on ")
-                    .append(a.getLoanDate().format(DAY)).append(mode).append(", in full.\n");
+            t.add("LOAN: The Lender has advanced to the Borrower, and the Borrower has received from the Lender, a sum of " + rupees + " (the \"Amount\") on "
+                    + a.getLoanDate().format(DAY) + mode + ", the receipt of which in full the Borrower hereby admits and acknowledges.");
         }
-        if (a.getInterestRate() != null) {
-            t.append(n++).append(". The amount carries interest at ").append(a.getInterestRate().stripTrailingZeros().toPlainString())
-                    .append("% a year (").append(String.valueOf(c.interestTypeLabel()).toLowerCase()).append("), payable ")
-                    .append(String.valueOf(c.interestCollectionLabel()).toLowerCase()).append(", from the date of the loan until it is repaid in full.\n");
-        } else {
-            t.append(n++).append(". The amount carries no interest");
-            t.append(a.getDueDate() != null ? " if it is repaid by the due date below.\n" : ".\n");
-        }
-        t.append(n++).append(". I will repay the amount").append(a.getInterestRate() != null ? " with the interest due" : "")
-                .append(a.getDueDate() != null ? " on or before " + a.getDueDate().format(DAY) : " whenever the Lender asks for it, within 30 days of being asked")
-                .append(". I may repay earlier, in full or in parts; a part payment goes first to interest due and then to the amount lent.\n");
-        t.append(n++).append(". If I do not repay as agreed, the Lender may recover the amount still owed").append(a.getInterestRate() != null ? ", with interest," : "")
-                .append(" and the reasonable cost of recovering it from me by lawful means.\n");
-        t.append(n++).append(". The identity proof and photograph I give with this agreement are mine and are true. My mobile number, signature and the ")
-                .append("details of the device I accept it on are recorded as evidence of my acceptance.\n");
+        t.add(interest
+                ? "INTEREST: The Amount shall carry interest at the rate of " + a.getInterestRate().stripTrailingZeros().toPlainString()
+                    + "% per annum (" + String.valueOf(c.interestTypeLabel()).toLowerCase() + "), payable " + String.valueOf(c.interestCollectionLabel()).toLowerCase()
+                    + ", from the date on which the Amount was advanced until the date of its repayment in full."
+                : "INTEREST: The Amount shall not carry any interest" + (due != null ? ", provided it is repaid in full on or before the Due Date." : "."));
+        t.add("REPAYMENT: The Borrower shall repay the Amount" + (interest ? " together with all interest accrued thereon" : "")
+                + (due != null ? " on or before " + due + " (the \"Due Date\")." : " within thirty (30) days of a demand made by the Lender, orally or in writing."));
+        t.add("PREPAYMENT AND APPROPRIATION: The Borrower may repay the Amount earlier, in full or in parts, without any charge. Every payment received shall be "
+                + "appropriated first towards interest, if any, then due, and thereafter towards the Amount.");
+        t.add("MODE OF PAYMENT AND ACCOUNTS: All payments shall be made by bank transfer, UPI, cheque or cash against a written or electronic receipt. "
+                + "The account of the Amount maintained by the Lender shall, in the absence of manifest error, be evidence of the sums due.");
+        t.add("DEFAULT: If the Borrower fails to pay any sum on the date it falls due, or any statement made by the Borrower in this Agreement is found to be "
+                + "untrue, the whole of the Amount then outstanding" + (interest ? ", with interest," : "") + " shall, at the option of the Lender, "
+                + "become immediately due and payable.");
+        t.add("RECOVERY: Upon default, the Lender shall be entitled to recover from the Borrower the Amount outstanding" + (interest ? " with interest" : "")
+                + ", together with the reasonable costs of recovery, by all lawful means, including proceedings before a court of competent jurisdiction.");
+        t.add("REPRESENTATIONS: The Borrower represents that he or she is a major, of sound mind and competent to contract, and that the proof of identity, "
+                + "photograph and particulars furnished with this Agreement are true, correct and belong to the Borrower.");
+        t.add("ELECTRONIC EXECUTION AND EVIDENCE: The parties agree that this Agreement may be accepted electronically. The verification of the Borrower's "
+                + "mobile number, the Borrower's signature and photograph, the details of the device used and the digitally signed record of acceptance "
+                + "shall constitute valid evidence of its execution, in accordance with the Information Technology Act, 2000 and the Bharatiya Sakshya "
+                + "Adhiniyam, 2023.");
+        t.add("NOTICES: Any notice under this Agreement may be given at the address or mobile number of the party stated herein, including by SMS, "
+                + "WhatsApp or e-mail, and shall be deemed received on the day it is sent.");
         if (extra != null) {
             for (String line : extra.split("\\R")) {
-                if (!line.isBlank()) t.append(n++).append(". ").append(line.trim()).append('\n');
+                if (!line.isBlank()) t.add("ADDITIONAL TERM: " + line.trim());
             }
         }
-        t.append(n).append(". This agreement is made").append(a.getPlace() != null ? " at " + a.getPlace() : "")
-                .append(". I have read and understood it and I accept it of my own free will, in a sound state of mind and without any pressure.");
-        return t.toString();
+        t.add("GOVERNING LAW AND JURISDICTION: This Agreement shall be governed by the laws of India. "
+                + (place != null ? "The courts at " + place + " shall have exclusive jurisdiction" : "The courts having jurisdiction over the place where this Agreement is executed shall have exclusive jurisdiction")
+                + " in all matters arising out of it.");
+        t.add("ENTIRE AGREEMENT AND SEVERABILITY: This Agreement records the entire understanding of the parties on its subject and may be amended only in "
+                + "writing signed by both parties. If any provision is held invalid, the remaining provisions shall continue in full force.");
+        t.add("STAMP DUTY: The stamp duty payable on this Agreement shall be borne by the Borrower, unless the parties agree otherwise.");
+        t.add("DECLARATION: The Borrower declares that he or she has read this Agreement, or has had it read over and explained "
+                + "in a language he or she understands, has understood its contents, and has executed it freely and voluntarily, without any coercion, "
+                + "undue influence or misrepresentation.");
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < t.size(); i++) out.append(i + 1).append(". ").append(t.get(i)).append(i + 1 < t.size() ? "\n" : "");
+        return out.toString();
     }
 
     /** The number must be the borrower's; wrong numbers are counted and, after too many, lock the link. Returns the 10 digits. */

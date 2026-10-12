@@ -17,7 +17,7 @@ import { can, loadAccounts } from '../core/store.js';
 import { panel, esc, openModal, confirmDialog, toast, emptyState, loading, narrativeHtml } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, moneyShort, date, shortDate, isoDate, firstOfMonth } from '../core/format.js';
-import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
+import { chitStatus, chitTrailHtml, hasChitStatus, shortNarration, shortAccount, chitTag, chitCodeOf } from '../core/chit-trail.js';
 import { setPageKeys, listNavigator } from '../core/keys.js';
 import { openEntryDetail } from '../components/transaction-forms.js';
 import { toggleEntryRow } from '../components/entry-inline.js';
@@ -662,14 +662,17 @@ function statementHtml(s, only, ownChit = null) {
             <span class="pos"><small>In</small><b>+${money(s.totalIn)}</b></span>
             <span class="neg"><small>Out</small><b>−${money(s.totalOut)}</b></span>
             <span><small>Closing</small><b>${signed(s.closing)}</b></span></div>
-        <table class="grid dense ca-stmt"><thead><tr><th>Date</th><th>Entry</th><th>Details</th><th class="num">In</th><th class="num">Out</th><th class="num">Balance</th></tr></thead>
+        <table class="grid dense ca-stmt"><thead><tr><th>Date</th><th>Entry</th><th>Details</th>${hasChitStatus(lines) ? '<th class="c-ctst"></th>' : ''}<th class="num">In</th><th class="num">Out</th><th class="num">Balance</th></tr></thead>
         <tbody>${lines.slice().reverse().map(l => {
             const sub = [l.counterpart ? `${num(l.moneyIn) ? 'from' : 'to'} ${l.counterpart}` : '', l.memo].filter(Boolean).join(' · ');
+            const code = chitCodeOf(l.chitTrail) || (l.chitName ? chitTag(l.chitName) : null);
+            const shortSub = [l.counterpart ? `${num(l.moneyIn) ? 'from' : 'to'} ${shortAccount(l.counterpart, code)}` : '', l.memo].filter(Boolean).join(' · ');
             return `<tr class="clickable" data-entry="${l.entryId}" title="${esc([l.narration, sub].filter(Boolean).join('\n'))}">
             <td class="hc-nowrap">${shortDate(l.date)}</td>
             <td class="hc-nowrap muted">${esc(l.entryNo)}</td>
-            <td class="ca-stmt-what"><span class="ellipsis">${ownChit && l.hostedChitId === ownChit ? '' : l.chitName ? `<span class="ca-tag">${esc(l.chitName)}</span>` : '<span class="ca-tag mine">mine</span>'}
-                <b>${esc(l.narration)}</b>${sub ? `<small class="muted"> · ${narrativeHtml(sub)}</small>` : ''}</span>${chitTrailChips(l.chitTrail)}</td>
+            <td class="ca-stmt-what"><span class="ellipsis">${ownChit && l.hostedChitId === ownChit ? '' : l.chitName ? `<span class="ca-tag" title="${esc(l.chitName)}">${esc(code)}</span>` : '<span class="ca-tag mine">mine</span>'}
+                <b>${esc(shortNarration(l.narration, l.chitTrail))}</b>${shortSub ? `<small class="muted"> · ${narrativeHtml(shortSub)}</small>` : ''}</span></td>
+            ${hasChitStatus(lines) ? `<td class="c-ctst">${chitStatus(l.chitTrail)}</td>` : ''}
             <td class="num pos">${num(l.moneyIn) ? money(l.moneyIn) : ''}</td>
             <td class="num neg">${num(l.moneyOut) ? money(l.moneyOut) : ''}</td>
             <td class="num"><b>${signed(l.balance)}</b></td></tr>`;
@@ -693,7 +696,7 @@ export function transfersTable(list, empty, { actions = true } = {}) {
             const [kindIcon, kindLabel, tone] = KIND[t.kind] || KIND.MOVE;
             return `<tr>
                 <td class="hc-nowrap">${shortDate(t.date)}${t.entryNo ? `<span class="hc-when muted clickable" data-act="entry" data-entry="${t.journalEntryId}">${esc(t.entryNo)}</span>` : ''}</td>
-                <td><span class="ca-kind ${tone}">${icon(kindIcon)}${kindLabel}</span>${chitTrailChips(t.chitTrail)}${t.chitName ? `<span class="hc-sub-note muted">${esc(t.chitName)}${t.chitMoney ? ' · chit money' : ' · my money'}</span>` : ''}
+                <td><span class="ca-kind ${tone}">${icon(kindIcon)}${kindLabel}</span>${t.chitName ? `<span class="hc-sub-note muted">${esc(t.chitName)}${t.chitMoney ? ' · chit money' : ' · my money'}</span>` : ''}
                     ${t.note ? `<span class="hc-sub-note muted">${esc(t.note)}</span>` : ''}</td>
                 <td>${t.from.map(l => `<span class="ca-leg">${esc(l.accountName)} <b>${money(l.amount)}</b>${l.reference ? `<small class="muted">${esc(l.mode || '')} ${esc(l.reference)}</small>` : ''}</span>`).join('')}</td>
                 <td>${esc(t.toAccountName)}</td>

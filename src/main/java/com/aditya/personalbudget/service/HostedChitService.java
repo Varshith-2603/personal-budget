@@ -2168,52 +2168,81 @@ public class HostedChitService {
                 + " · " + winner.getName() + " · " + c.getName() + " month " + month.getMonthNo() + " · " + ActivityService.money(a.getPayoutAmount()));
     }
 
-    /** The standard wording, with the figures filled in. */
+    /**
+     * The standard wording, with the figures filled in: numbered clauses, each "HEADING: text" (the deed shows the
+     * heading in bold), in the form of a prize-amount receipt and undertaking by a chit subscriber.
+     */
     private String agreementTerms(HostedChit c, HostedChitAgreement a, HostedChitMember winner) {
         String organiser = UserContext.get().fullName();
         String household = UserContext.get().tenantName();
-        String rupees = ActivityService.money(a.getPayoutAmount());
-        StringBuilder t = new StringBuilder();
-        t.append("1. I, ").append(winner.getName()).append(", a member of the chit \"").append(c.getName()).append("\" (")
-                .append(c.getMemberCount()).append(" members, chit value ").append(ActivityService.money(a.getChitValue()))
-                .append(") run by ").append(organiser).append(" (").append(household).append("), confirm that I won month ")
-                .append(a.getMonthNo()).append(" of ").append(c.getMonths()).append(auction(c) ? " in the auction with a bid of "
-                        + ActivityService.money(a.getDeduction()) : "").append(".\n");
+        String rupees = ActivityService.money(a.getPayoutAmount()) + " (Rupees " + inWords(a.getPayoutAmount()).replaceFirst("(?i)^rupees\\s+", "")
+                .replaceFirst("(?i)\\s+only$", "") + " only)";
+        java.time.format.DateTimeFormatter day = java.time.format.DateTimeFormatter.ofPattern("dd MMMM yyyy");
         HostedChitMonth paidMonth = months.findByChitId(c.getId()).stream().filter(m -> m.getMonthNo().equals(a.getMonthNo())).findFirst().orElse(null);
         List<HostedChitLeg> parts = paidMonth == null ? List.of() : legs.findByMonthId(paidMonth.getId()).stream()
                 .sorted(Comparator.comparing(HostedChitLeg::getPosition)).toList();
-        t.append("2. I have received ").append(rupees).append(" (").append(inWords(a.getPayoutAmount())).append(")")
-                .append(a.getPayoutDate() != null ? " on " + a.getPayoutDate().format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy")) : "")
-                .append(parts.size() > 1
-                        ? " in " + parts.size() + " parts (" + parts.stream().map(l -> DIRECT_MODE.equals(l.getMode())
-                            ? ActivityService.money(l.getAmount()) + " paid to me directly by the other members"
-                            : ActivityService.money(l.getAmount()) + " by " + l.getMode()
-                            + (l.getReference() != null ? ", reference " + l.getReference() : "")).collect(Collectors.joining("; ")) + ")"
-                        : (a.getPayoutMode() != null ? " by " + a.getPayoutMode() : "")
-                            + (a.getPayoutReference() != null ? " (reference " + a.getPayoutReference() + ")" : ""))
-                .append(paidMonth != null && paidMonth.getPayoutTo() != null ? " into " + paidMonth.getPayoutTo() : "")
-                .append(planned(c) ? " as my prize amount for month " + a.getMonthNo() + " in full, as set in the chit table"
-                        : " as my prize amount in full, being the chit value less " + (auction(c) ? "my winning bid" : "the organiser's commission")).append(".\n");
+        boolean guarantor = a.getGuarantorName() != null;
+        List<String> t = new ArrayList<>();
+        t.add("MEMBERSHIP: The Member is a subscriber of the chit known as \"" + c.getName() + "\" of " + c.getMemberCount() + " members and "
+                + c.getMonths() + " monthly instalments, with a chit value of " + ActivityService.money(a.getChitValue()) + ", conducted by "
+                + organiser + " (" + household + ") as its organiser (foreman).");
+        t.add("PRIZE: The Member was declared the prize winner for instalment " + a.getMonthNo() + " of " + c.getMonths()
+                + (auction(c) ? ", having offered the highest discount (bid) of " + ActivityService.money(a.getDeduction()) + " at the auction held for that instalment" : "") + ".");
+        t.add("RECEIPT OF PRIZE AMOUNT: The Member acknowledges having received from the Organiser a sum of " + rupees
+                + (a.getPayoutDate() != null ? " on " + a.getPayoutDate().format(day) : "")
+                + (parts.size() > 1
+                    ? ", in " + parts.size() + " parts (" + parts.stream().map(l -> DIRECT_MODE.equals(l.getMode())
+                        ? ActivityService.money(l.getAmount()) + " paid directly by the other members"
+                        : ActivityService.money(l.getAmount()) + " by " + l.getMode() + (l.getReference() != null ? ", reference " + l.getReference() : ""))
+                        .collect(Collectors.joining("; ")) + ")"
+                    : (a.getPayoutMode() != null ? ", by " + a.getPayoutMode() : "") + (a.getPayoutReference() != null ? " (reference " + a.getPayoutReference() + ")" : ""))
+                + (paidMonth != null && paidMonth.getPayoutTo() != null ? ", into " + paidMonth.getPayoutTo() : "")
+                + ", being the prize amount for that instalment "
+                + (planned(c) ? "as set out in the chit schedule" : "(the chit value less " + (auction(c) ? "the discount bid" : "the organiser's commission") + ")")
+                + ", in full and final settlement of the prize amount payable to the Member.");
         if (a.getRemainingInstallments() > 0) {
-            t.append("3. I agree to keep paying my monthly installment for the remaining ").append(a.getRemainingInstallments())
-                    .append(" month(s), up to the end of the chit, by the ").append(ordinal(c.getDueDay())).append(" of every month: ")
-                    .append(planned(c) ? "as set in the chit table"
-                            : auction(c) ? ActivityService.money(c.getInstallment()) + " less that month's dividend"
-                            : ActivityService.money(c.getInstallment().add(winnerExtra(c))) + (winnerExtra(c).signum() > 0
-                                ? " (" + ActivityService.money(c.getInstallment()) + " plus " + ActivityService.money(winnerExtra(c)) + " as a past winner)" : ""))
-                    .append(", about ").append(ActivityService.money(a.getRemainingAmount())).append(" in all.\n");
+            t.add("FUTURE SUBSCRIPTIONS: In consideration of the prize amount received, the Member undertakes to pay, without default, each of the remaining "
+                    + a.getRemainingInstallments() + " monthly instalment(s) up to the end of the chit, on or before the " + ordinal(c.getDueDay())
+                    + " day of every month, being " + (planned(c) ? "the amount set out in the chit schedule for that month"
+                        : auction(c) ? ActivityService.money(c.getInstallment()) + " less the dividend declared for that month"
+                        : ActivityService.money(c.getInstallment().add(winnerExtra(c))) + (winnerExtra(c).signum() > 0
+                            ? " (" + ActivityService.money(c.getInstallment()) + " plus " + ActivityService.money(winnerExtra(c)) + " payable by a prized subscriber)" : ""))
+                    + ", amounting to about " + ActivityService.money(a.getRemainingAmount()) + " in all (the \"Future Subscriptions\").");
+            t.add("NO WITHDRAWAL: Having drawn the prize amount, the Member shall not withdraw from or discontinue the chit until all the Future Subscriptions "
+                    + "have been paid in full.");
         } else {
-            t.append("3. This was the last month of the chit; no further installments are due from me after any dues already pending.\n");
+            t.add("FUTURE SUBSCRIPTIONS: This was the final instalment of the chit; no further subscription is payable by the Member, save any dues already outstanding.");
         }
-        t.append("4. ").append(c.getLateFeePercent() != null
-                ? "A late installment carries interest of " + c.getLateFeePercent().stripTrailingZeros().toPlainString() + "% a month on the unpaid amount"
-                    + (Money.nz(BigDecimal.valueOf(c.getLateGraceDays() == null ? 0 : c.getLateGraceDays())).signum() > 0 ? " after " + c.getLateGraceDays() + " days of grace" : "") + ". "
-                : "")
-                .append("If I do not pay, the organiser may recover the amount still owed by me from me")
-                .append(a.getGuarantorName() != null ? " or from my guarantor, " + a.getGuarantorName() + (a.getGuarantorPhone() != null ? " (" + a.getGuarantorPhone() + ")" : "") : "")
-                .append(".\n");
-        t.append("5. I have read this agreement and accept it of my own free will.");
-        return t.toString();
+        if (c.getLateFeePercent() != null) {
+            t.add("LATE PAYMENT: Any instalment not paid by its due date shall carry interest at " + c.getLateFeePercent().stripTrailingZeros().toPlainString()
+                    + "% per month on the unpaid amount" + (c.getLateGraceDays() != null && c.getLateGraceDays() > 0 ? ", after a grace period of " + c.getLateGraceDays() + " days," : "")
+                    + " until it is paid.");
+        }
+        if (guarantor) {
+            t.add("GUARANTEE: " + a.getGuarantorName() + (a.getGuarantorPhone() != null ? " (mobile " + a.getGuarantorPhone() + ")" : "")
+                    + " stands as guarantor for the due payment of the Future Subscriptions and shall be liable, jointly and severally with the Member, for any sum the Member fails to pay.");
+        }
+        t.add("DEFAULT AND RECOVERY: If the Member fails to pay any instalment when due, the whole of the Future Subscriptions then unpaid shall, at the "
+                + "option of the Organiser, become immediately due and payable, and the Organiser shall be entitled to recover the same"
+                + (c.getLateFeePercent() != null ? " with late-payment interest" : "") + ", together with the reasonable costs of recovery, from the Member"
+                + (guarantor ? " and the guarantor" : "") + " by all lawful means, including proceedings before a court of competent jurisdiction.");
+        t.add("REPRESENTATIONS: The Member represents that he or she is a major, of sound mind and competent to contract, and that the proof of identity, "
+                + "photograph and particulars furnished with this Agreement are true, correct and belong to the Member.");
+        t.add("ELECTRONIC EXECUTION AND EVIDENCE: The parties agree that this Agreement may be accepted electronically. The verification of the Member's "
+                + "mobile number, the Member's signature and photograph, the details of the device used and the digitally signed record of acceptance shall "
+                + "constitute valid evidence of its execution, in accordance with the Information Technology Act, 2000 and the Bharatiya Sakshya Adhiniyam, 2023.");
+        t.add("NOTICES: Any notice under this Agreement may be given at the address or mobile number of the party on record with the Organiser, including by "
+                + "SMS, WhatsApp or e-mail, and shall be deemed received on the day it is sent.");
+        t.add("GOVERNING LAW AND JURISDICTION: This Agreement shall be governed by the laws of India, including, where applicable, the Chit Funds Act, 1982 "
+                + "and the rules made under it. The courts having jurisdiction over the place where the chit is conducted shall have exclusive jurisdiction "
+                + "in all matters arising out of it.");
+        t.add("ENTIRE AGREEMENT AND SEVERABILITY: This Agreement records the entire understanding of the parties on its subject and may be amended only in "
+                + "writing signed by both parties. If any provision is held invalid, the remaining provisions shall continue in full force.");
+        t.add("DECLARATION: The Member declares that he or she has read this Agreement, or has had it read over and explained in a language he or she "
+                + "understands, has understood its contents, and has executed it freely and voluntarily, without any coercion, undue influence or misrepresentation.");
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < t.size(); i++) out.append(i + 1).append(". ").append(t.get(i)).append(i + 1 < t.size() ? "\n" : "");
+        return out.toString();
     }
 
     private HostedChitAgreement agreementOf(HostedChit c, int monthNo) {
@@ -2340,7 +2369,7 @@ public class HostedChitService {
         if (!HostedChitAgreement.DRAFT.equals(a.getStatus())) {
             throw new BusinessException("The agreement is already " + a.getStatus().toLowerCase() + "; its ID proof is part of the record");
         }
-        AttachmentService.AgreementFile f = files.addToAgreement(AGREEMENT_FILES, a.getId(), docType, fileName, bytes, source);
+        AttachmentService.AgreementFile f = files.addToAgreement(AGREEMENT_FILES, a.getId(), docType, fileName, bytes, source, "chit agreement " + a.getAgreementNo());
         activity.record("ADDED", AREA, "Added " + f.docType().replace('_', ' ').toLowerCase() + " to the agreement " + a.getAgreementNo() + " · " + c.getName());
         return detail(chitId);
     }

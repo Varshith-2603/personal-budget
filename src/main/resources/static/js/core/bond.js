@@ -3,10 +3,11 @@
  * agreement links (chit-share.js, loan-agreement.js).
  *
  *   bondHtml(doc)            the agreement laid out as a stamp-paper deed: the stamp band (or space left for real
- *                            stamp paper), the parties, the terms, the particulars, signatures of both sides and the
- *                            witness, the organiser's round seal, and annexures: ID proof, photograph, the evidence
- *                            of the e-acceptance with its digital signature
- *   printBond(doc, title)    prints it (or saves a PDF) in a window of its own
+ *                            stamp paper), the preamble and recitals, the particulars, the clauses, signatures of
+ *                            both sides and the witness, the organiser's round seal, and annexures: ID proof,
+ *                            photograph, the evidence of the e-acceptance with its digital signature
+ *   bondBlocks(doc)          the same deed as blocks, for the print view to pack into sheets
+ *   printBond(doc, title)    the print view (bond-print.js): A4 pages decided before printing, adjustable
  *   signaturePad(canvas)     a finger / mouse signature, returned as an SVG path in a 1000 x 300 box
  *   signatureSvg(path)       draws one
  *   deviceInfo(), locate()   what the device says about itself; the location when allowed
@@ -217,6 +218,15 @@ function words(n) {
     return parts.join(' ') || 'Zero';
 }
 
+/** A guilloche rosette (as on stamp paper) with the value in its centre. */
+function rosetteSvg(value) {
+    const loops = Array.from({ length: 36 }, (_, i) => `<ellipse cx="60" cy="60" rx="52" ry="17" transform="rotate(${i * 5} 60 60)"/>`).join('');
+    const inner = Array.from({ length: 24 }, (_, i) => `<ellipse cx="60" cy="60" rx="30" ry="11" transform="rotate(${i * 7.5} 60 60)"/>`).join('');
+    return `<svg class="bond-rosette" viewBox="0 0 120 120" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="0.45">${loops}</g>
+        <g fill="none" stroke="currentColor" stroke-width="0.35" opacity="0.8">${inner}</g><circle cx="60" cy="60" r="20" fill="#fff8fb" stroke="currentColor" stroke-width="1"/>
+        <text x="60" y="64" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor" font-family="Times New Roman, serif">${esc(value)}</text></svg>`;
+}
+
 /** The round rubber seal of the organiser / lender, in violet ink, with their name around the edge. */
 export function sealSvg(name, centre = 'SEAL') {
     const text = esc(String(name || '').toUpperCase().slice(0, 34));
@@ -233,65 +243,178 @@ export function sealSvg(name, centre = 'SEAL') {
 }
 
 /**
- * The deed. doc: { kind: 'LOAN' | 'CHIT', title, number, date, place, stampDuty, stampSerial, realStampPaper,
- *   firstParty: { role, name, address, phone, signature, seal }, secondParty: { role, name, address, phone, signature,
- *   accepted }, witness: { name, phone, address, signature }, intro, terms (text, one clause a line), particulars:
- *   [[label, value]], fingerprint, annexures: [{ title, images: [{ src, caption }] }], evidence: [[label, value]],
- *   digital: { payload, signature, fingerprint, verified }, footnote }
+ * The deed. doc: { kind: 'LOAN' | 'DEBT' | 'CHIT' (the formal preamble; without it a plain intro), title, number, date, place,
+ *   stampDuty, stampSerial, realStampPaper, firstParty: { role, term (“Lender”), name, address, phone, signature, seal,
+ *   company }, secondParty: { role, term, name, address, phone, signature, accepted }, witness: { name, phone, address,
+ *   signature }, recitals: [text], intro (without kind), terms (text, one clause a line: "N. HEADING: text"),
+ *   particulars: [[label, value]], fingerprint, annexures: [{ title, note, images: [{ src, caption }], rows }], footnote }
  */
-export function bondHtml(doc) {
+/** "GOVERNING LAW AND JURISDICTION" → "Governing Law and Jurisdiction" (a clause heading). */
+function titleCase(s) {
+    return String(s).toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase()).replace(/\b(And|Of|The|In|On|To|For|By|With|Or)\b/g, w => w.toLowerCase())
+        .replace(/^[a-z]/, c => c.toUpperCase());
+}
+
+/** One clause, "12. HEADING: text" (or plain "12. text", as older agreements have it), as a list item. */
+function clauseLi(line, i) {
+    const m = /^(\d+)\.\s*([\s\S]*)$/.exec(line.trim());
+    const no = m ? Number(m[1]) : i + 1;
+    const text = m ? m[2] : line.trim();
+    const h = /^([A-Z][A-Z0-9 ,&'()\/-]{2,70}):\s+([\s\S]*)$/.exec(text);
+    return { no, li: `<li value="${no}">${h ? `<b class="bond-cl-h">${esc(titleCase(h[1]))}.</b> ${esc(h[2])}` : esc(text)}</li>` };
+}
+
+/** How a party is described in the preamble: name, where they live, their number. */
+function partyText(p) {
+    return [`<b>${esc(String(p?.name || '____________________').toUpperCase())}</b>`, p?.relation ? esc(p.relation) : '',
+        p?.address ? `residing at ${esc(p.address)}` : '', p?.phone ? `mobile ${esc(p.phone)}` : ''].filter(Boolean).join(', ');
+}
+
+/** The stamp band of the first page (stamp-paper style), or nothing on real stamp paper (its printed top is the sheet's). */
+function stampHtml(doc) {
+    if (doc.realStampPaper) return '';
     const duty = Number(doc.stampDuty || 0);
-    const stamp = doc.realStampPaper
-        ? `<div class="bond-blank-top"><span>Space for the stamp${duty ? ` (₹${duty})` : ''}${doc.stampSerial ? ` · No. ${esc(doc.stampSerial)}` : ''}</span></div>`
-        : `<div class="bond-stamp">
-            <div class="bond-stamp-band">
-                <div class="bond-stamp-left"><b>NON-JUDICIAL</b><small>STAMP PAPER · AGREEMENT</small></div>
-                <div class="bond-stamp-value"><small>Rupees</small><b>${duty ? `₹${duty.toLocaleString('en-IN')}` : '₹ —'}</b><em>${duty ? `${words(duty)} only` : 'value not set'}</em></div>
-                <div class="bond-stamp-right"><small>Serial no.</small><b>${esc(doc.stampSerial || '—')}</b><small>${esc(DAY(doc.date))}</small></div>
+    const value = duty ? `₹${duty.toLocaleString('en-IN')}` : '₹ —';
+    return `<div class="bond-sheet">
+            <div class="bond-sheet-frame">
+                <div class="bond-sheet-top"><span class="d">${value}</span><b>NON JUDICIAL</b><span class="d">${value}</span></div>
+                <div class="bond-sheet-mid">
+                    ${rosetteSvg(value)}
+                    <div class="bond-sheet-value"><small>RUPEES</small><b>${value}</b><em>${duty ? `${words(duty).toUpperCase()} RUPEES ONLY` : 'VALUE NOT SET'}</em></div>
+                    ${rosetteSvg(value)}
+                </div>
+                <div class="bond-sheet-micro" aria-hidden="true">${(`${value} AGREEMENT COPY · `).repeat(24)}</div>
+                <div class="bond-sheet-foot"><span>Date ${esc(DAY(doc.date))}</span><span class="serial">Sl. No. <b>${esc(doc.stampSerial || '—')}</b></span></div>
             </div>
-            <div class="bond-stamp-note">${duty ? `Executed on non-judicial stamp paper of ₹${duty}` : 'Stamp-paper style copy'}${doc.stampSerial ? ` bearing serial no. ${esc(doc.stampSerial)}` : ''}.
-                ${esc(doc.firstParty?.role || '')} and ${esc(doc.secondParty?.role || '')} have signed every page.</div>
         </div>`;
-    const party = (p, label) => p ? `<div class="bond-party"><small>${esc(label)}</small><b>${esc(p.name || '')}</b>
-        ${p.address ? `<span>${esc(p.address)}</span>` : ''}${p.phone ? `<span>Mobile ${esc(p.phone)}</span>` : ''}</div>` : '';
-    const signBox = (p, label, { seal = null, thumb = false } = {}) => `<div class="bond-signbox">
-        <div class="bond-signspace">${p?.signature ? signatureSvg(p.signature) : ''}${seal ? `<span class="bond-seal-wrap">${sealSvg(seal, label === 'Witness' ? 'WITNESS' : 'SEAL')}</span>` : ''}</div>
+}
+
+function signBox(doc, p, label, { seal = null, thumb = false, lead = '' } = {}) {
+    return `<div class="bond-signbox">
+        ${lead ? `<small class="bond-sign-lead">${esc(lead)}</small>` : ''}
+        <div class="bond-signspace">${p?.signature ? signatureSvg(p.signature) : ''}${seal ? `<span class="bond-seal-wrap">${sealSvg(seal, 'SEAL')}</span>` : ''}</div>
         <div class="bond-signline"><b>${esc(p?.name || '')}</b><small>${esc(label)}${p?.accepted ? ` · ${esc(p.accepted)}` : ''}</small></div>
         ${thumb ? '<div class="bond-thumb"><span>Left thumb impression</span></div>' : ''}
         ${p?.address ? `<small class="bond-signaddr">${esc(p.address)}</small>` : ''}
     </div>`;
-    const clauses = String(doc.terms || '').split('\n').filter(l => l.trim()).map(l => {
-        const m = /^(\d+)\.\s*(.*)$/.exec(l.trim());
-        return m ? `<li value="${m[1]}">${esc(m[2])}</li>` : `<li>${esc(l.trim())}</li>`;
-    }).join('');
-    const annex = (doc.annexures || []).filter(a => a.images?.length || a.rows?.length);
+}
+
+/**
+ * The deed as blocks, in reading order: what the screen shows as one flowing document and the print view packs into
+ * A4 sheets (bond-print.js). A block: { id, html, keep (stays on the page of the block after it), li (a clause) }.
+ * Returns { front: [...], annexures: [{ title, blocks: [...] }] }; an annexure's images come as
+ * { id, image: { src, caption, ... } } for the print view to size.
+ */
+export function bondBlocks(doc) {
+    const first = doc.firstParty || {}, second = doc.secondParty || {};
+    const a = first.term || first.role || 'First party', b = second.term || second.role || 'Second party';
+    const front = [];
+    const add = (id, html, extra = {}) => front.push({ id, html, ...extra });
+    const stamp = stampHtml(doc);
+    if (stamp) add('stamp', stamp, { keep: true });
+    add('title', `<h1 class="bond-title">${esc(doc.title)}</h1><p class="bond-no">${esc(doc.number || '')}</p>`, { keep: true });
+    if (doc.kind) {
+        add('pre-1', `<p class="bond-pre">This <b>${esc(String(doc.title || 'Agreement').toUpperCase())}</b> (the “Agreement”) is made and executed at
+            <b>${esc(doc.place || '____________________')}</b> on this <b>${esc(DAY(doc.date) || '____________')}</b>,</p>`, { keep: true });
+        add('pre-2', `<p class="bond-pre-c">BY AND BETWEEN</p>`, { keep: true });
+        add('pre-3', `<p class="bond-pre">${partyText(first)}, hereinafter referred to as the “<b>${esc(a)}</b>” (which expression shall, unless repugnant to
+            the context or meaning thereof, be deemed to mean and include ${first.company ? 'its successors and permitted assigns' : 'his or her heirs, executors, administrators, legal representatives and permitted assigns'})
+            of the <b>FIRST PART</b>;</p>`);
+        add('pre-4', `<p class="bond-pre-c">AND</p>`, { keep: true });
+        add('pre-5', `<p class="bond-pre">${partyText(second)}, hereinafter referred to as the “<b>${esc(b)}</b>” (which expression shall, unless repugnant to
+            the context or meaning thereof, be deemed to mean and include his or her heirs, executors, administrators and legal representatives)
+            of the <b>SECOND PART</b>.</p>`);
+        add('pre-6', `<p class="bond-pre">The ${esc(a)} and the ${esc(b)} are hereinafter individually referred to as a “Party” and collectively as the “Parties”.</p>`);
+        (doc.recitals || []).forEach((r, i) => add(`rec-${i}`, `<p class="bond-pre"><b>${i ? 'AND WHEREAS' : 'WHEREAS'}</b> ${esc(r)}${i === doc.recitals.length - 1 ? ';' : ';'}</p>`));
+    } else {
+        add('intro', `<p class="bond-intro">${esc(doc.intro || '')}</p>`);
+        add('parties', `<div class="bond-parties">${[first, second].map(p => `<div class="bond-party"><small>${esc(p.role || '')}</small><b>${esc(p.name || '')}</b>
+            ${p.address ? `<span>${esc(p.address)}</span>` : ''}${p.phone ? `<span>Mobile ${esc(p.phone)}</span>` : ''}</div>`).join('<i>and</i>')}</div>`);
+    }
+    if (doc.particulars?.length) {
+        add('facts-h', `<p class="bond-sub">Particulars of this Agreement</p>`, { keep: true });
+        add('facts', `<table class="bond-facts"><tbody>${doc.particulars.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>`);
+    }
+    add('witnesseth', doc.kind
+        ? `<p class="bond-pre"><b>NOW, THEREFORE, THIS AGREEMENT WITNESSETH</b> and it is hereby agreed by and between the Parties as follows:</p>`
+        : `<p class="bond-sub">Now it is agreed as follows:</p>`, { keep: true });
+    String(doc.terms || '').split('\n').filter(l => l.trim()).forEach((l, i) => {
+        const c = clauseLi(l, i);
+        add(`cl-${c.no}`, `<ol class="bond-terms">${c.li}</ol>`, { li: c.li });
+    });
+    // the signatures never stand alone on a page: the last clause goes with them, so no page of terms can be slipped in
+    // before a signature page
+    const lastClause = [...front].reverse().find(x => x.li);
+    if (lastClause) lastClause.keep = true;
+    add('in-witness', `<p class="bond-witness-line">${doc.kind
+        ? `<b>IN WITNESS WHEREOF</b> the Parties hereto have set their respective hands to this Agreement on the day, month and year first above written, in the presence of the witness named below.`
+        : 'In witness whereof the parties have signed this agreement on the date and at the place written above, in the presence of the witness below.'}</p>`, { keep: true });
+    add('signs', `<div class="bond-signs">
+            ${signBox(doc, first, first.role || a, { seal: first.seal, lead: doc.kind ? `Signed and delivered by the within-named ${a}` : '' })}
+            ${signBox(doc, second, second.role || b, { thumb: !second.signature, lead: doc.kind ? `Signed and delivered by the within-named ${b}` : '' })}
+        </div>`, { keep: true });
+    add('witness', `<div class="bond-signs one">${signBox(doc, doc.witness?.name ? doc.witness : { name: '' }, 'Witness', { lead: doc.kind ? 'In the presence of' : '' })}</div>`);
+    add('foot', `<p class="bond-foot">Agreement fingerprint (SHA-256): <code>${esc(doc.fingerprint || '')}</code>${doc.footnote ? `<br>${esc(doc.footnote)}` : ''}</p>`);
+
+    const annexures = (doc.annexures || []).filter(x => x.images?.length || x.rows?.length).map((x, i) => {
+        const letter = String.fromCharCode(65 + i);
+        const blocks = [{ id: `ax${letter}-h`, html: `<h2 class="bond-annex-h">Annexure ${letter} · ${esc(x.title)}</h2>${x.note ? `<p class="bond-annex-note">${esc(x.note)}</p>` : ''}`, keep: true }];
+        (x.images || []).forEach((im, j) => blocks.push({ id: `ax${letter}-i${j}`, image: { ...im, mark: im.mark || doc.number } }));
+        (x.rows || []).forEach(([k, v], j) => blocks.push({ id: `ax${letter}-r${j}`,
+            html: `<table class="bond-facts ev ${j ? 'cont' : ''}"><tbody><tr><th>${esc(k)}</th><td>${v}</td></tr></tbody></table>` }));
+        blocks.push({ id: `ax${letter}-att`, html: `<div class="bond-annex-sign">${second.signature ? signatureSvg(second.signature) : ''}<small>${esc(second.name || '')} · self-attested</small></div>` });
+        return { letter, title: x.title, blocks };
+    });
+    return { front, annexures };
+}
+
+/** The WHEREAS clauses of a loan agreement / acknowledgement of debt. */
+export function loanRecitals(kind, amount, inWords) {
+    const sum = `${amount}${inWords ? ` (${inWords})` : ''}`;
+    return kind === 'PAID_FOR' || kind === 'DEBT'
+        ? [`the Lender has, at the request of the Borrower, paid a sum of ${sum} on behalf of the Borrower, as set out below`,
+            'the Borrower admits the said sum to be a debt due to the Lender and has agreed to repay it on the terms and conditions set out hereinafter']
+        : [`the Borrower has requested the Lender for a loan of ${sum} for the Borrower's personal needs`,
+            'the Lender has agreed to lend, and has lent, the said sum to the Borrower on the terms and conditions set out hereinafter'];
+}
+
+/** The WHEREAS clauses of a chit prize amount agreement. */
+export function chitRecitals(name, members, months, chitValue, monthNo) {
+    return [`the Organiser conducts a chit known as “${name}” of ${members} members and ${months} monthly instalments, with a chit value of ${chitValue}, in which the Member is a subscriber`,
+        `the Member was declared the prize winner for instalment ${monthNo}, has received the prize amount, and has agreed to execute this Agreement acknowledging its receipt and undertaking to pay the remaining instalments`];
+}
+
+/** An ID image as the screen shows it (the print view sizes it to the sheet instead). */
+export function figureHtml(im, { width = null, height = null } = {}) {
+    const size = width ? ` style="width:${width.toFixed(1)}mm;height:${height.toFixed(1)}mm"` : '';
+    return `<figure class="bond-fig ${im.from ? 'full' : ''} ${im.intact === false ? 'tampered' : ''}"${width ? ` style="width:${width.toFixed(1)}mm"` : ''}>${im.pdf
+        ? `<div class="bond-annex-pdf">PDF · ${esc(im.caption)}<br><small>attached separately</small></div>`
+        : `<div class="bond-annex-shot"><img src="${esc(im.src)}" alt="${esc(im.caption)}"${size}>${im.from ? '' : `<span class="bond-annex-wm" aria-hidden="true">${esc(`For ${im.mark || 'this agreement'} only`)}</span>`}</div>`}
+        <figcaption>${esc(im.caption)}${im.from ? ' <small>(taken from the PDF given)</small>' : ''}${im.hash ? `<br><code>${im.from ? 'PDF ' : ''}SHA-256 ${esc(im.hash.slice(0, 32))}…</code>` : ''}${im.pageHash ? ` · <code>image ${esc(im.pageHash.slice(0, 16))}…</code>` : ''}${im.intact === false ? '<br><b class="bond-tamper">Stored file does not match its fingerprint</b>' : ''}</figcaption></figure>`;
+}
+
+/**
+ * The deed on screen: one flowing document (the first page, then a page per annexure). The print view
+ * (printBond) lays the same blocks out on A4 sheets.
+ */
+export function bondHtml(doc) {
+    const { front, annexures } = bondBlocks(doc);
+    // consecutive clauses read as one numbered list
+    let body = '', list = '';
+    for (const blk of front) {
+        if (blk.li) { list += blk.li; continue; }
+        if (list) { body += `<ol class="bond-terms">${list}</ol>`; list = ''; }
+        body += blk.html;
+    }
+    if (list) body += `<ol class="bond-terms">${list}</ol>`;
+    const initials = `<div class="bond-initials"><span>${esc(doc.firstParty?.role || 'First party')}</span><span>${esc(doc.secondParty?.role || 'Second party')}</span><span>Witness</span></div>`;
     return `<article class="bond ${doc.realStampPaper ? 'real' : ''}">
-        <section class="bond-page">
-            ${stamp}
-            <h1 class="bond-title">${esc(doc.title)}</h1>
-            <p class="bond-no">${esc(doc.number || '')}${doc.date ? ` · ${esc(DAY(doc.date))}` : ''}${doc.place ? ` · ${esc(doc.place)}` : ''}</p>
-            <p class="bond-intro">${esc(doc.intro || '')}</p>
-            <div class="bond-parties">${party(doc.firstParty, doc.firstParty?.role)}<i>and</i>${party(doc.secondParty, doc.secondParty?.role)}</div>
-            ${doc.particulars?.length ? `<table class="bond-facts"><tbody>${doc.particulars.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
-            <p class="bond-sub">Now it is agreed as follows:</p>
-            <ol class="bond-terms">${clauses}</ol>
-            <p class="bond-witness-line">In witness whereof the parties have signed this agreement on the date and at the place written above, in the presence of the witness below.</p>
-            <div class="bond-signs">
-                ${signBox(doc.firstParty, doc.firstParty?.role || 'First party', { seal: doc.firstParty?.seal })}
-                ${signBox(doc.secondParty, doc.secondParty?.role || 'Second party', { thumb: !doc.secondParty?.signature })}
-            </div>
-            <div class="bond-signs one">${signBox(doc.witness?.name ? doc.witness : { name: '' }, 'Witness')}</div>
-            <p class="bond-foot">Agreement fingerprint (SHA-256): <code>${esc(doc.fingerprint || '')}</code>${doc.footnote ? `<br>${esc(doc.footnote)}` : ''}</p>
-        </section>
-        ${annex.map((a, i) => `<section class="bond-page bond-annex">
-            <h2>Annexure ${String.fromCharCode(65 + i)} · ${esc(a.title)}</h2>
-            ${a.note ? `<p class="bond-annex-note">${esc(a.note)}</p>` : ''}
-            ${a.images?.length ? `<div class="bond-annex-imgs">${a.images.map(im => `<figure>${im.pdf
-                ? `<div class="bond-annex-pdf">PDF · ${esc(im.caption)}<br><small>attached separately</small></div>`
-                : `<img src="${esc(im.src)}" alt="${esc(im.caption)}">`}<figcaption>${esc(im.caption)}${im.hash ? `<br><code>SHA-256 ${esc(im.hash.slice(0, 32))}…</code>` : ''}</figcaption></figure>`).join('')}</div>` : ''}
-            ${a.rows?.length ? `<table class="bond-facts ev"><tbody>${a.rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${v}</td></tr>`).join('')}</tbody></table>` : ''}
-            <div class="bond-annex-sign">${doc.secondParty?.signature ? signatureSvg(doc.secondParty.signature) : ''}<small>${esc(doc.secondParty?.name || '')} · self-attested</small></div>
-        </section>`).join('')}
+        <section class="bond-page first">${doc.realStampPaper ? `<div class="bond-blank-top"><span>Printed area of the stamp paper — leave blank</span></div>` : ''}${body}${initials}</section>
+        ${annexures.map(x => {
+            const imgs = x.blocks.filter(b => b.image).map(b => figureHtml(b.image)).join('');
+            const rest = x.blocks.filter(b => !b.image);
+            return `<section class="bond-page bond-annex">${rest[0].html}${imgs ? `<div class="bond-annex-imgs">${imgs}</div>` : ''}${rest.slice(1).map(b => b.html).join('')}${initials}</section>`;
+        }).join('')}
     </article>`;
 }
 
@@ -317,18 +440,12 @@ export function evidenceRows(e) {
     return rows.filter(Boolean);
 }
 
-/** Prints the deed in a window of its own (only the deed's stylesheet), once its images have loaded. */
+/**
+ * Opens the print view: the deed laid out on A4 sheets before printing (pages decided here, not by the browser), with
+ * adjustments, then printed exactly as shown. See bond-print.js.
+ */
 export function printBond(doc, title) {
-    const win = window.open('', '_blank', 'width=900,height=1000');
-    if (!win) throw new Error('Allow pop-ups for this site to print the agreement');
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-        <link rel="stylesheet" href="${location.origin}/css/bond.css"></head><body class="bond-print">${bondHtml(doc)}</body></html>`);
-    win.document.close();
-    const go = () => {
-        const imgs = [...win.document.images];
-        Promise.all(imgs.map(i => i.complete ? null : new Promise(r => { i.onload = i.onerror = r; }))).then(() => setTimeout(() => win.print(), 250));
-    };
-    if (win.document.readyState === 'complete') go(); else win.addEventListener('load', go);
+    return import('./bond-print.js').then(m => m.openPrintView(doc, title));
 }
 
 export { inr as bondMoney, DAY as bondDay, WHEN as bondWhen };

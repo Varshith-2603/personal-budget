@@ -8,7 +8,7 @@
  * accept. Recorded with it: the time, IP address, this device's details, the location if allowed, and each photo's
  * fingerprint, sealed and digitally signed; the signature is checked here once accepted.
  */
-import { bondHtml, printBond, signaturePad, signatureSvg, deviceInfo, locate, openCamera, shrinkImage, verifyEvidence } from './core/bond.js';
+import { bondHtml, printBond, signaturePad, signatureSvg, deviceInfo, locate, openCamera, shrinkImage, verifyEvidence, loanRecitals } from './core/bond.js';
 
 const $ = id => document.getElementById(id);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -116,7 +116,7 @@ function openHtml() {
         ${headHtml('Waiting for you', 'part')}
         ${figuresHtml()}
         <div class="cs-terms">${esc(ag.terms)}</div>
-        <div class="cs-print-row"><button type="button" class="cs-print" id="la-preview">See it as a stamp-paper copy</button><button type="button" class="cs-print" id="la-print">Print or save as PDF</button></div>
+        <div class="cs-print-row"><button type="button" class="cs-print" id="la-preview">See it as a stamp-paper copy</button><button type="button" class="cs-print" id="la-print">Print view (A4)</button></div>
         <div id="la-deed" class="bond-preview" hidden></div>
         ${steps.includes('aadhaar') ? `<div class="la-step"><div class="la-step-no">${++no}</div><div class="min-0 grow">
             <b>Your Aadhaar card</b><small>A clear photo of the side with your photo${ag.requireAadhaar ? ' (the back is optional)' : ''}.</small>
@@ -243,7 +243,7 @@ function doneHtml() {
             ${ag.acceptanceSeal ? `<small>Acceptance seal (SHA-256) <code>${esc(ag.acceptanceSeal)}</code></small>` : ''}
             ${ag.digitalSignature ? '<div class="cs-sig-status wait" id="la-sig"><b>Checking the digital signature…</b></div>' : ''}</div>
         <div class="cs-terms">${esc(ag.terms)}</div>
-        <div class="cs-print-row"><button type="button" class="cs-print" id="la-preview">See it as a stamp-paper copy</button><button type="button" class="cs-print" id="la-print">Print or save as PDF</button></div>
+        <div class="cs-print-row"><button type="button" class="cs-print" id="la-preview">See it as a stamp-paper copy</button><button type="button" class="cs-print" id="la-print">Print view (A4)</button></div>
         <div id="la-deed" class="bond-preview" hidden></div>
         <p class="cs-hash">Fingerprint of the agreement (SHA-256) <code>${esc(ag.contentHash)}</code></p>
     </section>`;
@@ -262,13 +262,16 @@ async function checkSignature() {
 /** The agreement as a stamp-paper deed. */
 function deed() {
     const done = ag.step === 'DONE';
+    // a payment made for the borrower (not a loan handed over): its first clause says so
+    const debt = /ACKNOWLEDGEMENT OF DEBT/.test(ag.terms || '');
     return {
-        title: 'Loan agreement', number: ag.agreementNo, date: ag.loanDate, place: ag.place, stampDuty: ag.stampDuty, stampSerial: ag.stampSerial,
-        firstParty: { role: 'Lender', name: ag.lenderName, address: ag.lenderAddress, signature: ag.lenderSignature, seal: ag.lenderName },
-        secondParty: { role: 'Borrower', name: done ? ag.acceptedName : ag.borrowerName, address: ag.borrowerAddress,
+        kind: debt ? 'DEBT' : 'LOAN',
+        title: debt ? 'Acknowledgement of debt' : 'Loan agreement', number: ag.agreementNo, date: ag.loanDate, place: ag.place, stampDuty: ag.stampDuty, stampSerial: ag.stampSerial,
+        firstParty: { role: 'Lender', term: 'Lender', name: ag.lenderName, address: ag.lenderAddress, signature: ag.lenderSignature, seal: ag.lenderName },
+        secondParty: { role: 'Borrower', term: 'Borrower', name: done ? ag.acceptedName : ag.borrowerName, address: ag.borrowerAddress,
             signature: ag.status === 'ACCEPTED' ? ag.signature : null, accepted: ag.status === 'ACCEPTED' ? `accepted online ${when(ag.acceptedAt)}` : '' },
         witness: { name: ag.witnessName, signature: ag.witnessSignature },
-        intro: `This agreement is made on ${day(ag.loanDate)}${ag.place ? ` at ${ag.place}` : ''} between ${ag.lenderName} (the Lender) and ${ag.borrowerName}${ag.borrowerAddress ? `, of ${ag.borrowerAddress}` : ''} (the Borrower).`,
+        recitals: loanRecitals(debt ? 'DEBT' : 'LOAN', money(ag.amount), ag.amountInWords),
         particulars: [['Amount', `${money(ag.amount)} (${ag.amountInWords})`], ['Given on', day(ag.loanDate)], ['Repay by', ag.dueDate ? day(ag.dueDate) : 'on demand'],
             ['Interest', ag.interestRate ? `${Number(ag.interestRate)}% a year · ${ag.interestTerms || ''}` : 'none'],
             ...(ag.aadhaarLast4 ? [['Borrower’s Aadhaar', `XXXX XXXX ${ag.aadhaarLast4}`]] : [])],

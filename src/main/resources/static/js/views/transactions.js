@@ -11,7 +11,7 @@ import { kindChip, movementHtml, entryKind } from '../core/entry-kind.js';
 import { exportButton, bindExport } from '../core/export.js';
 import { icon } from '../core/icons.js';
 import { money, date, firstOfMonth, isoDate } from '../core/format.js';
-import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
+import { chitStatus, chitTrailHtml, hasChitStatus, shortNarration, partyAdds, chitCodeOf } from '../core/chit-trail.js';
 import { openQuickEntry, openJournalEditor } from '../components/transaction-forms.js';
 import { toggleEntryRow } from '../components/entry-inline.js';
 import { openExpenseDialog } from '../components/expense-dialog.js';
@@ -123,8 +123,10 @@ export async function render(container, _params, isCurrent) {
         target.innerHTML = table([
             { label: 'Date', render: e => date(e.entryDate), cls: 'nowrap c-date' },
             { label: 'Entry', cls: 'c-entry', render: e => entryCell(e) },
-            { label: 'Movement (Dr → Cr)', cls: 'c-move', render: e => movementHtml(e.lines) },
-            { label: 'Amount', align: 'r', render: e => `<b class="mono">${money(e.amount)}</b>` },
+            { label: 'Movement (Dr → Cr)', cls: 'c-move', render: e => movementHtml(e.lines, chitCodeOf(e.chitTrail)) },
+            // a hosted chit's status: its own narrow column (no heading: most entries have none), left of the amount
+            ...(hasChitStatus(entries) ? [{ label: '', cls: 'c-ctst', render: e => chitStatus(e.chitTrail) }] : []),
+            { label: 'Amount', align: 'r', cls: 'c-amt', render: e => `<b class="mono">${money(e.amount)}</b>` },
             { label: '', align: 'r', cls: 'c-caret', render: () => `<span class="expand-caret">${icon('chevron-down')}</span>` },
         ], entries, {
             dense: true,
@@ -176,9 +178,15 @@ function postButton(kind, iconName, tone, title, sub) {
 }
 
 /** The entry: its kind as an icon, the description, the person or shop grayed beside it, and small flags. */
+/**
+ * The entry in a collapsed row: a short description (a chit's entries say what happened in a few words, chit account
+ * names are shortened) and the party only when it adds something; the full narration is the tooltip and the
+ * expanded view.
+ */
 export function entryCell(e) {
+    const shown = shortNarration(e.narration, e.chitTrail, e.party);
+    const party = partyAdds(e.party, shown, e.chitTrail) ? e.party : '';
     return `<div class="entry-cell">${kindChip(e.voucherType, 'sm', e.voucherLabel)}
-        <span class="entry-text"><b class="ellipsis">${esc(e.narration)}</b>${e.party ? `<span class="entry-party ellipsis">${esc(e.party)}</span>` : ''}</span>
-        ${chitTrailChips(e.chitTrail)}
+        <span class="entry-text"><b class="ellipsis" title="${esc(e.narration)}">${esc(shown)}</b>${party ? `<span class="entry-party ellipsis">${esc(party)}</span>` : ''}</span>
         ${evidenceBadge(e.attachmentCount)}${e.reversedBy ? `<span class="mini-flag" title="Reversed">${icon('undo')}</span>` : ''}</div>`;
 }

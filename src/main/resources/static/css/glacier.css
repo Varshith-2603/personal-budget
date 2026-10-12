@@ -64,12 +64,14 @@ tr.is-reversed td { opacity: 0.8; }
 .journal-page .c-date { width: 104px; }
 .journal-page td.c-move { width: 34%; }
 .journal-page td.c-move, .journal-page td.c-entry { overflow: hidden; }
-.journal-page th:nth-child(4), .journal-page td:nth-child(4) { width: 120px; }
+.journal-page .c-amt { width: 120px; }
+.journal-page .c-ctst { width: 112px; padding-left: 4px; padding-right: 4px; }
 .journal-page .c-caret { width: 28px; }
 .p-ledger table.grid { table-layout: fixed; width: 100%; }
 .p-ledger .c-date { width: 100px; }
 .p-ledger td.c-entry { overflow: hidden; }
 .p-ledger th:nth-child(n+3), .p-ledger td:nth-child(n+3) { width: 118px; }
+.p-ledger th.c-ctst, .p-ledger td.c-ctst { width: 112px; padding-left: 4px; padding-right: 4px; }
 .p-ledger th:last-child, .p-ledger td:last-child { width: 28px; }
 .ledger-search { width: 190px; }
 .ledger-search input { width: 100%; }

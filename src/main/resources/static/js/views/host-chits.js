@@ -27,8 +27,8 @@ import { qrSvg } from '../core/qr.js';
 import { getPref, setPref } from '../core/prefs.js';
 import { evidenceFieldHtml, bindEvidenceField } from '../components/evidence.js';
 import { openEntryDetail } from '../components/transaction-forms.js';
-import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
-import { bondHtml, printBond, padHtml, bindPad, evidenceRows } from '../core/bond.js';
+import { chitStatus, chitTrailHtml, hasChitStatus } from '../core/chit-trail.js';
+import { bondHtml, printBond, padHtml, bindPad, evidenceRows, chitRecitals } from '../core/bond.js';
 import { kycTilesHtml, bindKycTiles, fileUrls, kycAnnexures, DOC_LABELS } from '../components/agreement-ui.js';
 import * as chitAccounts from './chit-accounts.js';
 import { paymentsNarrative, sectionSwitch, moneyAccountOptions, openTransfer, whereHtml, monthTrailHtml, transfersTable, statsToggleHtml, bindStatsToggle } from './chit-accounts.js';
@@ -281,6 +281,24 @@ function linkResultHtml(url, text, member, until) {
                 <a class="btn sm" target="_blank" rel="noopener" href="${esc(url)}">${icon('eye')}Preview</a></div>
         </div></div>`;
 }
+
+/**
+ * Amounts that are worked out for you (what to move, what each account pays) stay locked until clicked, so a stray
+ * keystroke or scroll does not change them; a click (or Enter / F2 on the box) opens it for typing.
+ */
+const unlockAmount = input => {
+    if (!input?.hasAttribute('readonly')) return;
+    input.removeAttribute('readonly');
+    input.classList.add('editing');
+    input.focus();
+    input.select();
+};
+document.addEventListener('click', e => unlockAmount(e.target.closest('input[data-click-edit]')));
+document.addEventListener('keydown', e => {
+    const input = e.target.closest?.('input[data-click-edit][readonly]');
+    if (input && (e.key === 'Enter' || e.key === 'F2')) { e.preventDefault(); e.stopPropagation(); unlockAmount(input); }
+}, true);
+document.addEventListener('wheel', e => { if (e.target.matches?.('input[data-click-edit]:not([readonly])') && document.activeElement !== e.target) e.preventDefault(); }, { passive: false });
 
 document.addEventListener('click', async e => {
     const b = e.target.closest('[data-copy-url]');
@@ -882,7 +900,8 @@ function thisMonthHtml(d) {
                 const last = d.payments.filter(p => p.memberId === r.m.id && p.monthNo === month.monthNo).at(-1);
                 return `<div class="hc-person paid ${canManage ? 'clickable' : ''}" ${canManage ? `data-act="pay" data-member="${r.m.id}" data-no="${month.monthNo}" title="Change it"` : ''}>
                     <span class="hc-avatar">${esc(initials(r.m.name))}</span>
-                    <div class="min-0"><b class="ellipsis">${esc(r.m.name)}</b><small class="ellipsis">${last ? `${date(last.paidDate)} · ${esc(last.mode)} · ${esc(paidWhere(last))}` : ''}</small>${last ? movementChip(last, d) : ''}</div>
+                    <div class="min-0"><b class="ellipsis">${esc(r.m.name)}</b><small class="ellipsis">${last ? `${date(last.paidDate)} · ${esc(last.mode)} · ${esc(paidWhere(last))}` : ''}</small></div>
+                    ${last ? payStatus(last, d) : ''}
                     <span class="hc-paid-amt">${icon(last?.paidToMemberId ? 'hand' : 'check')}${money(r.paid)}</span>
                     ${canManage && last ? (last.locked ? lockChip(last) : `<button class="btn sm ghost icon" data-act="undo-payment" data-payment="${last.id}" title="Take back this payment">${icon('undo')}</button>`) : ''}</div>`;
             }).join('')}</div></details>` : ''}
@@ -1438,14 +1457,13 @@ function historyHtml(d) {
             <div class="hc-lg-row" data-act="lg-expand" title="Show the details">
                 <span class="hc-avatar xs">${esc(initials(p.memberName || '?'))}</span>
                 <b class="hc-lg-name">${esc(p.memberName)}</b>
-                <span class="hc-lg-mode">${esc(p.mode)}</span>${movementChip(p, d)}${p.chitTrail?.payoutDate ? chitTrailChips({ ...p.chitTrail, kind: 'PAYOUT' }) : ''}
+                <span class="hc-lg-mode">${esc(p.mode)}</span>
                 ${p.paidToMemberId ? `<span class="hc-lg-chip direct" title="${esc(where)}">${icon('hand')}direct</span>` : ''}
                 ${p.batchId ? '<span class="hc-lg-chip" title="Marked paid with everyone at once">all</span>' : ''}
-                ${p.movedTo ? `<span class="hc-lg-chip" title="Moved ${esc(p.movedTo)}">${icon('merge')}moved</span>` : ''}
-                ${p.paidOutMonth ? `<span class="hc-lg-chip good" title="Paid out in month ${p.paidOutMonth}">${icon('crown')}${p.paidOutMonth}</span>` : ''}
                 ${p.attachmentCount ? `<span class="hc-lg-chip" title="${p.attachmentCount} file(s) of evidence">${icon('paperclip')}${p.attachmentCount}</span>` : ''}
                 <small class="hc-lg-date">${shortDate(p.paidDate)}</small>
                 <span class="grow"></span>
+                ${payStatus(p, d)}
                 <b class="pos hc-lg-amt">+${money(p.amount)}</b>${num(p.lateFee) ? `<small class="hc-lg-late" title="Late payment interest">+${moneyShort(p.lateFee)}</small>` : ''}
                 ${canManage ? `<span class="hc-lg-acts">
                     <button class="btn xs ghost icon" data-act="receipt" data-payment="${p.id}" title="Receipt ${esc(p.receiptNo || '')}">${icon('receipt')}</button>
@@ -2759,7 +2777,8 @@ async function openPayment(d, memberId, monthNo, editing = null) {
         </div>
         <p class="muted hc-small">Pay by ${date(month.dueDate)}${why ? ` · ${why}` : ''}${late ? ` · ${late.daysLate || 0} days late, ${num(c.lateFeePercent)}% a month after ${c.lateGraceDays} days` : ''}</p>
         ${list.length ? `<div class="section-title">${icon('check')}Payments received</div><div class="cs-list">${list.map(p => `<div class="cs-row ${editing?.id === p.id ? 'active' : ''}">
-            <span class="grow min-0"><b>${money(num(p.amount) + num(p.lateFee))}</b> ${movementChip(p, d)}${p.chitTrail?.payoutDate ? chitTrailChips({ ...p.chitTrail, kind: 'PAYOUT' }) : ''} <small class="muted">${esc(p.receiptNo || '')} · ${date(p.paidDate)} · ${esc(p.mode)}${p.accountName ? ` · into ${esc(p.accountName)}` : ''}${p.reference ? ' · ref ' + esc(p.reference) : ''}${num(p.lateFee) ? ` · incl. ${money(p.lateFee)} late interest` : ''}${p.note ? ' · ' + esc(p.note) : ''}</small></span>
+            <span class="grow min-0"><b>${money(num(p.amount) + num(p.lateFee))}</b> <small class="muted">${esc(p.receiptNo || '')} · ${date(p.paidDate)} · ${esc(p.mode)}${p.accountName ? ` · into ${esc(p.accountName)}` : ''}${p.reference ? ' · ref ' + esc(p.reference) : ''}${num(p.lateFee) ? ` · incl. ${money(p.lateFee)} late interest` : ''}${p.note ? ' · ' + esc(p.note) : ''}</small></span>
+            ${payStatus(p, d)}
             ${p.attachmentCount ? `<button type="button" class="btn sm ghost icon" data-entry="${p.journalEntryId}" title="${p.attachmentCount} file(s) of evidence">${icon('paperclip')}</button>` : ''}
             <button type="button" class="btn sm ghost" data-pay-receipt="${p.id}">${icon('receipt')}Receipt</button>
             ${p.locked ? lockChip(p) : `<button type="button" class="btn sm ghost icon" data-pay-edit="${p.id}" title="Change">${icon('edit')}</button>
@@ -3031,6 +3050,13 @@ const MOVEMENT = {
     IN_COLLECTIONS: ['teal', 'wallet', 'In collections', 'Came straight into the collections account'],
     DIRECT: ['muted', 'hand', 'With the winner', 'Paid to the winner directly'],
 };
+/** A payment's status slot: from its journal entry's trail (the payout once made), else from where its money is. */
+function payStatus(p, d) {
+    if (p.chitTrail) return chitStatus(p.chitTrail);
+    return p.movement ? chitStatus({ kind: 'COLLECTION', status: p.movement, chitName: d.chit.name, payCode: p.movedForMonth ? payCode(d.chit, p.movedForMonth) : null,
+        detail: (MOVEMENT[p.movement] || [])[3] }) : '<span class="ct-st none"></span>';
+}
+
 function movementChip(p, d) {
     const m = MOVEMENT[p.movement];
     if (!m) return '';
@@ -3078,7 +3104,7 @@ async function openGather(d, month) {
         <span class="hc-avatar xs">${esc(initials(p.memberName || '?'))}</span>
         <b class="ellipsis">${esc(p.memberName)}</b>
         <small class="muted">${shortDate(p.paidDate)} · ${esc(p.mode)}${p.reference ? ` · ${esc(p.reference)}` : ''}${p.receiptNo ? ` · ${esc(p.receiptNo)}` : ''}</small>
-        <span class="grow"></span>${movementChip(p, d)}<b class="hc-gx-amt">${money(p.amount)}</b></div>`;
+        <span class="grow"></span>${payStatus(p, d)}<b class="hc-gx-amt">${money(p.amount)}</b></div>`;
     const groupHtml = ([id, list]) => {
         const pending = toMove.get(id) || [];
         const into = Number(id) === c.accountId;
@@ -3089,7 +3115,7 @@ async function openGather(d, month) {
                 <span class="hc-mv ${pending.length ? 'warn' : 'good'}">${icon(pending.length ? 'clock' : 'check')}${into ? 'In collections' : pending.length ? 'Awaiting move' : 'Moved'}</span></header>
             <div class="hc-gx-rows">${list.map(row).join('')}</div>
             ${pending.length ? `<div class="hc-gx-form" data-from="${id}">
-                <label class="hc-src-field amt"><small>Move</small><input type="number" class="num" step="any" min="0" value="${st[id].amount}" data-g="amount"></label>
+                <label class="hc-src-field amt"><small>Move</small><input type="number" class="num" step="any" min="0" value="${st[id].amount}" data-g="amount" readonly data-click-edit title="Click to change the amount"></label>
                 <label class="hc-src-field"><small>Mode</small><select data-g="mode" data-plain>${['Bank', 'UPI', 'Cash'].map(x => `<option>${x}</option>`).join('')}</select></label>
                 <label class="hc-src-field grow"><small>UTR / reference</small><input type="text" maxlength="60" data-g="reference" data-plain></label>
                 <label class="hc-src-field full"><small>Comment <em>optional</em></small><input type="text" maxlength="200" data-g="note" placeholder="e.g. moved after the bank holiday" data-plain></label>
@@ -3116,7 +3142,7 @@ async function openGather(d, month) {
                     <small>${plural(direct.length, 'txn')} · ${money(sum(direct))} · set off against the payout</small></div></header>
                     <div class="hc-gx-rows">${direct.map(row).join('')}</div></section>` : ''}</div>
             ${moves.length ? `<div class="section-title">${icon('transfer')}Moves made</div><div class="cs-list">${moves.map(t => `<div class="cs-row">
-                <span class="grow min-0"><b>${money(t.amount)}</b> ${chitTrailChips(t.chitTrail)} <small class="muted">${esc(t.entryNo || '')} · ${date(t.date)} · from ${esc(t.from.map(l => l.accountName).join(' + '))}${t.note ? ` · “${esc(t.note)}”` : ''}</small></span>
+                ${chitStatus(t.chitTrail)}<span class="grow min-0"><b>${money(t.amount)}</b> <small class="muted">${esc(t.entryNo || '')} · ${date(t.date)} · from ${esc(t.from.map(l => l.accountName).join(' + '))}${t.note ? ` · “${esc(t.note)}”` : ''}</small></span>
                 ${manage() ? `<button type="button" class="btn sm ghost" data-undo-move="${t.id}" title="Undo it, to make it again with changes">${icon('undo')}Undo</button>` : ''}</div>`).join('')}</div>` : ''}
             <label class="field" data-common-note ${toMove.size ? '' : 'hidden'}><span>Date of the move</span><input type="date" name="moveDate" value="${isoDate()}" max="${isoDate()}"></label>
         </div>`,
@@ -3565,7 +3591,7 @@ async function openPayout(d, month, { edit = false, gathered = false } = {}) {
                         <select data-leg-account>${moneyAccountOptions(accounts, { chitId: c.id, chitName: c.name, selected: l.accountId, amounts: chitMoney })}</select>
                         <button type="button" class="btn sm ghost icon" data-remove title="Remove this part">${icon('x')}</button></div>
                     <div class="hc-src-bottom">
-                        <label class="hc-src-field amt"><small>Amount${l.accountId && !l.fixed ? ` <em>of ${moneyShort(available(l.accountId))}</em>` : ''}</small><input type="number" class="num" step="any" min="0" value="${l.amount}" data-leg-amount data-type="number" inputmode="decimal"></label>
+                        <label class="hc-src-field amt"><small>Amount${l.accountId && !l.fixed ? ` <em>of ${moneyShort(available(l.accountId))}</em>` : ''}</small><input type="number" class="num" step="any" min="0" value="${l.amount}" data-leg-amount data-type="number" inputmode="decimal" readonly data-click-edit title="Click to change the amount"></label>
                         <label class="hc-src-field"><small>Mode</small><select data-leg-mode data-plain>${['Bank', 'UPI', 'Cash'].map(x => `<option ${l.mode === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
                         <label class="hc-src-field grow"><small>UTR / reference</small><input type="text" maxlength="60" value="${esc(l.reference || '')}" data-leg-ref data-plain></label>
                     </div>
@@ -4455,13 +4481,13 @@ async function openAgreement(d, monthNo) {
             ip: a.acceptedIp, device: a.acceptedDevice, userAgent: a.acceptedFrom, location: a.acceptedLocation, deviceHash: a.deviceHash,
             seal: a.acceptanceSeal, digitalSignature: a.digitalSignature, keyFingerprint: cfg.keyFingerprint }) }] : [];
         return {
-            title: 'Chit prize amount receipt and agreement', number: a.agreementNo, date: a.payoutDate || String(a.createdAt).slice(0, 10),
+            kind: 'CHIT', title: 'Chit prize amount receipt and agreement', number: a.agreementNo, date: a.payoutDate || String(a.createdAt).slice(0, 10),
             stampDuty: a.stampDuty, stampSerial: a.stampSerial, realStampPaper: st.real,
-            firstParty: { role: 'Organiser (foreman)', name: organiser, address: company, signature: a.organiserSignature, seal: company },
-            secondParty: { role: 'Member (prize winner)', name: a.status !== 'DRAFT' && a.acceptedName ? a.acceptedName : a.memberName, phone: member?.phone,
+            firstParty: { role: 'Organiser (foreman)', term: 'Organiser', name: organiser, relation: `organiser of ${company}`, signature: a.organiserSignature, seal: company },
+            secondParty: { role: 'Member (prize winner)', term: 'Member', name: a.status !== 'DRAFT' && a.acceptedName ? a.acceptedName : a.memberName, phone: member?.phone,
                 signature: a.status === 'ACCEPTED' ? a.signature : null, accepted },
             witness: { name: a.witnessName, phone: a.witnessPhone, address: a.witnessAddress, signature: a.witnessSignature },
-            intro: `This agreement is made between ${organiser}, the organiser (foreman) of the chit “${c.name}” run by ${company}, and ${a.memberName}, a member of the chit, who won month ${a.monthNo} of ${c.months} and has received the prize amount below.`,
+            recitals: chitRecitals(c.name, c.memberCount, c.months, money(a.chitValue), a.monthNo),
             particulars: [['Chit', `${c.name} · ${c.memberCount} members · ${c.months} months`], ['Chit value', money(a.chitValue)],
                 [isAuction(c) ? 'Winning bid' : 'Commission', money(a.deduction)], ['Prize amount received', money(a.payoutAmount)],
                 ['Paid on', [a.payoutDate ? date(a.payoutDate) : '', a.payoutMode, a.payoutReference ? `ref ${a.payoutReference}` : ''].filter(Boolean).join(' · ')],
@@ -4553,7 +4579,7 @@ async function openAgreement(d, monthNo) {
             </div>
         </div>`,
         actions: [
-            { label: 'Print / PDF', left: true, iconName: 'printer', onClick: () => { printBond(doc(), `Agreement ${st.a.agreementNo}`); return true; } },
+            { label: 'Print view', left: true, iconName: 'printer', onClick: () => { printBond(doc(), `Agreement ${st.a.agreementNo}`); return true; } },
             ...(first.status === 'DRAFT' && manage() ? [
                 { label: 'Delete', iconName: 'trash', onClick: async () => {
                     if (!await confirmDialog(`Delete agreement ${st.a.agreementNo}? Links already sent stop working and its ID proof is removed.`, { confirmLabel: 'Delete' })) return true;

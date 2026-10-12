@@ -382,7 +382,7 @@ public class HostedChitShareService {
         }
         Tenant tenant = tenant(s);
         return asTenant(tenant, () -> {
-            files.addToAgreement(HostedChitService.AGREEMENT_FILES, a.getId(), type, fileName, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD");
+            files.addToAgreement(HostedChitService.AGREEMENT_FILES, a.getId(), type, fileName, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD", "chit agreement " + a.getAgreementNo());
             return toPublic(service.detail(s.getChitId()), s, tenant);
         });
     }

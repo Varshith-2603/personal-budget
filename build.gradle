@@ -36,6 +36,8 @@ dependencies {
 
     // Password hashing only (BCrypt), not the full Spring Security stack
     implementation 'org.springframework.security:spring-security-crypto'
+    // renders an ID card uploaded as a PDF into an image for the agreement
+    implementation 'org.apache.pdfbox:pdfbox:3.0.3'
 
     // Boilerplate reduction for entities (getters/setters)
     compileOnly 'org.projectlombok:lombok'

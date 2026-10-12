@@ -278,7 +278,7 @@ class ChitClosingAndAgreementTests {
                 null, null)).id();
         var view = loanAgreements.save(claimId, new AgreementRequest(null, null, null, "9876543210", "Hyderabad", "Hyderabad",
                 bd(100), null, "Witness One", null, null, true, false, false, null));
-        assertThat(view.terms()).contains("50,000").contains("12% a year");
+        assertThat(view.terms()).contains("50,000").contains("12% per annum");
         String token = loanAgreements.link(claimId, new ClaimAgreementService.LinkRequest(48)).token();
 
         PublicAgreement gate = loanAgreements.open(token, null);
@@ -299,6 +299,21 @@ class ChitClosingAndAgreementTests {
         loanAgreements.addKyc(token, "9876543210", "AADHAAR_FRONT", "aadhaar.png", png);
         assertThatThrownBy(() -> loanAgreements.accept(token, new AcceptRequest("9876543210", "Kiran", true, "234123412345", sign, null, "{}"), "1.2.3.4", "UA"))
                 .isInstanceOf(BusinessException.class).hasMessageContaining("check digit");
+        // a PAN card given as a PDF: kept as it is, and its page taken as a watermarked image for the deed
+        loanAgreements.addKyc(token, "9876543210", "PAN", "pan.pdf", pdf("PAN ABCPE1234F"));
+        loanAgreements.addKyc(token, "9876543210", "PAN", "pan-2.pdf", pdf("PAN ABCPE1234F again"));
+        var pan = loanAgreements.get(claimId).files().stream().filter(f -> "PAN".equals(f.docType())).toList();
+        assertThat(pan).hasSize(2);
+        var original = pan.stream().filter(f -> f.pdf()).findFirst().orElseThrow();
+        var page = pan.stream().filter(f -> f.image()).findFirst().orElseThrow();
+        assertThat(original.fileName()).isEqualTo("pan-2.pdf");
+        assertThat(page.derivedFromSha()).isEqualTo(original.sha256());
+        assertThat(page.source()).isEqualTo("PDF_PAGE");
+        assertThat(original.intact()).isTrue();
+        assertThat(page.intact()).isTrue();
+        byte[] broken = "%PDF-1.4 not really".getBytes();
+        assertThatThrownBy(() -> loanAgreements.addKyc(token, "9876543210", "AADHAAR_BACK", "back.pdf", broken))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("could not be read");
         PublicAgreement done = loanAgreements.accept(token, new AcceptRequest("9876543210", "Kiran Kumar", true, "234123412346", sign, null, "{}"), "1.2.3.4", "UA");
         assertThat(done.step()).isEqualTo("DONE");
         assertThat(done.aadhaarLast4()).isEqualTo("2346");
@@ -314,6 +329,24 @@ class ChitClosingAndAgreementTests {
         assertThatThrownBy(() -> Kyc.aadhaar("123412341234")).isInstanceOf(BusinessException.class);
         assertThat(Kyc.maskPan(Kyc.pan("abcpe1234f"))).isEqualTo("ABCPE••••F");
         assertThatThrownBy(() -> Kyc.pan("ABCDE12345")).isInstanceOf(BusinessException.class);
+    }
+
+    private static byte[] pdf(String text) {
+        try (var doc = new org.apache.pdfbox.pdmodel.PDDocument(); var out = new java.io.ByteArrayOutputStream()) {
+            var page = new org.apache.pdfbox.pdmodel.PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(243, 153));
+            doc.addPage(page);
+            try (var c = new org.apache.pdfbox.pdmodel.PDPageContentStream(doc, page)) {
+                c.beginText();
+                c.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 12);
+                c.newLineAtOffset(20, 70);
+                c.showText(text);
+                c.endText();
+            }
+            doc.save(out);
+            return out.toByteArray();
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private Detail pay(Long chitId, Long memberId, int monthNo) {

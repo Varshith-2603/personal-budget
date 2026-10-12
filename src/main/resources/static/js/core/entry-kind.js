@@ -7,6 +7,7 @@
  */
 import { icon } from './icons.js';
 import { esc } from './ui.js';
+import { shortAccount } from './chit-trail.js';
 
 const KINDS = {
     EXPENSE: { iconName: 'receipt', tone: 'coral', label: 'Expense' },
@@ -39,10 +40,14 @@ export function kindChip(voucherType, size = 'sm', label = null) {
     return `<span class="chip-icon ${size} ${k.tone} kind-chip" title="${esc(label || k.label)}">${icon(k.iconName)}</span>`;
 }
 
-/** Which accounts were debited → credited, e.g. "Groceries → HDFC Card". */
-export function movementHtml(lines) {
+/**
+ * Which accounts were debited → credited, e.g. "Groceries → HDFC Card". A chit's own accounts are shortened
+ * ("MH75 collections"; code: the chit's code when known); the full names are the tooltip.
+ */
+export function movementHtml(lines, code = null) {
     const names = side => [...new Set(lines.filter(l => Number(l[side]) > 0).map(l => l.accountName))];
     const debits = names('debit'), credits = names('credit');
-    return `<span class="movement" title="Debit → credit"><span class="mv-dr">${esc(debits.join(', '))}</span>
-        <span class="mv-arrow">→</span><span class="mv-cr">${esc(credits.join(', '))}</span></span>`;
+    const short = list => list.map(n => shortAccount(n, code)).join(', ');
+    return `<span class="movement" title="${esc(`${debits.join(', ')} → ${credits.join(', ')}`)}"><span class="mv-dr">${esc(short(debits))}</span>
+        <span class="mv-arrow">→</span><span class="mv-cr">${esc(short(credits))}</span></span>`;
 }

@@ -1321,3 +1321,14 @@ code.hc-hash { display: block; font-size: 10.5px; word-break: break-all; overflo
 .hc-book-fixed svg { width: 12px; height: 12px; color: var(--text-muted); }
 .hc-book-hint { flex-basis: 100%; }
 @media (max-width: 640px) { .hc-gx-form { grid-template-columns: 1fr 90px; } .hc-gx-form .grow { grid-column: 1 / -1; } }
+
+/* amounts locked until clicked (gather and payout dialogs) */
+input[data-click-edit][readonly] { cursor: pointer; background: var(--surface-sunken, #f1f5f9) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237a8a9a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E") no-repeat 8px center / 12px;
+    padding-left: 26px !important; color: var(--text-primary, #1b2430); font-weight: 650; }
+input[data-click-edit][readonly]:hover { border-color: var(--ocean-400, #5aa9d6); }
+input[data-click-edit].editing { background: #fffef4; border-color: var(--ocean-600) !important; }
+
+/* In & out: the status, the amount and the buttons in fixed slots, so every row lines up */
+.hc-lg-row .hc-lg-amt { min-width: 86px; text-align: right; }
+.hc-lg-row .hc-lg-acts { display: inline-flex; justify-content: flex-end; min-width: 84px; }
+.hc-lg-row .hc-lg-late { min-width: 0; }

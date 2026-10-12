@@ -11,7 +11,7 @@
  */
 import { upiLogo } from './core/upi-logos.js';
 import { qrSvg } from './core/qr.js';
-import { printBond, openCamera, shrinkImage, verifyEvidence } from './core/bond.js';
+import { printBond, openCamera, shrinkImage, verifyEvidence, chitRecitals } from './core/bond.js';
 
 const $ = id => document.getElementById(id);
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -451,7 +451,7 @@ function agreementHtml() {
             </form>`}
             <p class="cs-hash">Made ${when(a.createdAt)} · fingerprint (SHA-256) <code>${esc(a.contentHash)}</code></p>
             <div class="cs-print-row"><button class="cs-print" onclick="window.print()">Print or save as PDF</button>
-                <button class="cs-print" type="button" id="cs-bond">Stamp-paper copy</button></div>
+                <button class="cs-print" type="button" id="cs-bond">Print view (A4)</button></div>
         </section>`;
 }
 
@@ -528,13 +528,13 @@ function bondDoc() {
     const a = ch.agreement;
     const done = a.status !== 'DRAFT';
     return {
-        title: 'Chit prize amount receipt and agreement', number: a.agreementNo, date: a.payoutDate || String(a.createdAt).slice(0, 10),
+        kind: 'CHIT', title: 'Chit prize amount receipt and agreement', number: a.agreementNo, date: a.payoutDate || String(a.createdAt).slice(0, 10),
         stampDuty: a.stampDuty, stampSerial: a.stampSerial,
-        firstParty: { role: 'Organiser (foreman)', name: a.organiserName || ch.sharedBy, address: ch.household, signature: a.organiserSignature, seal: ch.household },
-        secondParty: { role: 'Member (prize winner)', name: done ? a.acceptedName : a.memberName, signature: a.status === 'ACCEPTED' ? a.signature : null,
+        firstParty: { role: 'Organiser (foreman)', term: 'Organiser', name: a.organiserName || ch.sharedBy, relation: `organiser of ${ch.household}`, signature: a.organiserSignature, seal: ch.household },
+        secondParty: { role: 'Member (prize winner)', term: 'Member', name: done ? a.acceptedName : a.memberName, signature: a.status === 'ACCEPTED' ? a.signature : null,
             accepted: a.status === 'ACCEPTED' ? `accepted online ${when(a.acceptedAt)}` : '' },
         witness: { name: a.witnessName, signature: a.witnessSignature },
-        intro: `This agreement is made between the organiser of the chit “${ch.name}” and ${a.memberName}, a member of the chit, who won month ${a.monthNo} and has received the prize amount below.`,
+        recitals: chitRecitals(ch.name, ch.memberCount, ch.months, money(a.chitValue), a.monthNo),
         particulars: [['Chit value', money(a.chitValue)], [ch.chitType === 'AUCTION' ? 'Winning bid' : 'Commission', money(a.deduction)],
             ['Prize amount received', `${money(a.payoutAmount)} (${a.payoutInWords})`], ['Installments still to pay', `${a.remainingInstallments} months · about ${money(a.remainingAmount)}`],
             ...(a.aadhaarLast4 ? [['Aadhaar', `XXXX XXXX ${a.aadhaarLast4}`]] : []), ...(a.panMasked ? [['PAN', a.panMasked]] : [])],

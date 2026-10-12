@@ -1809,19 +1809,42 @@ tr.sched-current td:first-child { box-shadow: inset 3px 0 0 #f2c94c; }
 .la-steps li svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; color: var(--ocean-600); }
 .la-make { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
 
-/* where a hosted chit's money stands, against entries and payments (js/core/chit-trail.js) */
-.ct-chips { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; flex: 0 0 auto; }
-.ct-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 650; white-space: nowrap; line-height: 1.6; }
-.ct-chip svg { width: 11px; height: 11px; }
-.ct-chip small { font-weight: 600; opacity: 0.8; }
-.ct-chip.warn { background: #fdf0d8; color: #8a5a00; }
-.ct-chip.good { background: #e3f6ec; color: #126b3d; }
-.ct-chip.teal { background: #e1f5f3; color: #0b6f66; }
-.ct-chip.muted, .ct-chip.type { background: #eef1f5; color: #44576a; }
-.ct-chip.type { background: #e8eefa; color: #2d4e8a; }
-.ct-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; padding: 6px 10px; border-radius: 10px; background: #f7f9fc; border: 1px solid var(--hairline); font-size: 12px; }
-.ct-chit { display: inline-flex; align-items: center; gap: 4px; font-weight: 650; color: var(--ocean-800, #0a4a73); }
+/* where a hosted chit's money stands, against entries and payments (js/core/chit-trail.js): a compact pill sized to
+   its words (never cut short), left-aligned in its column so a list of them still lines up; the tinted dot on the left
+   is the kind of chit entry, the colour is where the money stands */
+.ct-st { display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box; height: 19px; padding: 0 7px 0 2px; max-width: none;
+    border-radius: 999px; font-size: 10.5px; font-weight: 650; line-height: 1; letter-spacing: 0.01em; white-space: nowrap; vertical-align: middle;
+    border: 1px solid transparent; background: var(--ct-bg, #f0f3f6); color: var(--ct-fg, #51657a); border-color: var(--ct-line, #d6dee6); }
+.ct-st.none { display: inline-block; width: 0; padding: 0; border: 0; background: none; }
+.ct-st .ct-kind { display: grid; place-items: center; width: 15px; height: 15px; flex: 0 0 15px; border-radius: 50%; font-style: normal; background: var(--ct-fg, #51657a); color: #fff; }
+.ct-st .ct-kind svg { width: 9px; height: 9px; }
+.ct-st .ct-st-label { white-space: nowrap; }
+.ct-st .ct-paid { display: grid; place-items: center; margin-left: 1px; font-style: normal; color: #b07d00; }
+.ct-st .ct-paid svg { width: 11px; height: 11px; }
+/* one colour per state */
+.ct-st.warn   { --ct-bg: #fff4dc; --ct-fg: #9a5b00; --ct-line: #f1d08c; }   /* to move: waiting on you */
+.ct-st.blue   { --ct-bg: #e9f1fe; --ct-fg: #2457b3; --ct-line: #c3d6f6; }   /* moved into collections */
+.ct-st.teal   { --ct-bg: #e4f6f3; --ct-fg: #0b7064; --ct-line: #b6e2da; }   /* paid straight into collections */
+.ct-st.indigo { --ct-bg: #eeedfc; --ct-fg: #4a3fb0; --ct-line: #d0cbf3; }   /* the gather transfer */
+.ct-st.violet { --ct-bg: #f6ebfb; --ct-fg: #7b2f9a; --ct-line: #e3c7ef; }   /* paid to the winner directly */
+.ct-st.gold   { --ct-bg: #fff6d6; --ct-fg: #8a6100; --ct-line: #ecd27a; }   /* the payout itself */
+.ct-st.good   { --ct-bg: #e5f6ec; --ct-fg: #13703f; --ct-line: #a9dcbd; }   /* commission done */
+.ct-st.muted  { --ct-bg: #f0f3f6; --ct-fg: #51657a; --ct-line: #d6dee6; }   /* a plain transfer */
+/* paid out: the same status and words, turned green, with a crown */
+.ct-st.paid { --ct-bg: #dff4e7; --ct-fg: #0f6b3a; --ct-line: #86cfa3; }
+td.c-ctst, th.c-ctst { width: 112px; white-space: nowrap; }
+.ct-badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.ct-badge svg { width: 12px; height: 12px; }
+.ct-badge.good { background: #e6f6ec; color: #11633a; }
+.ct-badge.warn { background: #fff6e5; color: #8a5a00; }
+.ct-badge.muted { background: #f1f4f7; color: #52657a; }
+@media (max-width: 700px) {
+    /* phones: the kind and a short label still fit */
+    .ct-st { font-size: 10px; height: 18px; padding-right: 6px; }
+    td.c-ctst, th.c-ctst { width: 100px; }
+}
+.ct-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; padding: 6px 10px; border-radius: 10px; background: #f7f9fc; border: 1px solid var(--hairline); font-size: 12px; }
+.ct-chit { display: inline-flex; align-items: center; gap: 5px; color: var(--ocean-800, #0a4a73); }
+.ct-chit span { color: var(--text-secondary); }
 .ct-chit svg { width: 13px; height: 13px; }
 .ct-facts { color: var(--text-secondary); }
-.entry-cell .ct-chips { margin-left: 6px; }
-.ca-stmt-what .ct-chips, td .ct-chips { margin-left: 4px; }

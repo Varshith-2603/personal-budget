@@ -15,7 +15,7 @@ import { esc, toast, confirmDialog, openModal } from '../core/ui.js';
 import { icon } from '../core/icons.js';
 import { money, date, dateTime } from '../core/format.js';
 import { qrSvg } from '../core/qr.js';
-import { bondHtml, printBond, padHtml, bindPad, signatureSvg, evidenceRows, verifyEvidence } from '../core/bond.js';
+import { bondHtml, printBond, padHtml, bindPad, signatureSvg, evidenceRows, verifyEvidence, loanRecitals } from '../core/bond.js';
 import { kycTilesHtml, bindKycTiles, fileUrls, kycAnnexures, DOC_LABELS } from './agreement-ui.js';
 
 const STATUS = { DRAFT: ['warning', 'clock', 'Waiting for the borrower'], ACCEPTED: ['good', 'check-circle', 'Accepted online'], SIGNED: ['good', 'edit', 'Signed on paper'] };
@@ -100,13 +100,14 @@ function deedOf(claim, a, urls, real, verified) {
         device: a.acceptedDevice, userAgent: a.acceptedUserAgent, location: a.acceptedLocation, deviceHash: a.deviceHash, seal: a.acceptanceSeal,
         digitalSignature: a.digitalSignature, keyFingerprint: a.keyFingerprint, verified }) }] : [];
     return {
+        kind: claim.kind === 'PAID_FOR' ? 'DEBT' : 'LOAN',
         title: claim.kind === 'PAID_FOR' ? 'Acknowledgement of debt' : 'Loan agreement', number: a.agreementNo, date: a.loanDate, place: a.place,
         stampDuty: a.stampDuty, stampSerial: a.stampSerial, realStampPaper: real,
-        firstParty: { role: 'Lender', name: a.lenderName, address: a.lenderAddress, signature: a.lenderSignature, seal: a.lenderName },
-        secondParty: { role: 'Borrower', name: a.status !== 'DRAFT' && a.acceptedName ? a.acceptedName : a.borrowerName, address: a.borrowerAddress,
+        firstParty: { role: 'Lender', term: 'Lender', name: a.lenderName, address: a.lenderAddress, signature: a.lenderSignature, seal: a.lenderName },
+        secondParty: { role: 'Borrower', term: 'Borrower', name: a.status !== 'DRAFT' && a.acceptedName ? a.acceptedName : a.borrowerName, address: a.borrowerAddress,
             phone: a.borrowerPhone, signature: a.status === 'ACCEPTED' ? a.signature : null, accepted },
         witness: { name: a.witnessName, phone: a.witnessPhone, address: a.witnessAddress, signature: a.witnessSignature },
-        intro: `This agreement is made on ${date(a.loanDate)}${a.place ? ` at ${a.place}` : ''} between ${a.lenderName}${a.lenderAddress ? `, of ${a.lenderAddress}` : ''} (the Lender) and ${a.borrowerName}${a.borrowerAddress ? `, of ${a.borrowerAddress}` : ''} (the Borrower).`,
+        recitals: loanRecitals(claim.kind, money(a.amount), a.amountInWords),
         particulars: [['Amount', `${money(a.amount)} (${a.amountInWords})`], ['Given on', date(a.loanDate)], ['Repay by', a.dueDate ? date(a.dueDate) : 'on demand'],
             ['Interest', a.interestRate ? `${Number(a.interestRate)}% a year · ${a.interestTerms || ''}` : 'none'],
             ...(a.aadhaarLast4 ? [['Borrower’s Aadhaar', `XXXX XXXX ${a.aadhaarLast4}`]] : [])],
@@ -207,7 +208,7 @@ async function openDeed(claim, first, onChanged) {
             </div>
         </div>`,
         actions: [
-            { label: 'Print / PDF', left: true, iconName: 'printer', onClick: () => { printBond(deedOf(claim, st.a, st.urls, st.real, st.verified), `Agreement ${st.a.agreementNo}`); return true; } },
+            { label: 'Print view', left: true, iconName: 'printer', onClick: () => { printBond(deedOf(claim, st.a, st.urls, st.real, st.verified), `Agreement ${st.a.agreementNo}`); return true; } },
             ...(first.status === 'DRAFT' && manage() ? [
                 { label: 'Delete', iconName: 'trash', onClick: async () => {
                     if (!await confirmDialog(`Delete ${st.a.agreementNo}? The link stops working and the ID proof is removed.`, { confirmLabel: 'Delete' })) return true;
