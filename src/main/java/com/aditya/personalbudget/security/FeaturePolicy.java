@@ -100,6 +100,9 @@ public final class FeaturePolicy {
         if (path.startsWith("/reports")) return EnumSet.of(REPORTS);
 
         if (path.startsWith("/gifts")) return EnumSet.of(GIFTS);
+        if (path.startsWith("/construction")) {
+            return read ? EnumSet.of(Feature.CONSTRUCTION, BALANCE_SHEET, REPORTS) : EnumSet.of(Feature.CONSTRUCTION);
+        }
         if (path.startsWith("/documents")) return EnumSet.of(DOCUMENTS);
         if (path.startsWith("/hosted-chits")) {   // Host a Chit is shared with the Chits section
             return read ? EnumSet.of(CHITS, DASHBOARD, BALANCE_SHEET, REPORTS) : EnumSet.of(CHITS);

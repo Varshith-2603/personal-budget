@@ -130,6 +130,9 @@ public class ReportService {
         // the hosted-chit book (members' money and the organiser's chit accounts) is its own group, never liquid money
         Set<Long> chitBook = books.accounts().values().stream().filter(Account::isChitBook).map(Account::getId)
                 .collect(Collectors.toSet());
+        Set<Long> projectBook = books.accounts().values().stream().filter(Account::isProjectBook).map(Account::getId)
+                .collect(Collectors.toSet());
+        PROJECT_BOOK.set(projectBook);
         SheetSection assets = section("Assets", assetRows, chitBook);
         SheetSection liabilities = section("Liabilities", liabilityRows, chitBook);
         SheetSection equity = new SheetSection("Equity", total(equityRows), previousTotal(equityRows),
@@ -203,15 +206,22 @@ public class ReportService {
         return points;
     }
 
-    /** The bucket of an account: its type's, or "Hosted chits" for the hosted-chit book. */
+    /** The bucket of an account: its type's, or "Hosted chits" / "Construction business" for those books. */
     public static String bucket(Account a) {
-        return a.isChitBook() ? HOSTED_CHITS : bucket(a.getAccountType());
+        return a.isChitBook() ? HOSTED_CHITS : a.isProjectBook() ? CONSTRUCTION : bucket(a.getAccountType());
     }
+
+    /** The asset / liability group of the construction book on the balance sheet. */
+    public static final String CONSTRUCTION = "Construction business";
+
+    /** The construction book's accounts while a balance sheet is made (one request at a time per thread). */
+    private static final ThreadLocal<Set<Long>> PROJECT_BOOK = ThreadLocal.withInitial(Set::of);
 
     /** The asset / liability group of the hosted-chit book on the balance sheet. */
     public static final String HOSTED_CHITS = "Hosted chits";
 
     private static String bucket(AccountAmount r, Set<Long> chitBook) {
+        if (r.accountId() != null && PROJECT_BOOK.get().contains(r.accountId())) return CONSTRUCTION;
         return r.accountId() != null && chitBook.contains(r.accountId()) ? HOSTED_CHITS : bucket(r.accountType());
     }
 
@@ -461,15 +471,21 @@ public class ReportService {
      * group of their own ("Hosted chits"), last.
      */
     private static SheetSection section(String label, List<AccountAmount> rows, Set<Long> chitBook) {
-        java.util.function.Predicate<AccountAmount> inBook = r -> r.accountId() != null && chitBook.contains(r.accountId());
+        Set<Long> projectBook = PROJECT_BOOK.get();
+        java.util.function.Predicate<AccountAmount> inProjects = r -> r.accountId() != null && projectBook.contains(r.accountId());
+        java.util.function.Predicate<AccountAmount> inBook = r -> r.accountId() != null && (chitBook.contains(r.accountId()) || projectBook.contains(r.accountId()));
         Map<AccountType, List<AccountAmount>> byType = rows.stream().filter(inBook.negate())
                 .collect(Collectors.groupingBy(AccountAmount::accountType, () -> new java.util.TreeMap<>(), Collectors.toList()));
         List<SheetGroup> groups = new ArrayList<>(byType.entrySet().stream()
                 .map(e -> new SheetGroup(e.getKey().getLabel(), total(e.getValue()), previousTotal(e.getValue()), e.getValue()))
                 .toList());
-        List<AccountAmount> book = rows.stream().filter(inBook).toList();
+        List<AccountAmount> book = rows.stream().filter(inBook).filter(inProjects.negate()).toList();
         if (!book.isEmpty()) {
             groups.add(new SheetGroup(HOSTED_CHITS, total(book), previousTotal(book), book));
+        }
+        List<AccountAmount> projects = rows.stream().filter(inProjects).toList();
+        if (!projects.isEmpty()) {
+            groups.add(new SheetGroup(CONSTRUCTION, total(projects), previousTotal(projects), projects));
         }
         return new SheetSection(label, total(rows), previousTotal(rows), groups);
     }

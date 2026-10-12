@@ -135,7 +135,13 @@ public class AttachmentService implements ApplicationRunner {
     // ================================================================== agreements: ID proof and photos
 
     /** Kinds of files an agreement keeps. */
-    public static final Set<String> DOC_TYPES = Set.of("AADHAAR_FRONT", "AADHAAR_BACK", "PAN", "SELFIE", "OTHER");
+    public static final Set<String> DOC_TYPES = Set.of("AADHAAR_FRONT", "AADHAAR_BACK", "PAN", "SELFIE", "OTHER",
+            // the documents of a construction project or a flat's sale (several of a kind are kept)
+            "SANCTION_LETTER", "DISBURSAL_LETTER", "TITLE_DEED", "LINK_DOCUMENT", "ENCUMBRANCE", "PLAN_APPROVAL", "SALE_DEED",
+            "SIGNED_COPY", "NOC", "ALLOTMENT", "PHOTO", "INVOICE");
+
+    /** ID proof and the selfie: one of each (a new one replaces the old); a PDF of them is taken as images. */
+    public static final Set<String> KYC_TYPES = Set.of("AADHAAR_FRONT", "AADHAAR_BACK", "PAN", "SELFIE");
 
     /**
      * A file of an agreement, with what it is and its SHA-256 (sealed into the acceptance). intact: the bytes on disk
@@ -170,13 +176,13 @@ public class AttachmentService implements ApplicationRunner {
     public AgreementFile addToAgreement(String kind, Long ownerId, String docType, String originalName, byte[] bytes, String source, String mark) {
         String type = docType == null ? "OTHER" : docType.trim().toUpperCase();
         if (!DOC_TYPES.contains(type)) {
-            throw new BusinessException("Say what the file is: Aadhaar (front or back), PAN, selfie or other");
+            throw new BusinessException("Say what the file is: Aadhaar (front or back), PAN, a selfie, or a document");
         }
         if ("SELFIE".equals(type) && bytes != null && "application/pdf".equals(sniff(bytes))) {
             throw new BusinessException("The selfie is a photo from the camera, not a PDF");
         }
         List<Attachment> existing = attachments.findByOwnerKind(kind, ownerId);
-        if (!"OTHER".equals(type)) {
+        if (KYC_TYPES.contains(type)) {
             List<Attachment> same = existing.stream().filter(a -> type.equals(a.getDocType())).toList();
             if (!same.isEmpty()) {
                 attachments.deleteAllById(same.stream().map(Attachment::getId).toList());
@@ -189,11 +195,11 @@ public class AttachmentService implements ApplicationRunner {
             case "AADHAAR_BACK" -> "Aadhaar card (back)";
             case "PAN" -> "PAN card";
             case "SELFIE" -> "Selfie";
-            default -> "Document";
+            default -> KYC_TYPES.contains(type) || "OTHER".equals(type) ? "Document" : MaybeLabel.of(type);
         };
         String name = originalName == null || originalName.isBlank() ? type.toLowerCase().replace('_', '-') : originalName;
         // a PDF is read before anything is stored: a damaged or password-protected one is refused with a clear reason
-        List<Rendered> pages = "application/pdf".equals(bytes == null ? null : sniff(bytes)) ? renderPdf(bytes, label, mark) : List.of();
+        List<Rendered> pages = KYC_TYPES.contains(type) && "application/pdf".equals(bytes == null ? null : sniff(bytes)) ? renderPdf(bytes, label, mark) : List.of();
         // the images taken from a PDF do not count towards the limit of files: only what the person gave
         AttachmentView v = store(UserContext.tenantId(), null, null, "This agreement",
                 existing.stream().filter(x -> x.getDerivedFromSha() == null).toList(), name, bytes, source, label);
@@ -834,5 +840,13 @@ public class AttachmentService implements ApplicationRunner {
         }
         String t = text.trim();
         return t.length() > max ? t.substring(0, max) : t;
+    }
+
+    /** "SANCTION_LETTER" → "Sanction letter". */
+    private static final class MaybeLabel {
+        static String of(String type) {
+            String t = type.replace('_', ' ').toLowerCase();
+            return Character.toUpperCase(t.charAt(0)) + t.substring(1);
+        }
     }
 }

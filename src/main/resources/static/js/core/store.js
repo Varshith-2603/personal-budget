@@ -25,7 +25,7 @@ export async function loadOptions() {
  */
 export async function loadAccounts(force = false, { all = false } = {}) {
     if (!state.accounts || force) state.accounts = await api.get('/accounts');
-    return all ? state.accounts : state.accounts.filter(a => !a.chitBook);
+    return all ? state.accounts : state.accounts.filter(a => !a.chitBook && !a.projectBook);
 }
 
 /** Expense and income categories with this / last month's figures. */
@@ -77,6 +77,7 @@ export const FEATURES = [
     { key: 'FORECAST', label: 'Forecast', path: 'forecast', iconName: 'trending', mobile: true },
     { key: 'GIFTS', label: 'Gifts', path: 'gifts', iconName: 'gift', mobile: true },
     { key: 'DOCUMENTS', label: 'Documents', path: 'documents', iconName: 'file-text', mobile: true },
+    { key: 'CONSTRUCTION', label: 'Construction', path: 'construction', iconName: 'hard-hat', mobile: false },
 ];
 
 /** True when the section is shared with the signed-in user. */

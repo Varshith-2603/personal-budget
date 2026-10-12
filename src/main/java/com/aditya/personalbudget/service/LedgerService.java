@@ -244,6 +244,9 @@ public class LedgerService {
         if (isExpense(e)) {
             return new Lock("Posted from Expenses. Edit or delete it there.", "expenses", false, reversedBy, null);
         }
+        if (source.startsWith("CONSTRUCTION_")) {
+            return new Lock("Posted from a construction project. Change or undo it on Construction.", "construction", false, reversedBy, null);
+        }
         return switch (source) {
             case SOURCE_ACCOUNT_OPENING ->
                     new Lock("Opening balance. Change it on the account.", "accounts", false, reversedBy, null);

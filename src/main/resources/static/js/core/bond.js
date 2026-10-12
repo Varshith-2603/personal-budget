@@ -267,7 +267,7 @@ function clauseLi(line, i) {
 /** How a party is described in the preamble: name, where they live, their number. */
 function partyText(p) {
     return [`<b>${esc(String(p?.name || '____________________').toUpperCase())}</b>`, p?.relation ? esc(p.relation) : '',
-        p?.address ? `residing at ${esc(p.address)}` : '', p?.phone ? `mobile ${esc(p.phone)}` : ''].filter(Boolean).join(', ');
+        p?.address ? `${p.company ? 'having its office at' : 'residing at'} ${esc(p.address)}` : '', p?.phone ? `mobile ${esc(p.phone)}` : ''].filter(Boolean).join(', ');
 }
 
 /** The stamp band of the first page (stamp-paper style), or nothing on real stamp paper (its printed top is the sheet's). */
@@ -321,10 +321,17 @@ export function bondBlocks(doc) {
             the context or meaning thereof, be deemed to mean and include ${first.company ? 'its successors and permitted assigns' : 'his or her heirs, executors, administrators, legal representatives and permitted assigns'})
             of the <b>FIRST PART</b>;</p>`);
         add('pre-4', `<p class="bond-pre-c">AND</p>`, { keep: true });
+        const third = doc.thirdParty?.name ? doc.thirdParty : null;
+        const c3 = third ? third.term || third.role || 'Third party' : null;
         add('pre-5', `<p class="bond-pre">${partyText(second)}, hereinafter referred to as the “<b>${esc(b)}</b>” (which expression shall, unless repugnant to
             the context or meaning thereof, be deemed to mean and include his or her heirs, executors, administrators and legal representatives)
-            of the <b>SECOND PART</b>.</p>`);
-        add('pre-6', `<p class="bond-pre">The ${esc(a)} and the ${esc(b)} are hereinafter individually referred to as a “Party” and collectively as the “Parties”.</p>`);
+            of the <b>SECOND PART</b>${third ? ';' : '.'}</p>`);
+        if (third) {
+            add('pre-5a', `<p class="bond-pre-c">AND</p>`, { keep: true });
+            add('pre-5b', `<p class="bond-pre">${partyText(third)}, hereinafter referred to as the “<b>${esc(c3)}</b>” (which expression shall, unless repugnant to
+                the context or meaning thereof, be deemed to mean and include its successors and assigns) of the <b>THIRD PART</b>.</p>`);
+        }
+        add('pre-6', `<p class="bond-pre">The ${esc(a)}${third ? `, the ${esc(b)} and the ${esc(c3)}` : ` and the ${esc(b)}`} are hereinafter individually referred to as a “Party” and collectively as the “Parties”.</p>`);
         (doc.recitals || []).forEach((r, i) => add(`rec-${i}`, `<p class="bond-pre"><b>${i ? 'AND WHEREAS' : 'WHEREAS'}</b> ${esc(r)}${i === doc.recitals.length - 1 ? ';' : ';'}</p>`));
     } else {
         add('intro', `<p class="bond-intro">${esc(doc.intro || '')}</p>`);
@@ -349,11 +356,19 @@ export function bondBlocks(doc) {
     add('in-witness', `<p class="bond-witness-line">${doc.kind
         ? `<b>IN WITNESS WHEREOF</b> the Parties hereto have set their respective hands to this Agreement on the day, month and year first above written, in the presence of the witness named below.`
         : 'In witness whereof the parties have signed this agreement on the date and at the place written above, in the presence of the witness below.'}</p>`, { keep: true });
+    // thumbBoxes: both parties' left thumb impressions are taken on the paper copy, as many deeds in India have them
+    const thumbs = !!doc.thumbBoxes;
     add('signs', `<div class="bond-signs">
-            ${signBox(doc, first, first.role || a, { seal: first.seal, lead: doc.kind ? `Signed and delivered by the within-named ${a}` : '' })}
-            ${signBox(doc, second, second.role || b, { thumb: !second.signature, lead: doc.kind ? `Signed and delivered by the within-named ${b}` : '' })}
+            ${signBox(doc, first, first.role || a, { seal: first.seal, thumb: thumbs, lead: doc.kind ? `Signed and delivered by the within-named ${a}` : '' })}
+            ${signBox(doc, second, second.role || b, { thumb: thumbs || !second.signature, lead: doc.kind ? `Signed and delivered by the within-named ${b}` : '' })}
         </div>`, { keep: true });
-    add('witness', `<div class="bond-signs one">${signBox(doc, doc.witness?.name ? doc.witness : { name: '' }, 'Witness', { lead: doc.kind ? 'In the presence of' : '' })}</div>`);
+    if (doc.thirdParty?.name) {
+        add('signs-3', `<div class="bond-signs one">${signBox(doc, doc.thirdParty, doc.thirdParty.role || 'Third party',
+            { lead: `Signed and delivered by the within-named ${doc.thirdParty.term || doc.thirdParty.role || 'third party'}, by its authorised signatory` })}</div>`, { keep: true });
+    }
+    const witnesses = [doc.witness?.name ? doc.witness : { name: '' }, ...(doc.witness2?.name || doc.twoWitnesses ? [doc.witness2 || { name: '' }] : [])];
+    add('witness', `<div class="bond-signs ${witnesses.length > 1 ? '' : 'one'}">${witnesses.map((w, i) => signBox(doc, w, witnesses.length > 1 ? `Witness ${i + 1}` : 'Witness',
+        { lead: doc.kind && i === 0 ? 'In the presence of' : '' })).join('')}</div>`);
     add('foot', `<p class="bond-foot">Agreement fingerprint (SHA-256): <code>${esc(doc.fingerprint || '')}</code>${doc.footnote ? `<br>${esc(doc.footnote)}` : ''}</p>`);
 
     const annexures = (doc.annexures || []).filter(x => x.images?.length || x.rows?.length).map((x, i) => {

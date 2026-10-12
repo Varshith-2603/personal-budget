@@ -35,6 +35,7 @@ import * as admin from './views/admin.js';
 import * as activity from './views/activity.js';
 import * as gifts from './views/gifts.js';
 import * as documents from './views/documents.js';
+import * as construction from './views/construction.js';
 
 /** Top menu, in display order. */
 const ROUTES = [
@@ -46,6 +47,8 @@ const ROUTES = [
     { path: 'chits', label: 'Chits', iconName: 'chit', view: chits, feature: 'CHITS' },
     // chits the user runs as the organiser (shared with the Chits section)
     { path: 'host-chits', label: 'Host a Chit', iconName: 'hand-coins', view: hostChits, feature: 'CHITS' },
+    // the construction business: contract works and developments, their books, sales and agreements
+    { path: 'construction', label: 'Construction', iconName: 'hard-hat', view: construction, feature: 'CONSTRUCTION' },
     { path: 'planning', label: 'Budgets', iconName: 'target', view: planning, feature: 'BUDGETS' },
     { path: 'balance-sheet', label: 'Balance Sheet', iconName: 'scale', view: balanceSheet, feature: 'BALANCE_SHEET' },
     { path: 'reports', label: 'Reports', iconName: 'report', view: reports, feature: 'REPORTS' },

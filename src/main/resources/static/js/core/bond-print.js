@@ -119,8 +119,9 @@ function stripHtml(doc) {
     const f = doc.firstParty || {}, s = doc.secondParty || {}, w = doc.witness || {};
     const cell = (p, label, seal = null) => `<div class="bp-sg"><div class="bp-sg-ink">${p.signature ? signatureSvg(p.signature) : ''}${seal
         ? `<span class="bp-seal">${sealSvg(seal, 'SEAL')}</span>` : ''}</div><small>${esc(label)}</small></div>`;
-    return `<div class="bp-strip">${cell(f, `${f.term || f.role || 'First party'} · signature${f.seal ? ' & seal' : ''}`, f.seal)}${
-        cell(s, `${s.term || s.role || 'Second party'} · ${s.signature ? 'signature' : 'signature / thumb'}`)}${cell(w, 'Witness · signature')}</div>`;
+    const t = doc.thirdParty?.name ? doc.thirdParty : null;
+    return `<div class="bp-strip ${t ? 'four' : ''}">${cell(f, `${f.term || f.role || 'First party'} · signature${f.seal ? ' & seal' : ''}`, f.seal)}${
+        cell(s, `${s.term || s.role || 'Second party'} · ${s.signature ? 'signature' : 'signature / thumb'}`)}${t ? cell(t, `${t.term || t.role} · signature`) : ''}${cell(w, 'Witness · signature')}</div>`;
 }
 
 function sheetsHtml(pages, doc, o, { editable = false, breaks = new Set() } = {}) {

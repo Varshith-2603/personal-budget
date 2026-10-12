@@ -321,3 +321,6 @@
 @media (hover: none) {
     .bp-layer .bp-blk > .bp-brk { display: block; opacity: 0.85; font-size: 10px; padding: 1px 6px; }
 }
+
+/* a tripartite deed: four signatures at the foot of each sheet */
+.bp-strip.four { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4mm; }

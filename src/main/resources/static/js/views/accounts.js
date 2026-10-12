@@ -66,7 +66,8 @@ export async function render(container, _params, isCurrent) {
     const everything = await loadAccounts(true, { all: true });
     if (!isCurrent()) return;
     // the hosted-chit book (members' money, Host a Chit) has its own page: only its net counts here, in net worth
-    const accounts = everything.filter(a => !a.chitBook);
+    // the hosted-chit book and the construction book have their own pages
+    const accounts = everything.filter(a => !a.chitBook && !a.projectBook);
     const chitBook = everything.filter(a => a.chitBook);
     const bookNet = chitBook.reduce((s, a) => s + (a.accountClass === 'ASSET' ? 1 : a.accountClass === 'LIABILITY' ? -1 : 0) * Number(a.balance), 0);
     Object.assign(prefs, getPref('statement', { grouped: false, groupBy: 'month' }));

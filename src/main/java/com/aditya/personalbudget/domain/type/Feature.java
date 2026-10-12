@@ -23,7 +23,9 @@ public enum Feature {
     REPORTS("Reports", true),
     FORECAST("Forecast", true),
     GIFTS("Gifts", true),
-    DOCUMENTS("Documents", true);
+    DOCUMENTS("Documents", true),
+    /** The construction business: projects, their money, sales and agreements (desktop only). */
+    CONSTRUCTION("Construction", false);
 
     private final String label;
     private final boolean mobile;

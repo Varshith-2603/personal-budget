@@ -128,6 +128,20 @@ public class Account implements TenantOwned {
     /** Clearing account: installments members paid straight to the month's winner, cleared by the payout. */
     public static final String ROLE_DIRECT = "DIRECT";
 
+    /**
+     * Part of the construction book (the Construction section): the business's money, kept off the personal Accounts
+     * page, pickers and liquid-money figures like the hosted-chit book.
+     */
+    private Boolean projectBook;
+
+    /** The construction project this account belongs to; empty for a common business account. */
+    @References(ConstructionProject.class)
+    private Long projectId;
+
+    /** Construction-book accounts: BANK, COST, LAND, ADVANCES, INTEREST, PROFIT, LOAN, CAPITAL or COMMON. */
+    @Column(length = 12)
+    private String projectRole;
+
     /** System accounts are created automatically and cannot be deleted. */
     @Column(nullable = false)
     private Boolean systemAccount;
@@ -146,8 +160,12 @@ public class Account implements TenantOwned {
         return Boolean.TRUE.equals(chitBook);
     }
 
+    public boolean isProjectBook() {
+        return Boolean.TRUE.equals(projectBook);
+    }
+
     /** Money the user can spend: cash, bank or wallet, and not the chit book's (members' money). */
     public boolean isLiquid() {
-        return accountType.isLiquid() && !isChitBook();
+        return accountType.isLiquid() && !isChitBook() && !isProjectBook();
     }
 }

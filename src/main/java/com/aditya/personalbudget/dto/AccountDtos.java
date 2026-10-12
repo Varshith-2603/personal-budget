@@ -92,6 +92,10 @@ public final class AccountDtos {
             String chitRole,
             String holderName,
             String ifsc,
-            String upiId) {
+            String upiId,
+            /* part of the construction book (the Construction section), not a personal account */
+            boolean projectBook,
+            Long projectId,
+            String projectRole) {
     }
 }
