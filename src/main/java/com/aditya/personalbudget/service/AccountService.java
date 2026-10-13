@@ -356,6 +356,6 @@ public class AccountService {
                 a.getDescription(), Boolean.TRUE.equals(a.getSystemAccount()), Boolean.TRUE.equals(a.getActive()),
                 balance, monthMove, in, out, change30, utilization, available, daysToMaturity,
                 ReportService.bucket(a), last, count, trend, a.getVersion(), a.isChitBook(), a.getHostedChitId(), a.getChitRole(),
-                a.getHolderName(), a.getIfsc(), a.getUpiId(), a.isProjectBook(), a.getProjectId(), a.getProjectRole());
+                a.getHolderName(), a.getIfsc(), a.getUpiId(), a.isProjectBook(), a.getProjectId(), a.getProjectRole(), a.isEmiAccount());
     }
 }

@@ -75,7 +75,9 @@ public final class ReportDtos {
     public record LedgerRow(Long entryId, String entryNo, LocalDate date, VoucherType voucherType, String voucherLabel, String narration,
                             String counterAccounts, BigDecimal debit, BigDecimal credit, BigDecimal balance,
                             /* a hosted chit's money: where it stands */
-                            com.aditya.personalbudget.service.ChitTrailService.Trail chitTrail) {
+                            com.aditya.personalbudget.service.ChitTrailService.Trail chitTrail,
+                            /* a construction project's entry */
+                            com.aditya.personalbudget.service.ConstructionTagService.ProjectTag construction) {
     }
 
     public record AccountLedger(Long accountId, String code, String name, AccountClass accountClass,

@@ -18,7 +18,10 @@ import { chitTrailChips, chitTrailHtml } from '../core/chit-trail.js';
 import { openJournalEditor } from './transaction-forms.js';
 import { claimEntryRole, claimFiguresHtml, claimBadge, KIND_META } from './claim-panel.js';
 
-const MANAGE_LABEL = { expenses: 'Open Expenses', chits: 'Open Chits', 'host-chits': 'Open Host a Chit', 'host-chits/accounts': 'Open Chit accounts', accounts: 'Open Accounts' };
+const MANAGE_LABEL = { expenses: 'Open Expenses', chits: 'Open Chits', 'host-chits': 'Open Host a Chit', 'host-chits/accounts': 'Open Chit accounts', accounts: 'Open Accounts',
+    construction: 'Open Construction', 'expenses/emi': 'Open EMIs' };
+/** Where an entry is managed: a construction entry opens its own project. */
+const manageTarget = e => e.manageAt === 'construction' && e.construction?.projectId ? `construction/${e.construction.projectId}` : e.manageAt;
 
 /**
  * Toggles the detail row under `row`.
@@ -59,7 +62,7 @@ export async function toggleEntryRow(row, entry, { onChanged } = {}) {
                 btn.classList.toggle('active', !more.hidden);
                 btn.querySelector('span').textContent = more.hidden ? 'More' : 'Less';
             }
-            if (action === 'manage') location.hash = `#/${data.manageAt}`;
+            if (action === 'manage') location.hash = `#/${manageTarget(data)}`;
             if (action === 'delete' && await confirmDialog(`Delete ${data.entryNo}? Account balances will be recalculated.`)) {
                 await api.del(`/transactions/${data.id}`);
                 toast(`${data.entryNo} deleted`);
@@ -134,6 +137,7 @@ function detailHtml(e) {
         ${chitTrailHtml(e.chitTrail)}
         <div class="ed-bar">
             ${fact('journal', `<b>${esc(e.entryNo)}</b> ${esc(e.voucherLabel)}`)}
+            ${e.construction ? fact('hard-hat', `Construction · <b>${esc(e.construction.project)}</b>${e.construction.what ? ` · ${esc(e.construction.what)}` : ''}`, 'cn-fact') : ''}
             ${fact('calendar', date(e.entryDate))}
             ${e.party ? fact('user', esc(e.party)) : ''}
             ${e.reference ? fact('tag', esc(e.reference)) : ''}
@@ -145,7 +149,7 @@ function detailHtml(e) {
             ${manageJournals && e.editable ? `<button class="btn sm" data-entry-action="edit">${icon('edit')}Edit</button>` : ''}
             ${manageJournals && e.editable ? `<button class="btn sm ghost icon" data-entry-action="copy" title="Duplicate">${icon('copy')}</button>` : ''}
             ${manageJournals && e.editable ? `<button class="btn sm ghost icon danger" data-entry-action="delete" title="Delete">${icon('trash')}</button>` : ''}
-            ${e.manageAt && !e.claimId && !location.hash.startsWith(`#/${e.manageAt}`) ? `<button class="btn sm" data-entry-action="manage">${icon('link')}${MANAGE_LABEL[e.manageAt] || 'Open'}</button>` : ''}
+            ${e.manageAt && !e.claimId && !location.hash.startsWith(`#/${manageTarget(e)}`) ? `<button class="btn sm" data-entry-action="manage">${icon('link')}${e.construction?.projectId && e.manageAt === 'construction' ? `Open ${esc(e.construction.project)}` : MANAGE_LABEL[e.manageAt] || 'Open'}</button>` : ''}
             ${e.reversible && can('POST_TRANSACTIONS') ? `<button class="btn sm" data-entry-action="reverse">${icon('undo')}Reverse</button>` : ''}
             <button class="btn sm ghost icon" data-entry-action="close" title="Close">${icon('x')}</button>
         </div>

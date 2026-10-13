@@ -1848,3 +1848,86 @@ td.c-ctst, th.c-ctst { width: 112px; white-space: nowrap; }
 .ct-chit span { color: var(--text-secondary); }
 .ct-chit svg { width: 13px; height: 13px; }
 .ct-facts { color: var(--text-secondary); }
+
+/* ---------------------------------------------------------------- bought on EMI: the dialog's fourth mode, the preview and a plan opened in place */
+.expense-form .xp-modes { grid-template-columns: repeat(4, 1fr); }
+.expense-form .emi-only, .expense-form .emi-loan-only { display: none; }
+.expense-form.mode-EMI .xp-claim-info { display: none; }
+.expense-form.mode-EMI.emi-loan .emi-loan-only { display: flex; }
+/* on EMI the dialog widens to three columns: the purchase · its category and card · the terms with the whole schedule */
+.modal.expense-modal.emi-wide { width: min(1340px, 97vw); }
+.expense-form.mode-EMI .xp-grid { grid-template-columns: minmax(0, 0.82fr) minmax(0, 0.95fr) minmax(0, 1.3fr); }
+.expense-form.mode-EMI .xp-emi-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.expense-form.mode-EMI .cat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.expense-form.mode-EMI .pay-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.expense-form.mode-EMI .xp-notes textarea { min-height: 38px; }
+.xp-emi { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 12px; background: var(--grad-brand-soft); border: 1px solid rgba(11, 124, 189, 0.18); }
+.xp-emi .form-grid { gap: 6px 8px; }
+.xp-emi .emi-auto { align-self: end; padding-bottom: 6px; font-size: var(--font-size-sm); }
+.xp-emi-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.xp-emi-kinds .date-chip { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 30px; }
+.xp-emi-kinds .date-chip svg { width: 13px; height: 13px; }
+.expense-form [data-emi-locked] input:disabled, .expense-form input:disabled { opacity: 0.65; }
+.emi-prev { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 12px; background: rgba(255, 255, 255, 0.78); border: 1px solid var(--hairline); min-height: 0; }
+.emi-prev.empty { flex-direction: row; align-items: center; gap: 8px; color: var(--text-muted); font-size: var(--font-size-sm); padding: 18px 12px; justify-content: center; border-style: dashed; }
+.emi-prev.empty svg { width: 16px; height: 16px; }
+.emi-prev-hero { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border-radius: 10px; background: var(--grad-navy); color: #fff; }
+.emi-prev-hero > div { display: flex; flex-direction: column; line-height: 1.1; }
+.emi-prev-hero small { font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.75; }
+.emi-prev-hero b { font-size: 22px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.emi-prev-hero span { font-size: var(--font-size-sm); opacity: 0.85; }
+.emi-prev-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 4px; }
+.emi-prev-figs span { display: flex; flex-direction: column; padding: 3px 8px; border-radius: 8px; background: var(--surface-sunken); }
+.emi-prev-figs small { font-size: 9px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 700; }
+.emi-prev-figs b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.emi-prev-figs .total { background: #fbf3dd; }
+.emi-prev-how { display: flex; gap: 6px; font-size: 11.5px; color: var(--text-secondary); line-height: 1.35; }
+.emi-prev-how svg { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--ocean-600); }
+.emi-table { max-height: 238px; overflow: auto; border: 1px solid var(--hairline); border-radius: 9px; }
+.emi-table table { width: 100%; border-collapse: collapse; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.emi-table th { position: sticky; top: 0; background: #eef4f9; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); font-weight: 700; text-align: left; padding: 4px 6px; z-index: 1; }
+.emi-table tfoot th { position: sticky; bottom: 0; top: auto; background: #eef4f9; color: var(--ocean-900); font-size: 11px; text-transform: none; letter-spacing: 0; }
+.emi-table td { padding: 3px 6px; border-top: 1px solid var(--hairline); white-space: nowrap; }
+.emi-table .r { text-align: right; }
+.emi-panel { display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 6px; }
+.emi-closed-note { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 9px; background: var(--surface-sunken); font-size: var(--font-size-sm); color: var(--text-secondary); }
+.emi-closed-note svg { width: 13px; height: 13px; }
+.emi-closed-note span { flex: 1; }
+.emi-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.emi-sched { max-height: 260px; overflow: auto; border: 1px solid var(--hairline); border-radius: 10px; }
+.emi-sched table { margin: 0; }
+.emi-sched tr.emi-paid td { color: var(--text-secondary); }
+.emi-sched tr.emi-waived td { color: var(--text-muted); text-decoration: line-through; }
+.emi-sched tr.emi-late td { background: #fff5f2; }
+.emi-sched tr.emi-next td { background: #eef7fd; font-weight: 600; }
+.emi-sched .badge svg { width: 10px; height: 10px; margin-right: 2px; vertical-align: -1px; }
+.emi-fc-total { font-size: 18px; font-variant-numeric: tabular-nums; }
+.xp-emis .xd-bar, .emi-side .xd-bar { display: block; height: 4px; border-radius: 99px; background: #e6edf3; overflow: hidden; margin-top: 3px; }
+.xp-emis .xd-bar em, .emi-side .xd-bar em { display: block; height: 100%; background: linear-gradient(90deg, #5fcf8a, #1f9a5a); }
+.xp-emis tr.emi-archived td { opacity: 0.6; }
+.emi-side { display: flex; flex-direction: column; gap: 8px; }
+.emi-side .xs-grid { grid-template-columns: 1fr 1fr; }
+.emi-side-list { display: flex; flex-direction: column; gap: 2px; }
+.emi-side-list .owed-row .grow { display: flex; flex-direction: column; }
+.xp-emis .c-prog { width: 150px; }
+.xp-emis .xd-prog { display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: var(--text-secondary); }
+.xp-open-note .switch { margin-left: auto; }
+.mini-flag.emi { display: inline-flex; align-items: center; width: auto; height: 17px; padding: 0 5px; font-size: 9.5px; font-weight: 700; gap: 3px; line-height: 1; white-space: nowrap; }
+.mini-flag.emi svg { width: 10px; height: 10px; flex: none; }
+/* the EMIs list: the name on top, the lender and shop under it */
+.xd-cell.xd-stack { flex-direction: column; align-items: stretch; gap: 1px; }
+.xd-cell.xd-stack .xd-party { max-width: 100%; margin-left: 0; text-align: left; font-size: 11px; }
+.xd-cell.xd-stack .xd-text b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1180px) {
+    .expense-form.mode-EMI .xp-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .expense-form.mode-EMI .xp-emi-col { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+    .expense-form .xp-modes { grid-template-columns: repeat(2, 1fr); }
+    .expense-form.mode-EMI .xp-grid { grid-template-columns: minmax(0, 1fr); }
+    .emi-cards { grid-template-columns: minmax(0, 1fr); }
+    .xp-emi .form-grid.three { grid-template-columns: 1fr 1fr; }
+}
+.emi-panel .xd-top { flex-wrap: wrap; row-gap: 6px; }
+.emi-panel .xd-actions { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
+.emi-panel .xd-actions .switch { white-space: nowrap; }

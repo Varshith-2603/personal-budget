@@ -23,6 +23,7 @@ public enum VoucherType {
     BORROWING("Money Borrowed", "BR"),
     BILL_DUE("Bill to Pay", "BD"),
     REPAYMENT_MADE("Repayment Paid", "RP"),
+    EMI_PAYMENT("EMI Payment", "EM"),
     WRITE_OFF("Write-off", "WO"),
     INTEREST_ACCRUAL("Interest Posted", "IP"),
     REFUND("Refund", "RF"),

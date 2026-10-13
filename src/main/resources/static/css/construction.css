@@ -196,3 +196,140 @@
 
 .cn-plan .cn-due { min-width: 0; }
 .cn-plan .cn-due > * { width: 100%; }
+
+/* ---------------------------------------------------------------- the top bar: a slim card with Projects | Accounts, and a slim strip of figures */
+.cn-page { grid-template-rows: auto minmax(0, 1fr); }
+.cn-top, .cn-strip { min-height: 46px; height: 46px; box-sizing: border-box; border-radius: 14px; border: 1px solid var(--glass-border, #d6e2ec);
+    background: var(--card-bg, rgba(255, 255, 255, 0.82)); box-shadow: 0 1px 2px rgba(16, 52, 84, 0.05); }
+.cn-top { display: flex; align-items: center; gap: 8px; padding: 0 6px 0 7px; min-width: 0; }
+.cn-mark { width: 30px; height: 30px; border-radius: 9px; flex: none; display: grid; place-items: center; background: var(--grad-navy, #0b2038); color: #fff; }
+.cn-mark svg { width: 15px; height: 15px; }
+.cn-switch { position: relative; flex: 1; display: grid; grid-template-columns: 1fr 1fr; padding: 2px; border-radius: 10px; background: rgba(214, 227, 237, 0.75);
+    border: 1px solid var(--hairline, #dbe3ea); min-width: 0; }
+.cn-switch-thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 8px; background: var(--grad-navy, #0b2038);
+    box-shadow: 0 3px 10px rgba(11, 32, 56, 0.25); transition: transform 0.17s cubic-bezier(0.4, 0, 0.2, 1); }
+.cn-switch.accounts .cn-switch-thumb { transform: translateX(100%); }
+.cn-switch-opt { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; border-radius: 8px;
+    font-size: 12.5px; font-weight: 650; color: var(--text-secondary, #4b5560); text-decoration: none; user-select: none; transition: color 0.17s; white-space: nowrap; }
+.cn-switch-opt svg { width: 14px; height: 14px; }
+.cn-switch-opt:hover { color: var(--ocean-800, #0a3f66); }
+.cn-switch-opt.active { color: #fff; }
+.cn-switch-opt:focus-visible { outline: 2px solid var(--ocean-400, #4aa8de); outline-offset: 1px; }
+.cn-strip { display: flex; align-items: center; gap: 4px; padding: 0 6px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; min-width: 0; }
+.cn-strip::-webkit-scrollbar { display: none; }
+.cn-chip { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px 0 5px; border-radius: 10px; flex: 0 0 auto; min-width: 0;
+    background: var(--surface-sunken, #f1f5f9); border: 1px solid transparent; }
+.cn-chip.clickable { cursor: pointer; }
+.cn-chip.clickable:hover { border-color: var(--ocean-300, #8cc6ea); background: #fff; }
+.cn-chip-ico { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; background: #e2ecf4; color: var(--ocean-700, #0a5a8c); flex: none; }
+.cn-chip-ico svg { width: 13px; height: 13px; }
+.cn-chip-text { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
+.cn-chip-text small { font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted, #7a858f); white-space: nowrap; }
+.cn-chip-text b { font-size: 13.5px; font-weight: 750; color: var(--ocean-900, #0a2e4f); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cn-chip-text b small { font-size: 10.5px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.cn-chip.good .cn-chip-ico { background: #dff3e6; color: #11703a; }
+.cn-chip.warn { background: #fff3e6; }
+.cn-chip.warn .cn-chip-ico { background: #fde4d6; color: #b4472a; }
+.cn-chip.highlight { background: #fbf3dd; }
+.cn-chip.highlight .cn-chip-ico { background: #f8e6b8; color: #8a5b00; }
+.cn-chip.note .cn-chip-ico { background: #fdf0cc; color: #8a5b00; }
+.cn-strip-meta { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; font-size: 11px; font-weight: 600; color: var(--text-muted, #7a858f); white-space: nowrap; }
+.cn-strip-meta svg { width: 11px; height: 11px; }
+
+/* Accounts */
+.cn-acct-head .ab-meta { flex-wrap: wrap; }
+.cn-stmt .ca-stmt-what .kind-chip { margin-right: 5px; vertical-align: -3px; }
+
+/* a construction project's entry, in the journal and in statements */
+.cn-tag { display: inline-flex; align-items: center; gap: 3px; height: 17px; padding: 0 6px; margin-right: 5px; border-radius: 999px; flex: none;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.02em; background: #fbefd5; color: #8a5300; border: 1px solid #f0d49a; white-space: nowrap; vertical-align: 1px; }
+.cn-tag svg { width: 10px; height: 10px; }
+.entry-text .cn-tag { align-self: center; }
+.ed-fact.cn-fact { background: #fbefd5; color: #8a5300; }
+
+/* agreements */
+.cn-ag-sum { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.cn-ag-sum > span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; background: var(--surface-sunken, #f1f5f9); color: var(--text-secondary, #4b5560); }
+.cn-ag-sum > span svg { width: 13px; height: 13px; }
+.cn-ag-sum > span.good { background: #e3f6ec; color: #13703f; }
+.cn-ag-sum > span.warn { background: #fff4dc; color: #9a5b00; }
+.cn-ag-sum > span.grow { background: none; padding: 0; flex: 1; }
+.cn-ag.rich { align-items: flex-start; padding: 10px 12px; }
+.cn-ag.rich > .chip-icon { margin-top: 2px; }
+.cn-ag.make { border-style: dashed; background: transparent; }
+.cn-ag-body { display: flex; flex-direction: column; gap: 4px; }
+.cn-ag-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.cn-ag-line .badge svg { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.cn-ag-line.sub { font-size: 12px; color: var(--text-secondary, #4b5560); gap: 6px; }
+.cn-ag-line.sub > svg { width: 12px; height: 12px; color: var(--text-muted, #7a858f); }
+.cn-ag-about { margin-left: auto; padding: 2px 9px; border-radius: 8px; background: #eef5fb; color: var(--ocean-800, #0a3f66); }
+.cn-ag-facts { display: flex; flex-wrap: wrap; gap: 4px; }
+.cn-ag-fact { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--surface-sunken, #f1f5f9); color: var(--text-secondary, #4b5560); }
+.cn-ag-fact svg { width: 11px; height: 11px; }
+.cn-ag-fact.good { background: #e3f6ec; color: #13703f; }
+.cn-ag-fact.warn { background: #fff4dc; color: #9a5b00; }
+.cn-ag-fact.muted { color: var(--text-muted, #7a858f); background: transparent; border: 1px dashed var(--hairline, #dbe3ea); }
+.cn-ag-fact code { font-size: 10.5px; }
+.cn-ag-acts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.cn-ag-acts small { font-size: 10.5px; white-space: nowrap; }
+.cn-ag.rich .badge.bad { background: #fdecec; color: #a12828; }
+a.cn-account { text-decoration: none; color: inherit; }
+a.cn-account:hover { border-color: var(--ocean-300, #8cc6ea); background: #fff; }
+
+/* adding a cost */
+.cn-cost-form .xp-grid { grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr); }
+.cn-qty { display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr); gap: 8px; }
+.cn-head-grid { max-height: 196px; overflow-y: auto; }
+.cn-head-grid .cat-tile[hidden] { display: none; }
+.cn-cost-form [data-new-head] { margin-top: 4px; }
+.cn-cost-form .xp-cat-find { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.cn-cost-form .xp-cat-find > svg { width: 13px; height: 13px; color: var(--text-muted, #7a858f); }
+.cn-cost-form .xp-cat-search { margin-left: 0; width: 190px; }
+
+/* partners' capital */
+.cn-partner-pick { display: flex; flex-wrap: wrap; gap: 4px; }
+.cn-partner-pick .date-chip { display: inline-flex; align-items: center; gap: 5px; height: 28px; }
+.cn-partner-pick .date-chip svg { width: 12px; height: 12px; }
+.cn-cap-preview { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; background: var(--surface-sunken, #f1f5f9); font-size: 12px; color: var(--text-secondary, #4b5560); }
+.cn-cap-preview:empty { display: none; }
+.cn-cap-preview svg { width: 14px; height: 14px; flex: none; margin-top: 1px; color: var(--ocean-600, #0b7cbd); }
+
+@media (max-width: 900px) {
+    .cn-cost-form .xp-grid { grid-template-columns: minmax(0, 1fr); }
+    .cn-ag-about { margin-left: 0; }
+    .cn-ag.rich { flex-wrap: wrap; }
+    .cn-ag-acts { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; }
+}
+@media (max-width: 600px) {
+    .cn-top, .cn-strip { height: auto; min-height: 44px; }
+    .cn-qty { grid-template-columns: minmax(0, 1fr) 80px minmax(0, 1fr); }
+    .cn-cost-form .xp-cat-search { width: 130px; }
+}
+
+/* agreements: laid out like Host a Chit's (figures, then one table with what is still to make) */
+.cn-ag-tiles { padding: 10px 12px 6px; }
+.cn-ag-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 0 12px 8px; }
+.cn-ag-bar .small svg { width: 12px; height: 12px; vertical-align: -2px; }
+.cn-ag-wrap { overflow-x: auto; }
+.cn-ag-table td { vertical-align: top; }
+.cn-ag-table tbody tr.clickable:hover td { background: var(--surface-hover, #f3f8fc); }
+.cn-ag-no { display: inline-flex; align-items: flex-start; gap: 7px; }
+.cn-ag-no > svg { width: 15px; height: 15px; margin-top: 2px; color: var(--ocean-600, #0b7cbd); flex: none; }
+.cn-ag-no > span { display: flex; flex-direction: column; line-height: 1.25; }
+.cn-ag-no small { font-size: 11px; color: var(--text-muted, #7a858f); }
+.cn-ag-sub { display: block; font-size: 10.5px; }
+.cn-ag-cov { display: block; max-width: 220px; }
+.cn-ag-marks { display: inline-flex; gap: 2px; margin-left: 4px; }
+.cn-ag-marks .badge { padding: 0 4px; }
+.cn-ag-marks .badge svg { width: 10px; height: 10px; }
+.cn-ag-table .badge svg { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.cn-ag-missing td { background: repeating-linear-gradient(135deg, transparent 0 8px, rgba(201, 154, 59, 0.05) 8px 16px); }
+.cn-ag-foot { padding: 6px 12px 12px; margin: 0; }
+@media (max-width: 900px) { .cn-ag-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* a statement line stays on one line: the kind, the project tag, then the text cut short (the whole of it is the tooltip) */
+.cn-stmt .ca-stmt-what { max-width: 0; width: 100%; }
+.cn-stmt-line { display: flex; align-items: center; gap: 5px; min-width: 0; white-space: nowrap; }
+.cn-stmt-line > .kind-chip, .cn-stmt-line > .cn-tag { flex: none; margin: 0; }
+.cn-stmt-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cn-stmt td { vertical-align: middle; }

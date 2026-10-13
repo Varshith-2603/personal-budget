@@ -190,8 +190,18 @@ public class ConstructionService {
     }
 
     /** An agreement in the project's list (the full view is opened from it). */
+    /**
+     * about: what the agreement covers (the contract price and stages, the extra work, the flat, the plot share...) and
+     * value its money; link: NONE, ACTIVE, EXPIRED, REVOKED or LOCKED (the online link); fingerprint: the start of the
+     * SHA-256 of its text.
+     */
     public record AgreementSummary(Long id, String kind, Long refId, String agreementNo, String title, String partyName, String status,
-                                   LocalDate agreementDate, LocalDateTime acceptedAt, LocalDateTime createdAt) {
+                                   LocalDate agreementDate, LocalDateTime acceptedAt, LocalDateTime createdAt,
+                                   String partyPhone, String partyRelation, String place, String about, BigDecimal value,
+                                   BigDecimal stampDuty, String stampSerial, String witnessName, boolean witnessSigned,
+                                   boolean companySigned, String link, LocalDateTime linkExpiresAt, int views, LocalDateTime lastViewedAt,
+                                   String acceptedName, boolean located, boolean aadhaar, boolean selfie, String fingerprint,
+                                   String createdBy) {
     }
 
     public record AccountLine(Long id, String name, String role, AccountType type, BigDecimal balance, boolean own) {
@@ -390,10 +400,11 @@ public class ConstructionService {
         List<SaleView> sv = sales.findByProjectId(p.getId()).stream()
                 .sorted(Comparator.comparing(ConstructionSale::getBookedOn).thenComparing(ConstructionSale::getId).reversed())
                 .map(s -> saleView(p, s, unitById.get(s.getUnitId()), st, rc)).toList();
+        List<ConstructionPartner> partnerRows = partners.findByProjectId(p.getId());
+        List<ConstructionParty> partyRows = parties.findByProjectId(p.getId());
         List<AgreementSummary> ag = agreements.findByProjectId(p.getId()).stream()
                 .sorted(Comparator.comparing(ConstructionAgreement::getId).reversed())
-                .map(a -> new AgreementSummary(a.getId(), a.getKind(), a.getRefId(), a.getAgreementNo(), a.getTitle(), a.getPartyName(),
-                        a.getStatus(), a.getAgreementDate(), a.getAcceptedAt(), a.getCreatedAt())).toList();
+                .map(a -> agreementSummary(p, a, f, st, ex, sv, partyRows, partnerRows)).toList();
         List<Account> own = accounts.findByTenantId(p.getTenantId()).stream().filter(a -> p.getId().equals(a.getProjectId())).toList();
         List<AccountLine> acc = new ArrayList<>(own.stream().sorted(Comparator.comparing(Account::getId)).map(a -> line(a, balances, true)).toList());
         if (p.getBankAccountId() != null && own.stream().noneMatch(a -> a.getId().equals(p.getBankAccountId()))) {
@@ -402,6 +413,55 @@ public class ConstructionService {
         Map<Long, String> names = accounts.findByTenantId(p.getTenantId()).stream().collect(Collectors.toMap(Account::getId, Account::getName));
         return new Detail(p, f, st, ex, CONTRACT.equals(p.getKind()) ? contractDues(p, st, ex, rc).rows() : List.of(), rc, cs, heads,
                 partnerViews(p, cap), cap, loanViews(p, lt, balances), lt, parties.findByProjectId(p.getId()), un, sv, ag, acc, names);
+    }
+
+    private AgreementSummary agreementSummary(ConstructionProject p, ConstructionAgreement a, Figures f, List<ConstructionStage> st,
+                                              List<ConstructionExtra> ex, List<SaleView> sv, List<ConstructionParty> ps, List<ConstructionPartner> partnerRows) {
+        String about = null;
+        BigDecimal value = null;
+        Long ref = a.getRefId();
+        switch (a.getKind()) {
+            case "CONTRACT" -> {
+                value = f.contractValue();
+                long priced = st.stream().filter(s -> Money.nz(s.getAmount()).signum() > 0).count();
+                about = priced + " stage" + (priced == 1 ? "" : "s") + (p.getPlannedEndDate() != null ? " · complete by " + p.getPlannedEndDate() : "");
+            }
+            default -> { }
+        }
+        if ("EXTRA".equals(a.getKind())) {
+            ConstructionExtra x = ex.stream().filter(e -> e.getId().equals(ref)).findFirst().orElse(null);
+            if (x != null) {
+                value = x.getAmount();
+                about = "EX-" + x.getSeq() + " " + x.getTitle() + (x.getExtraDays() != null && x.getExtraDays() > 0 ? " · +" + x.getExtraDays() + " days" : "");
+            }
+        } else if (Set.of("PLOT_PURCHASE", "JDA").contains(a.getKind())) {
+            ConstructionParty x = ps.stream().filter(e -> e.getId().equals(ref)).findFirst().orElse(null);
+            if (x != null) {
+                value = x.getConsideration();
+                about = (x.getSharePercent() != null ? x.getSharePercent().stripTrailingZeros().toPlainString() + "% " : "")
+                        + ("JDA".equals(a.getKind()) ? "of the landowners' part" : "of the plot")
+                        + ("JDA".equals(a.getKind()) && x.getConsideration() != null ? " · deposit" : "");
+            }
+        } else if (Set.of("FLAT_SALE", "TRIPARTITE", "SALE_DEED", "POSSESSION").contains(a.getKind())) {
+            SaleView v = sv.stream().filter(e -> e.sale().getId().equals(ref)).findFirst().orElse(null);
+            if (v != null) {
+                value = "TRIPARTITE".equals(a.getKind()) && v.sale().getLoanAmount() != null ? v.sale().getLoanAmount() : v.sale().getTotalPrice();
+                about = "Flat " + v.unitLabel() + ("TRIPARTITE".equals(a.getKind()) && v.sale().getLoanBank() != null ? " · loan from " + v.sale().getLoanBank() : "");
+            }
+        } else if ("PARTNERSHIP".equals(a.getKind())) {
+            ConstructionPartner x = partnerRows.stream().filter(e -> e.getId().equals(ref)).findFirst().orElse(null);
+            if (x != null) about = x.getSharePercent().stripTrailingZeros().toPlainString() + "% of the profit";
+        }
+        LocalDateTime now = LocalDateTime.now();
+        String link = a.getTokenHash() == null ? "NONE" : a.getLinkRevokedAt() != null ? "REVOKED" : a.getLockedAt() != null ? "LOCKED"
+                : a.getLinkExpiresAt() != null && a.getLinkExpiresAt().isBefore(now) ? "EXPIRED" : "ACTIVE";
+        return new AgreementSummary(a.getId(), a.getKind(), a.getRefId(), a.getAgreementNo(), a.getTitle(), a.getPartyName(),
+                a.getStatus(), a.getAgreementDate(), a.getAcceptedAt(), a.getCreatedAt(), a.getPartyPhone(), a.getPartyRelation(), a.getPlace(),
+                about, value, a.getStampDuty(), a.getStampSerial(), a.getWitnessName(), blank(a.getWitnessSignature()) != null,
+                blank(a.getCompanySignature()) != null || blank(p.getCompanySignature()) != null, link, a.getLinkExpiresAt(),
+                a.getViews() == null ? 0 : a.getViews(), a.getLastViewedAt(), a.getAcceptedName(), blank(a.getAcceptedLocation()) != null,
+                Boolean.TRUE.equals(a.getRequireAadhaar()), Boolean.TRUE.equals(a.getRequireSelfie()),
+                a.getContentHash() == null ? null : a.getContentHash().substring(0, Math.min(12, a.getContentHash().length())), a.getCreatedBy());
     }
 
     // ================================================================== making a project

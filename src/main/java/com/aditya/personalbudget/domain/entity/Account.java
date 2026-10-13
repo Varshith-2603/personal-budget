@@ -142,6 +142,9 @@ public class Account implements TenantOwned {
     @Column(length = 12)
     private String projectRole;
 
+    /** What is still owed on something bought on a loan / finance EMI: kept off the Accounts list unless asked for. */
+    private Boolean emiAccount;
+
     /** System accounts are created automatically and cannot be deleted. */
     @Column(nullable = false)
     private Boolean systemAccount;
@@ -158,6 +161,10 @@ public class Account implements TenantOwned {
 
     public boolean isChitBook() {
         return Boolean.TRUE.equals(chitBook);
+    }
+
+    public boolean isEmiAccount() {
+        return Boolean.TRUE.equals(emiAccount);
     }
 
     public boolean isProjectBook() {

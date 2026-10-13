@@ -96,6 +96,8 @@ public final class AccountDtos {
             /* part of the construction book (the Construction section), not a personal account */
             boolean projectBook,
             Long projectId,
-            String projectRole) {
+            String projectRole,
+            /* what is owed on an EMI (Expenses › EMIs): listed only when asked for */
+            boolean emiAccount) {
     }
 }

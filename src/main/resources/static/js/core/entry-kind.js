@@ -4,6 +4,7 @@
  *   entryKind(voucherType)          { iconName, tone, label }
  *   kindChip(voucherType, size)     the chip markup ('xs' | 'sm')
  *   movementHtml(lines)             "Groceries → HDFC Card" style debit → credit summary
+ *   projectTag(tag)                 the construction project an entry belongs to, as a small tag
  */
 import { icon } from './icons.js';
 import { esc } from './ui.js';
@@ -21,6 +22,7 @@ const KINDS = {
     PROJECT_COST: { iconName: 'hard-hat', tone: 'coral', label: 'Project cost' },
     PROJECT_CAPITAL: { iconName: 'users', tone: 'violet', label: 'Partner capital' },
     PROJECT_LOAN: { iconName: 'bank', tone: 'gold', label: 'Project loan' },
+    EMI_PAYMENT: { iconName: 'calendar', tone: 'coral', label: 'EMI payment' },
     OPENING: { iconName: 'flag', tone: 'gray', label: 'Opening balance' },
     LENDING: { iconName: 'hand', tone: 'violet', label: 'Money lent' },
     PAID_FOR: { iconName: 'users', tone: 'violet', label: 'Paid for someone' },
@@ -54,4 +56,14 @@ export function movementHtml(lines, code = null) {
     const short = list => list.map(n => shortAccount(n, code)).join(', ');
     return `<span class="movement" title="${esc(`${debits.join(', ')} → ${credits.join(', ')}`)}"><span class="mv-dr">${esc(short(debits))}</span>
         <span class="mv-arrow">→</span><span class="mv-cr">${esc(short(credits))}</span></span>`;
+}
+
+/**
+ * A construction project's entry (EntryView.construction / LedgerRow.construction): a small tag with the project's code
+ * ("GM"), what it was in the tooltip (Construction · Green Meadows · Cost). Entries on the business's common accounts
+ * only say "Business".
+ */
+export function projectTag(tag) {
+    if (!tag) return '';
+    return `<span class="cn-tag" title="${esc(`Construction · ${tag.project}${tag.what ? ` · ${tag.what}` : ''}`)}">${icon('hard-hat')}${esc(tag.code || 'Business')}</span>`;
 }

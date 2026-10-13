@@ -9,36 +9,39 @@
  */
 import { api } from '../core/api.js';
 import { can, invalidateAccounts } from '../core/store.js';
-import { esc, toast, panel, emptyState, confirmDialog } from '../core/ui.js';
+import { esc, toast, panel, emptyState, confirmDialog, loading, narrativeHtml } from '../core/ui.js';
 import { icon } from '../core/icons.js';
-import { money, moneyShort, date, shortDate, daysFromToday } from '../core/format.js';
+import { money, moneyShort, date, shortDate, firstOfMonth, dateTime } from '../core/format.js';
 import { setPageKeys, listNavigator } from '../core/keys.js';
+import { getPref, setPref } from '../core/prefs.js';
+import { kindChip, projectTag } from '../core/entry-kind.js';
+import { toggleEntryRow } from '../components/entry-inline.js';
 import { openWizard, openSettings, openStage, openStageDone, openExtra, openReceipt, printReceipt, openCost, openPartner, openShares, openCapital,
     openLoan, openLoanTxn, openParty, openUnits, openUnit, openTransfer, openCommonAccount, openStatus, confirmDelete, num, headName, HEAD_ICONS } from '../components/construction-forms.js';
 import { openBook, openSale, DUE_TONE } from '../components/construction-sale.js';
 import { openProjectAgreement, AGREEMENT_KINDS } from '../components/construction-agreement.js';
 
-const view = { selectedId: null, tab: 'overview', costHead: null };
+const view = { selectedId: null, tab: 'overview', costHead: null, agFilter: 'all', acctProject: getPref('constructionAccounts', { project: null }).project, acct: null, range: '3m' };
 const manage = () => can('MANAGE_PROJECTS');
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const STATUS = { PLANNING: ['gray', 'Planning'], ACTIVE: ['aqua', 'Running'], COMPLETED: ['good', 'Completed'], CLOSED: ['gray', 'Closed'] };
 const STAGE = { PENDING: ['gray', 'Not started', 'clock'], IN_PROGRESS: ['warning', 'In progress', 'play'], DONE: ['good', 'Done', 'check'] };
 const EXTRA = { PROPOSED: ['warning', 'Proposed'], AGREED: ['aqua', 'Agreed'], DONE: ['good', 'Done'], CANCELLED: ['gray', 'Cancelled'] };
 const UNIT = { AVAILABLE: ['avail', 'Available'], BOOKED: ['booked', 'Booked'], SOLD: ['sold', 'Sold'], HANDED_OVER: ['handed', 'Handed over'], LANDOWNER: ['owner', 'Landowner’s'] };
-const ROLE = { BANK: 'Bank', COST: 'Construction cost', LAND: 'Land', ADVANCES: 'Received (advances)', INTEREST: 'Late interest received', PROFIT: 'My profit',
-    LOAN: 'Loan', CAPITAL: 'Partner capital', COMMON: 'Common' };
 const kindName = p => p.kind === 'CONTRACT' ? 'Contract work' : p.landMode === 'JOINT' ? 'Joint development' : 'Own plot development';
 const kindIcon = p => p.kind === 'CONTRACT' ? 'hard-hat' : p.landMode === 'JOINT' ? 'layers' : 'building';
 const tabsOf = p => p.kind === 'CONTRACT'
     ? [['overview', 'Overview', 'dashboard'], ['stages', 'Work & payments', 'layers'], ['extras', 'Extra works', 'plus'], ['receipts', 'Receipts', 'arrow-in'],
-        ['costs', 'Costs', 'receipt'], ['partners', 'Partners', 'users'], ['loans', 'Loans', 'bank'], ['agreements', 'Agreements', 'file-text'], ['accounts', 'Accounts', 'wallet']]
+        ['costs', 'Costs', 'receipt'], ['partners', 'Partners', 'users'], ['loans', 'Loans', 'bank'], ['agreements', 'Agreements', 'file-text']]
     : [['overview', 'Overview', 'dashboard'], ['flats', 'Flats & sales', 'grid'], ['land', 'Land', 'home'], ['stages', 'Construction', 'layers'],
         ['receipts', 'Receipts', 'arrow-in'], ['costs', 'Costs', 'receipt'], ['partners', 'Partners', 'users'], ['loans', 'Loans', 'bank'],
-        ['agreements', 'Agreements', 'file-text'], ['accounts', 'Accounts', 'wallet']];
+        ['agreements', 'Agreements', 'file-text']];
 
 let current = null;
 
 export async function render(container, params, isCurrent) {
+    // Construction › Accounts: the construction book, one project at a time (#/construction/accounts[/<project>])
+    if (params[0] === 'accounts') return renderAccounts(container, params.slice(1), isCurrent);
     const overview = await api.get('/construction');
     if (!isCurrent()) return;
     const [first, second] = params;
@@ -48,8 +51,8 @@ export async function render(container, params, isCurrent) {
 
     container.innerHTML = `
     <div class="page chits-page cn-page">
-        <section class="cp-card cn-brand" id="cn-brand"></section>
-        <div class="cs-cards" id="cn-cards"></div>
+        <section class="cn-top" id="cn-brand">${brandHtml('projects')}</section>
+        <div class="cn-strip" id="cn-cards"></div>
         ${panel({
             title: 'Projects', iconName: 'hard-hat', cls: 'p-chit-list', bodyClass: 'flush',
             sub: `${overview.projects.filter(p => p.status !== 'CLOSED').length} running`,
@@ -58,18 +61,13 @@ export async function render(container, params, isCurrent) {
         })}
         <div class="chit-detail" id="cn-detail"></div>
     </div>`;
+    bindBrand(container);
     drawPortfolio(container, overview);
     container.querySelector('#cn-new')?.addEventListener('click', () => openWizard((d, m) => afterChange(d, m, true)));
     const listEl = container.querySelector('#cn-list');
     listEl.addEventListener('click', e => {
         const row = e.target.closest('[data-id]');
         if (row) show(Number(row.dataset.id));
-    });
-    container.querySelector('#cn-brand').addEventListener('click', e => {
-        const b = e.target.closest('[data-act]');
-        if (!b) return;
-        if (b.dataset.act === 'new') openWizard((d, m) => afterChange(d, m, true));
-        if (b.dataset.act === 'common') openCommonAccount(async (_, m) => { toast(m); invalidateAccounts(); drawPortfolio(container, await api.get('/construction')); });
     });
     let keyTimer;
     setPageKeys(listNavigator({
@@ -92,6 +90,7 @@ export async function render(container, params, isCurrent) {
         history.replaceState(null, '', `#/construction/${id}/${view.tab}`);
         current = d;
         drawDetail(container, d);
+        container.querySelector('#cn-brand').innerHTML = brandHtml('projects');
     }
     if (first === 'new' && manage()) openWizard((d, m) => afterChange(d, m, true));
     if (view.selectedId) await show(view.selectedId);
@@ -109,11 +108,11 @@ async function afterChange(d, message, select = false) {
     if (d) {
         current = d;
         if (select) { view.selectedId = d.project.id; view.tab = 'overview'; history.replaceState(null, '', `#/construction/${d.project.id}/overview`); }
-        drawDetail(container, d);
+        if (container.querySelector('#cn-detail')) drawDetail(container, d);
     }
     if (message) toast(message);
     try {
-        drawPortfolio(container, await api.get('/construction'));
+        if (container.querySelector('#cn-list')) drawPortfolio(container, await api.get('/construction'));
     } catch { /* the detail is already right */ }
 }
 
@@ -129,44 +128,65 @@ function welcomeHtml() {
         </div>` });
 }
 
-// ===================================================================== the portfolio and the list
+// ===================================================================== the top bar: Projects | Accounts, and the figures
+
+/** The slim top-left card: the section's two halves as a sliding switch (the selected project goes along). */
+function brandHtml(mode) {
+    const id = view.selectedId;
+    return `<span class="cn-mark" title="Construction business">${icon('hard-hat')}</span>
+        <div class="cn-switch ${mode}" role="tablist" aria-label="Construction"><i class="cn-switch-thumb"></i>
+            <a class="cn-switch-opt ${mode === 'projects' ? 'active' : ''}" href="#/construction${id ? `/${id}` : ''}" role="tab" aria-selected="${mode === 'projects'}">${icon('layers')}Projects</a>
+            <a class="cn-switch-opt ${mode === 'accounts' ? 'active' : ''}" href="#/construction/accounts${id ? `/${id}` : ''}" role="tab" aria-selected="${mode === 'accounts'}">${icon('wallet')}Accounts</a></div>`;
+}
+
+/** The switch slides first, then the page changes. */
+function bindBrand(container) {
+    container.querySelector('#cn-brand').addEventListener('click', e => {
+        const opt = e.target.closest('.cn-switch-opt');
+        if (!opt || opt.classList.contains('active')) return;
+        e.preventDefault();
+        const sw = opt.closest('.cn-switch');
+        sw.classList.toggle('projects'); sw.classList.toggle('accounts');
+        sw.querySelectorAll('.cn-switch-opt').forEach(x => x.classList.toggle('active', x === opt));
+        setTimeout(() => { location.hash = opt.getAttribute('href'); }, 170);
+    });
+}
+
+/** One figure of the strip: an icon, a small label and the value. */
+const chip = (ic, label, value, title = '', cls = '', go = '') => `<div class="cn-chip ${cls} ${go ? 'clickable' : ''}" title="${esc(title)}" ${go ? `data-go="${go}"` : ''}>
+    <span class="cn-chip-ico">${icon(ic)}</span><span class="cn-chip-text"><small>${label}</small><b>${value}</b></span></div>`;
 
 function drawPortfolio(container, o) {
     const running = o.projects.filter(p => p.status !== 'CLOSED');
     const sum = (list, k) => list.reduce((s, p) => s + num(p.figures[k]), 0);
-    container.querySelector('#cn-brand').innerHTML = `
-        <div class="cp-head"><span class="cp-mark">${icon('hard-hat')}</span>
-            <div class="min-0"><small>Construction business</small><b>${moneyShort(o.moneyBalance)} <em>in its accounts</em></b></div>
-            <span class="cp-rate" title="Received so far across the projects">${moneyShort(o.received)}<small>received</small></span></div>
-        <div class="cp-foot">
-            <span class="cp-pill run">${icon('play')}${running.length} running</span>
-            ${o.projects.length - running.length ? `<span class="cp-pill done">${icon('lock')}${o.projects.length - running.length} closed</span>` : ''}
-            ${o.commonAccounts.length ? `<span class="cp-pill done" title="${esc(o.commonAccounts.map(a => `${a.name}: ${money(a.balance)}`).join('\n'))}">${icon('bank')}${plural(o.commonAccounts.length, 'common account')}</span>` : ''}
-            ${manage() ? `<button type="button" class="cp-pill done cn-pill-btn" data-act="common" title="A bank account or cash shared by every project">${icon('plus')}Common account</button>` : ''}
-        </div>`;
-    const cell = (iconName, label, value, sub, cls = '') => `<div class="ov-card cs-card ${cls}"><span class="ov-ico">${icon(iconName)}</span>
-        <div class="min-0"><span class="ov-label">${label}</span><b>${value}</b><small>${sub}</small></div></div>`;
-    container.querySelector('#cn-cards').innerHTML = `
-        ${o.overdue ? cell('alert', 'Overdue', `<span class="down">${moneyShort(o.overdue)}</span>`, `of ${moneyShort(o.due)} due`, 'warn') : cell('check-circle', 'Due now', moneyShort(o.due), 'nothing overdue', 'good')}
-        ${cell('arrow-in', 'Received', moneyShort(o.received), 'from owners and buyers')}
-        ${cell('receipt', 'Spent', moneyShort(o.costs), 'costs and land')}
-        ${cell('trending', 'So far', `<span class="${num(o.received) - num(o.costs) >= 0 ? 'gold' : 'down'}">${moneyShort(num(o.received) - num(o.costs))}</span>`, 'received less spent', 'highlight')}
-        ${cell('bank', 'Loans', moneyShort(o.loanOutstanding), 'outstanding')}
-        ${cell('grid', 'Flats', `${sum(running, 'unitsSold')}<small> / ${sum(running, 'unitsTotal')}</small>`, `${sum(running, 'unitsBooked')} booked · ${sum(running, 'unitsAvailable')} available`)}`;
+    const dev = running.some(p => p.kind === 'DEVELOPMENT');
+    const soFar = num(o.received) - num(o.costs);
+    const strip = container.querySelector('#cn-cards');
+    strip.innerHTML = `
+        ${o.overdue ? chip('alert', 'Overdue', `<span class="neg">${moneyShort(o.overdue)}</span>`, `${money(o.overdue)} overdue of ${money(o.due)} due now`, 'warn')
+            : chip('check-circle', 'Due now', moneyShort(o.due), 'Nothing overdue', 'good')}
+        ${chip('arrow-in', 'Received', moneyShort(o.received), 'From owners and buyers, across the projects')}
+        ${chip('receipt', 'Spent', moneyShort(o.costs), 'Costs and land')}
+        ${chip('trending', 'So far', `<span class="${soFar >= 0 ? 'gold-ink' : 'neg'}">${moneyShort(soFar)}</span>`, 'Received less spent', 'highlight')}
+        ${chip('wallet', 'In accounts', moneyShort(o.moneyBalance), `The projects’ cash and bank and ${plural(o.commonAccounts.length, 'common account')}: open the accounts`, '', 'accounts')}
+        ${num(o.loanOutstanding) ? chip('bank', 'Loans', moneyShort(o.loanOutstanding), 'Outstanding') : ''}
+        ${dev ? chip('grid', 'Flats sold', `${sum(running, 'unitsSold')}<small>/${sum(running, 'unitsTotal')}</small>`, `${sum(running, 'unitsBooked')} booked · ${sum(running, 'unitsAvailable')} available`) : ''}
+        <span class="cn-strip-meta">${icon('play')}${running.length} running${o.projects.length - running.length ? ` · ${o.projects.length - running.length} closed` : ''}</span>`;
+    strip.onclick = e => { if (e.target.closest('[data-go="accounts"]')) location.hash = `#/construction/accounts${view.selectedId ? `/${view.selectedId}` : ''}`; };
     const listEl = container.querySelector('#cn-list');
     const row = s => {
         const f = s.figures;
         const closed = s.status === 'CLOSED';
-        const dev = s.kind === 'DEVELOPMENT';
-        const pct = dev ? (f.unitsTotal ? Math.round((f.unitsSold + f.unitsBooked) * 100 / Math.max(1, f.unitsTotal - f.unitsLandowner)) : 0) : f.progressPercent;
-        return `<div class="acct-item rich chit-item accent-${closed ? 'slate' : dev ? 'aqua' : 'gold'} ${s.id === view.selectedId ? 'selected' : ''}" data-id="${s.id}">
-            <span class="chip-icon sm ${dev ? 'aqua' : 'gold'}">${icon(kindIcon(s))}</span>
+        const isDev = s.kind === 'DEVELOPMENT';
+        const pct = isDev ? (f.unitsTotal ? Math.round((f.unitsSold + f.unitsBooked) * 100 / Math.max(1, f.unitsTotal - f.unitsLandowner)) : 0) : f.progressPercent;
+        return `<div class="acct-item rich chit-item accent-${closed ? 'slate' : isDev ? 'aqua' : 'gold'} ${s.id === view.selectedId ? 'selected' : ''}" data-id="${s.id}">
+            <span class="chip-icon sm ${isDev ? 'aqua' : 'gold'}">${icon(kindIcon(s))}</span>
             <div class="acct-main">
-                <div class="acct-line"><span class="acct-name">${esc(s.name)}</span><b class="acct-bal" title="${dev ? 'Sales value' : 'Contract value with extras'}">${moneyShort(f.totalValue)}</b></div>
+                <div class="acct-line"><span class="acct-name">${esc(s.name)}</span><b class="acct-bal" title="${isDev ? 'Sales value' : 'Contract value with extras'}">${moneyShort(f.totalValue)}</b></div>
                 <div class="acct-line sub"><span class="acct-meta">${esc(kindName(s))}${s.clientName ? ` · ${esc(s.clientName)}` : s.city ? ` · ${esc(s.city)}` : ''}</span>
                     <span class="acct-facts">${num(f.overdue) ? `<span class="fact bad" title="Overdue">${moneyShort(f.overdue)} late</span>` : num(f.due) ? `<span class="fact warn">${moneyShort(f.due)} due</span>` : '<span class="fact good">nothing due</span>'}</span></div>
                 <div class="chit-prog"><div class="acct-util good"><span style="width:${pct}%"></span></div>
-                    <small>${closed ? `${icon('lock')}closed` : dev ? `${f.unitsSold + f.unitsBooked} of ${Math.max(0, f.unitsTotal - f.unitsLandowner)} flats sold` : `${f.progressPercent}% built`}</small></div>
+                    <small>${closed ? `${icon('lock')}closed` : isDev ? `${f.unitsSold + f.unitsBooked} of ${Math.max(0, f.unitsTotal - f.unitsLandowner)} flats sold` : `${f.progressPercent}% built`}</small></div>
             </div></div>`;
     };
     const groups = [['Contract works', o.projects.filter(p => p.kind === 'CONTRACT' && p.status !== 'CLOSED')],
@@ -174,6 +194,249 @@ function drawPortfolio(container, o) {
     listEl.innerHTML = o.projects.length ? groups.filter(([, l]) => l.length).map(([label, l]) =>
         `<div class="group-label"><span>${label} <i>${l.length}</i></span><b>${moneyShort(l.reduce((s, p) => s + num(p.figures.totalValue), 0))}</b></div>${l.map(row).join('')}`).join('')
         : emptyState('No projects yet', 'hard-hat');
+}
+
+// ===================================================================== Accounts: the construction book
+
+/** label, icon, tone, what it holds */
+const ROLE_META = {
+    BANK: ['Bank', 'bank', 'aqua', 'the project’s money'], COMMON: ['Common', 'layers', 'ocean', 'shared by every project'],
+    COST: ['Construction cost', 'hard-hat', 'gold', 'work in progress until closing'], LAND: ['Land', 'home', 'gold', 'plot, registration, deposit'],
+    ADVANCES: ['Received (held)', 'arrow-in', 'coral', 'set off against the costs at closing'], INTEREST: ['Late interest', 'percent', 'coral', 'paid on late payments'],
+    LOAN: ['Loan', 'bank', 'violet', 'what is owed to the lender'], CAPITAL: ['Partner capital', 'users', 'violet', 'what the business owes the partner'],
+    PROFIT: ['My profit', 'trending', 'gold', 'my share at closing'],
+};
+const moneyIcon = a => a.type === 'CREDIT_CARD' ? 'card' : a.type === 'CASH' ? 'cash' : a.type === 'WALLET' ? 'wallet' : 'bank';
+const roleMeta = a => a.group === 'PERSONAL' ? ['My own account', moneyIcon(a), 'teal', 'one of your accounts'] : ROLE_META[a.role] || ROLE_META.COMMON;
+const acctIcon = a => a.group !== 'OWN' || a.role === 'BANK' ? moneyIcon(a) : roleMeta(a)[1];
+const isMoney = a => ['BANK', 'CASH', 'WALLET'].includes(a.type);
+const RANGES = [['1m', 'This month', () => firstOfMonth(0)], ['3m', '3 months', () => firstOfMonth(-2)], ['12m', '12 months', () => firstOfMonth(-11)], ['all', 'All', () => '2000-01-01']];
+const signed = v => `${num(v) < 0 ? '−' : ''}${money(Math.abs(num(v)))}`;
+const tail = n => n ? `•• ${String(n).slice(-4)}` : '';
+
+async function renderAccounts(container, params, isCurrent) {
+    if (!container.querySelector('.cn-page')) container.innerHTML = loading();
+    const book = await api.get('/construction/book');
+    if (!isCurrent()) return;
+    if (/^\d+$/.test(params[0] || '')) { view.acctProject = Number(params[0]); view.selectedId = Number(params[0]); view.acct = null; }
+    drawAccounts(container, book);
+}
+
+/** A project's accounts: its own, then the common and personal accounts that hold or moved its money. All: by project. */
+function acctItems(book, p) {
+    const items = [];
+    const others = (list, label) => { if (list.length) { items.push({ label }); list.forEach(a => items.push({ a })); } };
+    if (p) {
+        book.accounts.filter(a => a.projectId === p.id).forEach(a => items.push({ a, child: true }));
+        const touches = a => a.bankOf.includes(p.id) || a.byProject.some(s => s.projectId === p.id);
+        others(book.accounts.filter(a => a.group === 'COMMON' && touches(a)), 'Common accounts it uses');
+        others(book.accounts.filter(a => a.group === 'PERSONAL' && touches(a)), 'My accounts its money went through');
+        others(book.accounts.filter(a => a.group === 'COMMON' && !touches(a)), 'Other common accounts');
+    } else {
+        book.projects.forEach(q => {
+            const own = book.accounts.filter(a => a.projectId === q.id);
+            if (!own.length) return;
+            items.push({ label: q.name, project: q });
+            own.forEach(a => items.push({ a, child: true }));
+        });
+        others(book.accounts.filter(a => a.group === 'COMMON'), 'Common business accounts');
+        others(book.accounts.filter(a => a.group === 'PERSONAL'), 'My accounts construction money went through');
+    }
+    return items;
+}
+
+/** The project's part of an account it does not own (null: the account is the project's own). */
+const shareOf = (a, p) => p && a.projectId !== p.id ? a.byProject.find(s => s.projectId === p.id)?.amount ?? 0 : null;
+const personalTotal = a => a.byProject.reduce((s, x) => s + num(x.amount), 0);
+
+function acctRowHtml(a, p, child) {
+    const [label, , tone, what] = roleMeta(a);
+    const personal = a.group === 'PERSONAL';
+    const shown = personal ? (p ? shareOf(a, p) : personalTotal(a)) : a.balance;
+    const net = num(a.monthIn) - num(a.monthOut);
+    const flow = num(a.monthIn) + num(a.monthOut);
+    const meta = child ? (a.role === 'BANK' ? [a.institution, tail(a.accountNumber)].filter(Boolean).join(' ') || what : what)
+        : personal ? (p ? (a.bankOf.includes(p.id) ? 'the project’s bank account' : 'its money moved here') : a.byProject.map(x => `${x.projectName} ${signed(x.amount)}`).join(' · '))
+        : [a.bankOf.length ? (p && a.bankOf.includes(p.id) ? 'this project’s bank' : `bank of ${plural(a.bankOf.length, 'project')}`) : 'shared by every project', a.institution].filter(Boolean).join(' · ');
+    return `<div class="acct-item rich chit-item ca-row ${child && !p ? 'ca-child' : ''} accent-${tone} ${view.acct === a.id ? 'selected' : ''}" data-key="${a.id}">
+        <span class="chip-icon sm ${tone}">${icon(acctIcon(a))}</span>
+        <div class="acct-main">
+            <div class="acct-line"><span class="acct-name" title="${esc(a.name)}">${esc(child ? label : a.name)}</span>
+                <b class="acct-bal ${num(shown) < 0 ? 'neg' : ''}" ${personal ? 'title="Construction money that went through it (in − out)"' : ''}>${personal ? signed(shown) : money(shown)}</b></div>
+            <div class="acct-line sub"><span class="acct-meta">${esc(meta)}</span>
+                ${net && !personal ? `<span class="acct-delta ${net > 0 ? 'pos' : 'neg'}" title="This month">${net > 0 ? '+' : '−'}${moneyShort(Math.abs(net))}</span>` : ''}</div>
+            ${!personal ? `<div class="chit-prog"><div class="acct-util good"><span style="width:${flow ? (num(a.monthIn) / flow) * 100 : 0}%"></span></div>
+                <small>${flow ? `this month +${moneyShort(a.monthIn)} −${moneyShort(a.monthOut)}` : `${a.entries} ${a.entries === 1 ? 'entry' : 'entries'} · nothing this month`}</small></div>` : ''}
+        </div></div>`;
+}
+
+function drawAccounts(container, book) {
+    if (view.acctProject !== 'all' && view.acctProject != null && !book.projects.some(p => p.id === view.acctProject)) view.acctProject = null;
+    if (view.acctProject == null) view.acctProject = view.selectedId && book.projects.some(p => p.id === view.selectedId) ? view.selectedId : book.projects[0]?.id ?? 'all';
+    const p = view.acctProject === 'all' ? null : book.projects.find(x => x.id === view.acctProject) || null;
+    const items = acctItems(book, p);
+    const keys = items.filter(i => i.a).map(i => i.a.id);
+    if (!keys.includes(view.acct)) view.acct = (p ? book.accounts.find(a => a.id === p.bankAccountId) : null)?.id ?? keys[0] ?? null;
+    if (!keys.includes(view.acct)) view.acct = keys[0] ?? null;
+    history.replaceState(null, '', `#/construction/accounts${p ? `/${p.id}` : ''}`);
+
+    container.innerHTML = `
+    <div class="page chits-page cn-page cn-acct-page">
+        <section class="cn-top" id="cn-brand">${brandHtml('accounts')}</section>
+        <div class="cn-strip" id="cn-cards">${acctStripHtml(book, p)}</div>
+        <section class="panel p-chit-list ca-list-panel">
+            <header class="panel-head">
+                <h3><span class="ico">${icon(p ? kindIcon(p) : 'wallet')}</span><span class="ca-filter ca-head-pick"><label class="ca-filter-pick" title="Pick a project, or every project">
+                    <select id="cn-acct-project" aria-label="Project">
+                        ${book.projects.map(q => `<option value="${q.id}" ${p?.id === q.id ? 'selected' : ''} data-balance="${q.moneyBalance}"
+                            data-meta="${esc(`${q.status === 'CLOSED' ? 'closed · ' : ''}${q.kind === 'CONTRACT' ? 'contract work' : 'development'} · money in its accounts`)}">${esc(q.name)}</option>`).join('')}
+                        <option value="all" ${p ? '' : 'selected'} data-meta="every project, grouped">All projects</option></select></label></span></h3>
+                <div class="actions">${manage() ? `<button class="btn sm primary icon hc-add" id="cn-acct-new" title="Add a common business account (a bank account or cash shared by every project)" aria-label="Add a common account">${icon('plus')}</button>` : ''}</div>
+            </header>
+            <div class="panel-body flush"><div class="chit-rows scroll" id="cn-acct-list" tabindex="0">${items.length ? items.map(i => i.label
+                ? `<div class="group-label ${i.project ? 'clickable ca-chit-label' : ''}" ${i.project ? `data-project="${i.project.id}" title="Show only ${esc(i.project.name)}"` : ''}><span>${i.project ? icon(kindIcon(i.project)) : ''}${esc(i.label)}</span>${i.project ? `<b>${moneyShort(i.project.moneyBalance)}</b>` : ''}</div>`
+                : acctRowHtml(i.a, p, i.child)).join('') : emptyState(book.projects.length ? 'No accounts yet' : 'Start a project: its accounts are made with it', 'wallet')}</div></div>
+        </section>
+        <div class="chit-detail" id="cn-acct-detail"></div>
+    </div>`;
+    bindBrand(container);
+    const reload = async () => drawAccounts(container, await api.get('/construction/book'));
+    container.querySelector('#cn-acct-project').addEventListener('change', e => {
+        view.acctProject = e.target.value === 'all' ? 'all' : Number(e.target.value);
+        if (view.acctProject !== 'all') view.selectedId = view.acctProject;
+        setPref('constructionAccounts', { project: view.acctProject });
+        view.acct = null;
+        drawAccounts(container, book);
+    });
+    const listEl = container.querySelector('#cn-acct-list');
+    const select = id => {
+        view.acct = id;
+        listEl.querySelectorAll('[data-key]').forEach(el => el.classList.toggle('selected', Number(el.dataset.key) === id));
+        listEl.querySelector(`[data-key="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+        drawAcctDetail(container, book, p, reload);
+    };
+    listEl.addEventListener('click', e => {
+        const label = e.target.closest('[data-project]');
+        if (label) { view.acctProject = Number(label.dataset.project); view.selectedId = view.acctProject; view.acct = null; drawAccounts(container, book); return; }
+        const row = e.target.closest('[data-key]');
+        if (row) select(Number(row.dataset.key));
+    });
+    let keyTimer;
+    setPageKeys(listNavigator({
+        items: () => [...listEl.querySelectorAll('[data-key]')],
+        selected: () => listEl.querySelector('.selected'),
+        select: el => {
+            listEl.querySelectorAll('.selected').forEach(x => x.classList.remove('selected'));
+            el.classList.add('selected');
+            clearTimeout(keyTimer);
+            keyTimer = setTimeout(() => select(Number(el.dataset.key)), 130);
+        },
+    }));
+    container.querySelector('#cn-acct-new')?.addEventListener('click', () => openCommonAccount(async (_, m) => { toast(m); invalidateAccounts(); reload(); }));
+    container.querySelector('#cn-cards').addEventListener('click', e => { const go = e.target.closest('[data-go]'); if (go && /^\d+$/.test(go.dataset.go)) select(Number(go.dataset.go)); });
+    if (view.acct) select(view.acct);
+    else container.querySelector('#cn-acct-detail').innerHTML = panel({ title: 'Accounts', iconName: 'wallet', body: emptyState('Pick an account on the left', 'wallet') });
+}
+
+/** The figures of the picked project's books (or of every project); each opens its account. */
+function acctStripHtml(book, p) {
+    const own = a => p ? a.projectId === p.id : a.group === 'OWN';
+    const total = role => book.accounts.filter(a => own(a) && a.role === role).reduce((s, a) => s + num(a.balance), 0);
+    const first = role => book.accounts.find(a => own(a) && a.role === role)?.id || '';
+    const personal = book.accounts.filter(a => a.group === 'PERSONAL').reduce((s, a) => s + (p ? num(shareOf(a, p)) : personalTotal(a)), 0);
+    const cash = p ? num(p.moneyBalance) : book.projects.reduce((s, q) => s + num(q.moneyBalance), 0)
+        + book.accounts.filter(a => a.group === 'COMMON').reduce((s, a) => s + num(a.balance), 0);
+    return `
+        ${chip('wallet', 'Money', moneyShort(cash), p ? 'The project’s own cash and bank' : 'The projects’ and the common accounts’ cash and bank', '', String(p ? p.bankAccountId || first('BANK') : first('BANK')))}
+        ${chip('arrow-in', 'Received', moneyShort(total('ADVANCES') + total('INTEREST')), 'Held as advances (and late interest) until the project closes', '', String(first('ADVANCES')))}
+        ${chip('hard-hat', 'Cost so far', moneyShort(total('COST') + total('LAND')), 'Construction cost and land: work in progress until closing', '', String(first('COST')))}
+        ${total('LOAN') ? chip('bank', 'Loans', moneyShort(total('LOAN')), 'Owed to lenders', '', String(first('LOAN'))) : ''}
+        ${total('CAPITAL') ? chip('users', 'Partners', moneyShort(total('CAPITAL')), 'What the business owes the other partners', '', String(first('CAPITAL'))) : ''}
+        ${personal ? chip('user', 'Via my accounts', signed(personal), 'Construction money that moved through your own accounts (in − out): your money put in, or costs paid personally', personal < 0 ? 'note' : '') : ''}
+        <span class="cn-strip-meta">${icon('wallet')}${plural(book.accounts.filter(a => (p ? a.projectId === p.id : a.group !== 'PERSONAL')).length, 'account')}</span>`;
+}
+
+/** Move money: the project's transfer form (it books the move against the project), with an account set on one side. */
+async function moveMoney(book, p, preset, reload) {
+    const projectId = p?.id || preset.projectId || book.projects.find(q => q.status !== 'CLOSED')?.id;
+    if (!projectId) { toast('Start a project first', 'error'); return; }
+    const d = await api.get(`/construction/${projectId}`);
+    openTransfer(d, async (_, m) => { toast(m); invalidateAccounts(); reload(); }, preset);
+}
+
+function drawAcctDetail(container, book, p, reload) {
+    const old = container.querySelector('#cn-acct-detail');
+    const target = old.cloneNode(false);
+    old.replaceWith(target);
+    const a = book.accounts.find(x => x.id === view.acct);
+    if (!a) return;
+    const [label, , tone, what] = roleMeta(a);
+    const project = a.projectId ? book.projects.find(q => q.id === a.projectId) : null;
+    const liability = a.accountClass !== 'ASSET';
+    const personal = a.group === 'PERSONAL';
+    const owner = project ? `Belongs to ${project.name}` : a.group === 'COMMON' ? 'Shared by every project' : 'One of your own accounts';
+    const canMove = manage() && isMoney(a) && (!project || project.status !== 'CLOSED');
+    target.innerHTML = `
+        <section class="panel p-chit-head cn-acct-head">
+            <div class="chit-banner ca-banner tone-${tone}">
+                <span class="hero-icon">${icon(acctIcon(a))}</span>
+                <div class="ab-id">
+                    <div class="ab-name">${esc(a.name)} <span class="badge">${esc(label)}</span></div>
+                    <div class="ab-meta">${[owner, what, a.institution, tail(a.accountNumber)].filter(Boolean).map(esc).join('<i>·</i>')}</div>
+                    ${a.byProject.length && !project ? `<div class="ca-shares">${a.byProject.map(s => `<span class="ca-share clickable" data-act="pick-project" data-id="${s.projectId}" title="This project's money here: open its accounts">
+                        ${icon('hard-hat')}${esc(s.projectName)} <b class="${num(s.amount) < 0 ? 'neg' : ''}">${signed(s.amount)}</b></span>`).join('')}</div>` : ''}
+                </div>
+                <div class="ab-bal"><small>${personal ? 'Construction money' : liability ? 'Owed' : 'Balance'}</small><b>${personal ? signed(p ? shareOf(a, p) : personalTotal(a)) : money(a.balance)}</b>
+                    <span class="ab-change">${personal ? `account balance ${money(a.balance)}` : `in ${moneyShort(a.monthIn)} · out ${moneyShort(a.monthOut)} this month`}</span></div>
+                <div class="ab-actions">${canMove ? `
+                    <button class="btn sm on-dark" data-act="move-in" title="Move money into this account">${icon('arrow-in')}Move in</button>
+                    <button class="btn sm on-dark" data-act="move-out" title="Move money out of this account">${icon('arrow-out')}Move out</button>` : ''}
+                    ${project ? `<a class="btn sm on-dark" href="#/construction/${project.id}/overview" title="Open the project">${icon('hard-hat')}Project${icon('chevron-right')}</a>` : ''}</div>
+            </div>
+        </section>
+        <div class="hc-detail-rest">${panel({
+            title: personal ? 'Construction lines only' : 'Statement', iconName: 'list', cls: 'p-chit-tabs', bodyClass: 'flush',
+            actions: `<div class="seg-chips sm">${RANGES.map(([k, l]) => `<button class="seg-chip ${view.range === k ? 'active' : ''}" data-act="range" data-range="${k}">${l}</button>`).join('')}</div>`,
+            body: `<div class="scroll chit-tab-body" id="cn-stmt">${loading()}</div>`,
+        })}</div>`;
+    const body = target.querySelector('#cn-stmt');
+    target.addEventListener('click', async e => {
+        const row = e.target.closest('tr[data-entry]');
+        if (row && !e.target.closest('[data-act], button, a')) { toggleEntryRow(row, null, { onChanged: reload }); return; }
+        const el = e.target.closest('[data-act]');
+        if (!el) return;
+        try {
+            if (el.dataset.act === 'range') { view.range = el.dataset.range; drawAcctDetail(container, book, p, reload); }
+            if (el.dataset.act === 'move-in') await moveMoney(book, p || project, { projectId: a.projectId || a.bankOf[0], toId: a.id }, reload);
+            if (el.dataset.act === 'move-out') await moveMoney(book, p || project, { projectId: a.projectId || a.bankOf[0], fromId: a.id }, reload);
+            if (el.dataset.act === 'pick-project') { view.acctProject = Number(el.dataset.id); view.selectedId = view.acctProject; drawAccounts(container, book); }
+        } catch (err) { toast(err.message, 'error'); }
+    });
+    const from = RANGES.find(r => r[0] === view.range)?.[2]() || firstOfMonth(-2);
+    api.get(`/construction/book/accounts/${a.id}/statement`, { from, to: '9999-12-31' }).then(s => {
+        if (document.body.contains(body)) body.innerHTML = statementHtml(s, a, p);
+    }).catch(err => { body.innerHTML = emptyState(err.message, 'alert'); });
+}
+
+/** A statement: newest first, each line's kind, the project it belongs to (where that adds something) and the other side. */
+function statementHtml(s, a, p) {
+    const lines = p && a.projectId !== p.id && a.group === 'PERSONAL' ? s.rows.filter(r => r.construction?.projectId === p.id) : s.rows;
+    if (!lines.length) return `<div class="cn-pad">${emptyState('Nothing in this period', 'list')}</div>`;
+    const debitNormal = a.accountClass === 'ASSET';
+    return `<div class="ca-stmt-sum">
+            ${a.group === 'PERSONAL' ? `<span><small>Showing</small><b>Construction only</b></span>` : `<span><small>Opening ${date(s.from)}</small><b>${signed(s.openingBalance)}</b></span>`}
+            <span class="pos"><small>${debitNormal ? 'In' : 'Paid off (Dr)'}</small><b>${money(s.totalDebit)}</b></span>
+            <span class="neg"><small>${debitNormal ? 'Out' : 'Added (Cr)'}</small><b>${money(s.totalCredit)}</b></span>
+            <span><small>${a.group === 'PERSONAL' ? 'Net' : 'Closing'}</small><b>${signed(s.closingBalance)}</b></span></div>
+        <table class="grid dense ca-stmt cn-stmt"><thead><tr><th>Date</th><th>Entry</th><th>Details</th><th class="num">${debitNormal ? 'In' : 'Dr'}</th><th class="num">${debitNormal ? 'Out' : 'Cr'}</th><th class="num">Balance</th></tr></thead>
+        <tbody>${lines.slice().reverse().map(r => `<tr class="clickable" data-entry="${r.entryId}" title="${esc([r.narration, r.counterAccounts ? `Other side: ${r.counterAccounts}` : ''].filter(Boolean).join('\n'))}">
+            <td class="hc-nowrap">${shortDate(r.date)}</td>
+            <td class="hc-nowrap muted">${esc(r.entryNo)}</td>
+            <td class="ca-stmt-what"><span class="cn-stmt-line">${kindChip(r.voucherType, 'xs', r.voucherLabel)}${r.construction && (a.group !== 'OWN' || r.construction.projectId !== a.projectId) ? projectTag(r.construction) : ''}
+                <span class="cn-stmt-text"><b>${esc(r.narration)}</b>${r.counterAccounts ? `<small class="muted"> · ${narrativeHtml(r.counterAccounts)}</small>` : ''}</span></span></td>
+            <td class="num pos">${num(r.debit) ? money(r.debit) : ''}</td>
+            <td class="num neg">${num(r.credit) ? money(r.credit) : ''}</td>
+            <td class="num"><b>${signed(r.balance)}</b></td></tr>`).join('')}</tbody></table>`;
 }
 
 // ===================================================================== the selected project
@@ -344,6 +607,7 @@ async function onClick(e, d, target, body, drawTab) {
             case 'agreement': openProjectAgreement(p, { id }, reload); break;
             case 'make-agreement': openProjectAgreement(p, { kind: el.dataset.kind, refId: id, defaults: agreementDefaults(d, el.dataset.kind, id) }, reload); break;
             case 'transfer': openTransfer(d, after); break;
+            case 'ag-filter': view.agFilter = el.dataset.to; drawTab(); break;
             case 'common': openCommonAccount(async (_, m) => { toast(m); reload(); }); break;
             default:
         }
@@ -589,34 +853,60 @@ const TABS = {
 
     agreements(d) {
         const p = d.project;
+        const list = d.agreements;
+        // what the project knows of and has no agreement for yet
         const make = [];
-        if (p.kind === 'CONTRACT') make.push(['CONTRACT', null, 'Construction agreement with the owner']);
-        d.parties.forEach(x => make.push([x.role === 'LANDOWNER' ? 'JDA' : 'PLOT_PURCHASE', x.id, `${x.role === 'LANDOWNER' ? 'Joint development agreement' : 'Agreement of sale'} · ${x.name}`]));
-        d.partners.filter(v => !v.partner.me).forEach(v => make.push(['PARTNERSHIP', v.partner.id, `Partner’s agreement · ${v.partner.name}`]));
-        const missing = make.filter(([k, id]) => !agreementOf(d, k, id));
-        return `<div class="cn-pad">${section('file-text', 'Agreements', '', 'on stamp paper, signed online or in person')}
-            ${d.agreements.length ? `<div class="cn-ag-list">${d.agreements.map(a => {
-                const [name, , ic] = AGREEMENT_KINDS[a.kind] || [a.title, '', 'file-text'];
-                const done = a.status !== 'DRAFT';
-                return `<div class="cn-ag ${done ? 'done' : 'draft'}"><span class="chip-icon sm ${done ? 'teal' : 'gray'}">${icon(ic)}</span>
-                    <div class="min-0 grow"><b>${esc(a.title)} · ${esc(a.agreementNo)}</b><small>${esc(a.partyName)} · ${done ? (a.status === 'ACCEPTED' ? `accepted online ${shortDate(String(a.acceptedAt).slice(0, 10))}` : `signed on paper ${shortDate(String(a.acceptedAt).slice(0, 10))}`) : `draft, made ${shortDate(String(a.createdAt).slice(0, 10))}`}</small></div>
-                    <span class="badge ${done ? 'good' : 'warning'}">${done ? 'Signed' : 'Waiting'}</span>
-                    <button type="button" class="btn sm ghost" data-act="agreement" data-id="${a.id}">${icon('eye')}Open</button></div>`;
-            }).join('')}</div>` : '<p class="muted">No agreements yet.</p>'}
-            ${manage() && missing.length ? `${section('plus', 'Make')}<div class="cn-ag-list">${missing.map(([k, id, label]) => `<div class="cn-ag"><span class="chip-icon sm gray">${icon(AGREEMENT_KINDS[k][2])}</span>
-                <div class="min-0 grow"><b>${esc(label)}</b></div><button type="button" class="btn sm" data-act="make-agreement" data-kind="${k}" ${id != null ? `data-id="${id}"` : ''}>${icon('plus')}Make</button></div>`).join('')}</div>` : ''}
-            <p class="muted small">${icon('info')}${p.kind === 'CONTRACT' ? 'Supplementary agreements for extra works are made on the Extra works tab.' : 'A flat’s agreements (for sale, tripartite, sale deed, possession) are made from its sale.'}
-                Have the wording reviewed by your advocate for your State; stamp duty depends on the State and the kind of deed.</p></div>`;
-    },
-
-    accounts(d) {
-        return `<div class="cn-pad">${section('wallet', 'The project’s accounts', `${btn('transfer', 'transfer', 'Move money')}${btn('common', 'plus', 'Common account')}`,
-                'its own books, off your personal accounts')}
-            <div class="cn-accounts">${d.accounts.map(a => `<div class="cn-account ${a.own ? '' : 'common'}"><span class="chip-icon sm ${['BANK', 'COMMON'].includes(a.role) ? 'aqua' : a.role === 'LOAN' || a.role === 'CAPITAL' || a.role === 'ADVANCES' ? 'coral' : 'gold'}">${icon(
-                { BANK: 'bank', COST: 'layers', LAND: 'home', ADVANCES: 'arrow-in', INTEREST: 'percent', PROFIT: 'trending', LOAN: 'bank', CAPITAL: 'users', COMMON: 'bank' }[a.role] || 'wallet')}</span>
-                <div class="min-0 grow"><b>${esc(a.name)}</b><small class="muted">${esc(ROLE[a.role] || (a.own ? '' : 'used by this project'))}</small></div><b class="${num(a.balance) < 0 ? 'neg' : ''}">${money(a.balance)}</b></div>`).join('')}</div>
-            <p class="muted small">${icon('info')}Until the project closes, what it cost is held as “construction cost” and “land” (work in progress) and what was received as
-                “received” (advances). Closing sets them off and shares the profit among the partners; your share becomes your income.
-                Every entry is also in the Journal, marked as a project entry.</p></div>`;
+        if (p.kind === 'CONTRACT') make.push({ kind: 'CONTRACT', refId: null, title: 'Construction agreement', party: p.clientName, about: `${d.stages.filter(s => num(s.amount)).length} stages`, value: d.figures.contractValue });
+        d.extras.filter(x => ['PROPOSED', 'AGREED'].includes(x.status)).forEach(x => make.push({ kind: 'EXTRA', refId: x.id, title: 'Supplementary agreement', party: p.clientName, about: `EX-${x.seq} ${x.title}`, value: x.amount }));
+        d.parties.forEach(x => make.push({ kind: x.role === 'LANDOWNER' ? 'JDA' : 'PLOT_PURCHASE', refId: x.id, title: x.role === 'LANDOWNER' ? 'Joint development agreement' : 'Agreement of sale', party: x.name,
+            about: x.sharePercent != null ? `${num(x.sharePercent)}% ${x.role === 'LANDOWNER' ? 'of the landowners’ part' : 'of the plot'}` : '', value: x.consideration }));
+        d.partners.filter(v => !v.partner.me).forEach(v => make.push({ kind: 'PARTNERSHIP', refId: v.partner.id, title: 'Partner’s agreement', party: v.partner.name, about: `${num(v.partner.sharePercent)}% of the profit`, value: null }));
+        const missing = make.filter(m => !agreementOf(d, m.kind, m.refId));
+        const signed = list.filter(a => a.status !== 'DRAFT');
+        const waiting = list.filter(a => a.status === 'DRAFT');
+        const sent = waiting.filter(a => a.link === 'ACTIVE');
+        const f = view.agFilter;
+        const shown = f === 'signed' ? signed : f === 'waiting' ? waiting : list;
+        const filter = (k, label, n) => `<button type="button" class="seg-chip ${f === k ? 'active' : ''}" data-act="ag-filter" data-to="${k}">${label}<span class="count">${n}</span></button>`;
+        const covered = signed.reduce((s, a) => s + num(a.value), 0);
+        const day = v => v ? shortDate(String(v).slice(0, 10)) : '';
+        const STATE = a => a.status === 'ACCEPTED' ? ['good', 'check-circle', 'Accepted online'] : a.status !== 'DRAFT' ? ['good', 'signature', 'Signed on paper']
+            : a.link === 'ACTIVE' ? ['warning', 'send', 'Sent · waiting'] : a.link === 'LOCKED' ? ['critical', 'lock', 'Link locked']
+            : a.link === 'EXPIRED' ? ['gray', 'clock', 'Link expired'] : a.link === 'REVOKED' ? ['gray', 'x', 'Link stopped'] : ['gray', 'file-text', 'Draft'];
+        const mark = (on, ic, title) => on ? `<span class="badge gray" title="${esc(title)}">${icon(ic)}</span>` : '';
+        const row = a => {
+            const [tone, ic, label] = STATE(a);
+            const kindIc = (AGREEMENT_KINDS[a.kind] || ['', '', 'file-text'])[2];
+            return `<tr class="clickable" data-act="agreement" data-id="${a.id}">
+                <td><span class="cn-ag-no">${icon(kindIc)}<span><b>${esc(a.agreementNo)}</b><small>${esc(a.title)}</small></span></span></td>
+                <td><b>${esc(a.partyName || '—')}</b><small class="muted cn-ag-sub">${esc([a.partyRelation, a.partyPhone].filter(Boolean).join(' · '))}</small></td>
+                <td><span class="ellipsis cn-ag-cov" title="${esc(a.about || '')}">${esc(a.about || '—')}</span></td>
+                <td class="r">${num(a.value) ? money(a.value) : '<span class="muted">—</span>'}</td>
+                <td class="nowrap">${a.agreementDate ? date(a.agreementDate) : '<span class="muted">—</span>'}${a.place ? `<small class="muted cn-ag-sub">${esc(a.place)}</small>` : ''}</td>
+                <td class="nowrap">${num(a.stampDuty) ? money(a.stampDuty) : '<span class="muted">—</span>'}${a.stampSerial ? `<small class="muted cn-ag-sub">${esc(a.stampSerial)}</small>` : ''}</td>
+                <td><span class="badge ${tone}">${icon(ic)}${label}</span>${a.status === 'DRAFT' && a.link !== 'NONE' ? `<small class="muted cn-ag-sub">${a.views ? `opened ${a.views}×${a.lastViewedAt ? ` · ${day(a.lastViewedAt)}` : ''}` : 'not opened yet'}${a.link === 'ACTIVE' && a.linkExpiresAt ? ` · till ${day(a.linkExpiresAt)}` : ''}</small>` : ''}</td>
+                <td>${a.acceptedAt ? `${esc(a.acceptedName || a.partyName || '')} <small class="muted">${dateTime(a.acceptedAt)}</small>` : '<span class="muted">—</span>'}
+                    <span class="cn-ag-marks">${mark(a.companySigned, 'stamp', 'Signed and sealed by us')}${mark(a.witnessSigned, 'user', `Witness ${a.witnessName || ''} signed`)}${mark(a.aadhaar, 'id-card', 'Aadhaar asked')}${mark(a.selfie, 'camera', 'Selfie asked')}${mark(a.located, 'flag', 'Location kept')}</span></td>
+                <td class="r"><button class="btn sm ${a.status === 'DRAFT' ? '' : 'ghost'}" data-act="agreement" data-id="${a.id}">${icon(a.status === 'DRAFT' ? 'edit' : 'eye')}${a.status === 'DRAFT' ? 'Continue' : 'Open'}</button></td></tr>`;
+        };
+        return `<div class="hc-dues-sum cn-ag-tiles">
+                <span><small>Signed or accepted</small><b class="pos">${signed.length}</b></span>
+                <span><small>Sent, waiting for the party</small><b>${sent.length}</b></span>
+                <span><small>Drafts · still to make</small><b class="${missing.length ? 'neg' : ''}">${waiting.length - sent.length} · ${missing.length}</b></span>
+                <span><small>Value signed</small><b>${money(covered)}</b></span>
+            </div>
+            <div class="cn-ag-bar"><div class="seg-chips sm">${filter('all', 'All', list.length)}${filter('signed', 'Signed', signed.length)}${filter('waiting', 'Waiting', waiting.length)}</div>
+                <span class="small muted">${icon('info')} On stamp paper, signed online or in person. Click a row to open it.</span></div>
+            ${shown.length || (missing.length && f !== 'signed') ? `<div class="cn-ag-wrap"><table class="grid compact cn-ag-table">
+                <thead><tr><th>Agreement</th><th>With</th><th>Covers</th><th class="r">Value</th><th>Dated</th><th>Stamp</th><th>Status</th><th>Accepted by</th><th></th></tr></thead>
+                <tbody>${shown.map(row).join('')}
+                ${f !== 'signed' ? missing.map(m => `<tr class="cn-ag-missing"><td><span class="cn-ag-no">${icon(AGREEMENT_KINDS[m.kind][2])}<span><span class="muted">No agreement</span><small>${esc(m.title)}</small></span></span></td>
+                    <td>${esc(m.party || '—')}</td><td><span class="ellipsis cn-ag-cov">${esc(m.about || '')}</span></td><td class="r">${num(m.value) ? money(m.value) : ''}</td><td></td><td></td>
+                    <td><span class="badge gray">${icon('info')}None</span></td><td></td>
+                    <td class="r">${manage() ? `<button class="btn sm" data-act="make-agreement" data-kind="${m.kind}" ${m.refId != null ? `data-id="${m.refId}"` : ''}>${icon('file-text')}Make</button>` : ''}</td></tr>`).join('') : ''}</tbody>
+            </table></div>` : `<div class="cn-pad">${emptyState(list.length ? 'None here' : 'No agreements yet', 'file-text')}</div>`}
+            <p class="muted small cn-ag-foot">${icon('info')}${p.kind === 'CONTRACT' ? 'Supplementary agreements for extra works can also be made on the Extra works tab.' : 'A flat’s agreements (for sale, tripartite, sale deed, possession) are made from its sale.'}
+                Have the wording reviewed by your advocate for your State; stamp duty depends on the State and the kind of deed.</p>`;
     },
 };
+

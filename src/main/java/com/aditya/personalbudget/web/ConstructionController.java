@@ -76,9 +76,11 @@ public class ConstructionController {
     private final ConstructionMoneyService money;
     private final ConstructionSalesService sales;
     private final ConstructionAgreementService agreements;
+    private final com.aditya.personalbudget.service.ConstructionBookService book;
 
     public ConstructionController(ConstructionService projects, ConstructionMoneyService money, ConstructionSalesService sales,
-                                  ConstructionAgreementService agreements) {
+                                  ConstructionAgreementService agreements, com.aditya.personalbudget.service.ConstructionBookService book) {
+        this.book = book;
         this.projects = projects;
         this.money = money;
         this.sales = sales;
@@ -110,6 +112,21 @@ public class ConstructionController {
     @RequiresPermission(Permission.MANAGE_PROJECTS)
     public Overview addCommonAccount(@Valid @RequestBody CommonAccountRequest r) {
         return money.addCommonAccount(r);
+    }
+
+    /** Construction › Accounts: the construction book's accounts, and my own accounts construction money went through. */
+    @GetMapping(BASE + "/book")
+    @RequiresPermission(Permission.VIEW)
+    public com.aditya.personalbudget.service.ConstructionBookService.Book book() {
+        return book.book();
+    }
+
+    @GetMapping(BASE + "/book/accounts/{accountId}/statement")
+    @RequiresPermission(Permission.VIEW)
+    public com.aditya.personalbudget.dto.ReportDtos.AccountLedger statement(@PathVariable Long accountId,
+            @org.springframework.web.bind.annotation.RequestParam @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+            @org.springframework.web.bind.annotation.RequestParam @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to) {
+        return book.statement(accountId, from, to);
     }
 
     @GetMapping(P)

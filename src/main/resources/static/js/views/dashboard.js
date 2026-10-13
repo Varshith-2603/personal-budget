@@ -7,7 +7,7 @@
 import { api } from '../core/api.js';
 import { state, can } from '../core/store.js';
 import { panel, kpi, esc, statusBadge, emptyState, openModal } from '../core/ui.js';
-import { kindChip, movementHtml } from '../core/entry-kind.js';
+import { kindChip, movementHtml, projectTag } from '../core/entry-kind.js';
 import { shortNarration, partyAdds, chitCodeOf } from '../core/chit-trail.js';
 import { icon, accountTypeIcon } from '../core/icons.js';
 import { money, moneyShort, percent, monthLabel, shortDate, daysFromToday, isoDate } from '../core/format.js';
@@ -238,7 +238,7 @@ function recentHtml(entries) {
         const sign = e.voucherType === 'EXPENSE' ? 'neg' : e.voucherType === 'INCOME' ? 'pos' : '';
         return `<div class="list-item clickable" data-entry="${e.id}">
             ${kindChip(e.voucherType, 'sm', e.voucherLabel)}
-            <div class="grow min-0"><div class="title ellipsis" title="${esc(e.narration)}">${esc(shortNarration(e.narration, e.chitTrail, e.party))}${partyAdds(e.party, shortNarration(e.narration, e.chitTrail, e.party), e.chitTrail) ? ` <span class="ls-person">· ${esc(e.party)}</span>` : ''}</div><div class="meta ellipsis">${shortDate(e.entryDate)} · ${movementHtml(e.lines, chitCodeOf(e.chitTrail))}</div></div>
+            <div class="grow min-0"><div class="title ellipsis" title="${esc(e.narration)}">${projectTag(e.construction)}${esc(shortNarration(e.narration, e.chitTrail, e.party))}${partyAdds(e.party, shortNarration(e.narration, e.chitTrail, e.party), e.chitTrail) ? ` <span class="ls-person">· ${esc(e.party)}</span>` : ''}</div><div class="meta ellipsis">${shortDate(e.entryDate)} · ${movementHtml(e.lines, chitCodeOf(e.chitTrail))}</div></div>
             <b class="mono ${sign}">${money(e.amount)}</b>
         </div>`;
     }).join('')}</div>`;

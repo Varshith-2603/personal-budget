@@ -8,7 +8,7 @@
 import { api } from '../core/api.js';
 import { loadAccounts, can, state, hasFeature } from '../core/store.js';
 import { panel, esc, field, readForm, openModal, toast, confirmDialog, accountChip, emptyState, loading, table } from '../core/ui.js';
-import { kindChip, entryKind } from '../core/entry-kind.js';
+import { kindChip, entryKind, projectTag } from '../core/entry-kind.js';
 import { exportButton, bindExport } from '../core/export.js';
 import { icon, accountTypeIcon } from '../core/icons.js';
 import { money, moneyShort, date, shortDate, shortDateYear, percent, firstOfMonth, isoDate, number, daysFromToday } from '../core/format.js';
@@ -52,7 +52,8 @@ const STATEMENT_NAME = {
 };
 const statementName = a => STATEMENT_NAME[a.accountType] || (a.accountClass === 'LIABILITY' ? 'Loan statement' : 'Statement');
 
-const view = { tab: 'ALL', selectedId: null, search: '', from: firstOfMonth(-5), to: isoDate(), flow: 'all', pane: 'ledger', q: '' };
+/** closed: closed (inactive) accounts are listed too. emi: the list shows only the accounts of things bought on a loan EMI (kept out of the list otherwise). */
+const view = { tab: 'ALL', emi: false, closed: false, selectedId: null, search: '', from: firstOfMonth(-5), to: isoDate(), flow: 'all', pane: 'ledger', q: '' };
 
 /** Statement display preference, kept per browser: plain list or timeline grouped by month / party. */
 const prefs = getPref('statement', { grouped: false, groupBy: 'month' });
@@ -171,7 +172,9 @@ export async function render(container, _params, isCurrent) {
                 <div class="list-tools">
                     <div class="search-box">${icon('search')}<input id="account-search" name="q-accounts" data-plain placeholder="Search accounts…  ↑↓ to move" value="${esc(view.search)}"></div>
                     <div class="class-filter" id="class-filter">${[{ value: 'ALL', label: 'All' }, ...CLASS_TABS].map(t =>
-                        `<button class="cf-chip ${view.tab === t.value ? 'active' : ''}" data-tab="${t.value}">${t.value === 'ALL' ? 'All' : t.label}<i>${t.value === 'ALL' ? accounts.filter(a => LISTED.has(a.accountClass)).length : of(t.value).length}</i></button>`).join('')}
+                        `<button class="cf-chip ${view.tab === t.value && !view.emi ? 'active' : ''}" data-tab="${t.value}">${t.value === 'ALL' ? 'All' : t.label}<i>${t.value === 'ALL' ? accounts.filter(a => LISTED.has(a.accountClass) && !a.emiAccount && (view.closed || a.active)).length : of(t.value).filter(a => !a.emiAccount && (view.closed || a.active)).length}</i></button>`).join('')}
+                        ${accounts.some(a => a.emiAccount) ? `<button class="cf-chip ${view.emi ? 'active' : ''}" data-emi-accounts title="What is still owed on things bought on a loan EMI (managed in Expenses › EMIs); kept out of the list otherwise">${icon('calendar')}EMI<i>${accounts.filter(a => a.emiAccount && (view.closed || a.active)).length}</i></button>` : ''}
+                        ${accounts.some(a => !a.active && LISTED.has(a.accountClass)) ? `<button class="cf-chip ${view.closed ? 'active' : ''}" data-closed-accounts title="Closed (inactive) accounts are left out of the list; show them too">${icon('lock')}Closed<i>${accounts.filter(a => !a.active && LISTED.has(a.accountClass)).length}</i></button>` : ''}
                         <label class="switch sm list-group-switch" title="Group the list by assets / liabilities and account type"><input type="checkbox" id="acct-grouped" ${listPrefs.grouped ? 'checked' : ''}><span></span>Group</label></div>
                 </div>
                 <div class="scroll account-list" id="account-list" tabindex="0" aria-label="Accounts, use the arrow keys to move"></div>
@@ -190,7 +193,7 @@ export async function render(container, _params, isCurrent) {
     const ORDER = ['ASSET', 'LIABILITY', 'EQUITY'];
     const visible = () => {
         const term = view.search.toLowerCase();
-        return accounts.filter(a => LISTED.has(a.accountClass) && (view.tab === 'ALL' || a.accountClass === view.tab)
+        return accounts.filter(a => LISTED.has(a.accountClass) && (view.closed || a.active) && (view.emi ? a.emiAccount : !a.emiAccount && (view.tab === 'ALL' || a.accountClass === view.tab))
             && (!term || [a.name, a.institution, a.code, a.typeLabel, a.accountNumber].some(v => v && v.toLowerCase().includes(term))))
             .sort((a, b) => ORDER.indexOf(a.accountClass) - ORDER.indexOf(b.accountClass));
     };
@@ -234,10 +237,20 @@ export async function render(container, _params, isCurrent) {
     };
 
     container.querySelector('#class-filter').addEventListener('click', e => {
+        const closedChip = e.target.closest('[data-closed-accounts]');
+        if (closedChip) {
+            view.closed = !view.closed;
+            closedChip.classList.toggle('active', view.closed);
+            render(container, [], isCurrent);
+            return;
+        }
+        const emiChip = e.target.closest('[data-emi-accounts]');
+        if (emiChip) view.emi = !view.emi;
         const chipEl = e.target.closest('[data-tab]');
-        if (!chipEl || chipEl.dataset.tab === view.tab) return;
-        view.tab = chipEl.dataset.tab;
-        container.querySelectorAll('#class-filter [data-tab]').forEach(c => c.classList.toggle('active', c === chipEl));
+        if (!emiChip && (!chipEl || (chipEl.dataset.tab === view.tab && !view.emi))) return;
+        if (chipEl) { view.tab = chipEl.dataset.tab; view.emi = false; }
+        container.querySelectorAll('#class-filter [data-tab]').forEach(c => c.classList.toggle('active', !view.emi && c.dataset.tab === view.tab));
+        container.querySelector('#class-filter [data-emi-accounts]')?.classList.toggle('active', view.emi);
         drawList();
         if (!visible().some(a => a.id === view.selectedId)) selectFirst();
         else select(view.selectedId);
@@ -308,7 +321,7 @@ function accountFacts(a) {
     if (a.accountType === 'CREDIT_CARD' && a.creditLimit) {
         const util = Number(a.utilizationPercent || 0);
         fact(`${percent(util, 0)} used`, util > 70 ? 'bad' : util > 30 ? 'warn' : 'good', 'Credit utilization');
-        fact(`avail ${moneyShort(a.availableCredit)}`);
+        fact(`avail ${money(a.availableCredit, { decimals: 2 })}`, '', 'Available credit');
     } else if (a.creditLimit && a.accountClass === 'LIABILITY') {
         fact(`${percent(100 - Number(a.utilizationPercent || 0), 0)} repaid`, 'good', `Sanctioned ${money(a.creditLimit)}`);
     }
@@ -472,6 +485,7 @@ async function drawDetail(target, account, reload, all = []) {
             in: () => openQuickEntry({ kind: 'TRANSFER', preset: { toAccountId: id }, onSaved: reload }),
             lend: () => openExpenseDialog({ mode: 'LENT', onSaved: reload }),
             owe: () => openDebtDialog({ payableAccountId: id, onSaved: reload }),
+            emi: () => { location.hash = '#/expenses/emi'; },
         })[b.dataset.act]?.();
     });
 
@@ -533,7 +547,7 @@ async function drawDetail(target, account, reload, all = []) {
     const baseColumns = [
         { label: 'Date', render: r => date(r.date), cls: 'nowrap c-date' },
         { label: 'Entry', cls: 'c-entry', render: r => `<div class="entry-cell">${kindChip(r.voucherType, 'sm', r.voucherLabel)}
-            <span class="entry-text"><b class="ellipsis" title="${esc(r.narration)}">${esc(shortNarration(r.narration, r.chitTrail))}</b>${personOf(r)}${peopleAccount ? '' : inlineStatus(r)}${r.counterAccounts ? `<span class="entry-party ellipsis" title="${esc(`The other side: ${r.counterAccounts}`)}">${icon(isIn(r) ? 'arrow-in' : 'arrow-out')}${esc(shortCounter(r))}</span>` : ''}</span></div>` },
+            <span class="entry-text">${projectTag(r.construction)}<b class="ellipsis" title="${esc(r.narration)}">${esc(shortNarration(r.narration, r.chitTrail))}</b>${personOf(r)}${peopleAccount ? '' : inlineStatus(r)}${r.counterAccounts ? `<span class="entry-party ellipsis" title="${esc(`The other side: ${r.counterAccounts}`)}">${icon(isIn(r) ? 'arrow-in' : 'arrow-out')}${esc(shortCounter(r))}</span>` : ''}</span></div>` },
         { label: debitNormal ? 'In (Dr)' : 'Out (Dr)', align: 'r', render: r => Number(r.debit) ? `<span class="dr-amt">${money(r.debit)}</span>` : '' },
         { label: debitNormal ? 'Out (Cr)' : 'In (Cr)', align: 'r', render: r => Number(r.credit) ? `<span class="cr-amt">${money(r.credit)}</span>` : '' },
         { label: 'Balance', align: 'r', render: r => `<b>${money(r.balance)}</b>` },
@@ -755,7 +769,7 @@ function metrics(a, debt, all = []) {
         const util = Number(a.utilizationPercent || 0);
         list.push(tile('percent', debt && a.accountType !== 'CREDIT_CARD' ? 'Repaid of sanctioned' : 'Credit used',
             percent(a.accountType === 'CREDIT_CARD' ? util : 100 - util, 0),
-            `${a.accountType === 'CREDIT_CARD' ? 'Available' : 'Sanctioned'} ${money(a.accountType === 'CREDIT_CARD' ? a.availableCredit : a.creditLimit)}`,
+            `${a.accountType === 'CREDIT_CARD' ? 'Available' : 'Sanctioned'} ${a.accountType === 'CREDIT_CARD' ? money(a.availableCredit, { decimals: 2 }) : money(a.creditLimit)}`,
             util > 70 ? 'alert' : '', bar(util, util > 70 ? 'todo' : '')));
     }
     if (a.interestRate) list.push(tile('percent', 'Interest rate', percent(a.interestRate, 2) + ' p.a.',
@@ -827,6 +841,8 @@ function dueText(c) {
 /** The buttons that make sense on this kind of account. */
 function quickActions(a) {
     if (!can('POST_TRANSACTIONS')) return [];
+    // what is owed on an EMI is paid, undone or paid off only with its plan
+    if (a.emiAccount) return [['emi', 'calendar', 'Manage the EMI', 'Pay, undo or pay off in Expenses › EMIs']];
     const t = a.accountType;
     if (['BANK', 'CASH', 'WALLET'].includes(t)) return [['spend', 'arrow-out', 'Spend', 'Expense paid from this account'],
         ['receive', 'arrow-in', 'Receive', 'Income into this account'], ['out', 'transfer', 'Transfer', 'Move money to another account']];

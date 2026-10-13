@@ -43,8 +43,10 @@ public class ReportService {
 
     private final LedgerService ledger;
     private final ChitTrailService trails;
+    private final ConstructionTagService projectTags;
 
-    public ReportService(LedgerService ledger, ChitTrailService trails) {
+    public ReportService(LedgerService ledger, ChitTrailService trails, ConstructionTagService projectTags) {
+        this.projectTags = projectTags;
         this.trails = trails;
         this.ledger = ledger;
     }
@@ -288,6 +290,7 @@ public class ReportService {
         BigDecimal totalCredit = Money.ZERO;
         List<LedgerRow> rows = new ArrayList<>();
         Map<Long, ChitTrailService.Trail> chitTrails = trails.forEntryIds(own.stream().map(PostedLine::entryId).toList());
+        Map<Long, ConstructionTagService.ProjectTag> projects = projectTags.forEntryIds(own.stream().map(PostedLine::entryId).toList());
         for (PostedLine l : own) {
             running = running.add(books.natural(accountId, l.net()));
             totalDebit = totalDebit.add(l.debit());
@@ -298,7 +301,7 @@ public class ReportService {
                     .distinct()
                     .collect(Collectors.joining(", "));
             rows.add(new LedgerRow(l.entryId(), l.entryNo(), l.date(), l.voucherType(), l.voucherType().getLabel(), l.narration(),
-                    counter, l.debit(), l.credit(), running, chitTrails.get(l.entryId())));
+                    counter, l.debit(), l.credit(), running, chitTrails.get(l.entryId()), projects.get(l.entryId())));
         }
         return new AccountLedger(accountId, account.getCode(), account.getName(), account.getAccountClass(), from, to,
                 opening, totalDebit, totalCredit, running, rows);

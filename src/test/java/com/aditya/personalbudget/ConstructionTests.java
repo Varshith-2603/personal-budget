@@ -81,6 +81,7 @@ class ConstructionTests {
     @Autowired ConstructionAgreementService agreements;
     @Autowired ReportService reports;
     @Autowired LedgerService ledger;
+    @Autowired com.aditya.personalbudget.service.ConstructionBookService bookService;
 
     @BeforeEach
     void signIn() {
@@ -250,6 +251,44 @@ class ConstructionTests {
         var jda = agreements.make(id, make("JDA", d.parties().getFirst().getId()));
         assertThat(jda.title()).isEqualTo("Joint Development Agreement");
         assertThat(jda.particulars()).anyMatch(r -> r[0].equals("Flats allotted to the Landowner") && r[1].contains("A-101"));
+    }
+
+    @Test
+    void moneyMyPartnerPutsInIsTaggedWithTheProjectAndShowsUnderItsAccounts() {
+        LocalDate today = LocalDate.now();
+        Long myBank = bank("My own bank " + System.nanoTime());
+        Detail d = projects.create(new CreateRequest(project("CONTRACT", null, "Tag House " + System.nanoTime(), "Anil", "9876543210", today.minusMonths(1),
+                today.plusMonths(6), null), List.of(new StageInput(null, "Foundation", null, bd(100000), null, null, null)),
+                List.of(new PartnerInput("Me", null, null, bd(70), true), new PartnerInput("Ravi", "9123456780", null, bd(30), false)),
+                null, null, "NEW", null, null, null, null));
+        Long id = d.project().getId();
+        Long projectBank = d.project().getBankAccountId();
+        Long me = d.partners().stream().filter(v -> Boolean.TRUE.equals(v.partner().getMe())).findFirst().orElseThrow().partner().getId();
+        Long ravi = d.partners().stream().filter(v -> !Boolean.TRUE.equals(v.partner().getMe())).findFirst().orElseThrow().partner().getId();
+        // money put in twice (more after the first), by me from my bank and by the other partner
+        money.addCapital(id, new CapitalRequest(me, "INVEST", bd(50000), today, projectBank, myBank, null));
+        d = money.addCapital(id, new CapitalRequest(me, "INVEST", bd(25000), today, projectBank, myBank, "More"));
+        d = money.addCapital(id, new CapitalRequest(ravi, "INVEST", bd(40000), today, projectBank, null, null));
+        assertThat(d.partners().stream().filter(v -> v.partner().getId().equals(me)).findFirst().orElseThrow().invested()).isEqualByComparingTo("75000");
+        assertThat(d.figures().moneyBalance()).isEqualByComparingTo("115000");
+        // a cost paid from my own bank
+        money.addCost(id, new CostRequest("Steel", null, "Tata", null, null, null, null, bd(10000), today, myBank, null));
+
+        // my bank's statement says which project each of those came from
+        var rows = reports.accountLedger(myBank, today.minusDays(1), today).rows();
+        assertThat(rows).hasSize(3).allSatisfy(r -> {
+            assertThat(r.construction()).isNotNull();
+            assertThat(r.construction().projectId()).isEqualTo(id);
+        });
+        assertThat(rows).extracting(r -> r.construction().what()).contains("Capital", "Cost");
+        // and the Accounts view lists it as one of my accounts the project's money went through
+        var book = bookService.book();
+        var mine = book.accounts().stream().filter(a -> a.id().equals(myBank)).findFirst().orElseThrow();
+        assertThat(mine.group()).isEqualTo("PERSONAL");
+        assertThat(mine.byProject()).singleElement().satisfies(s -> assertThat(s.amount()).isEqualByComparingTo("-85000"));
+        assertThat(book.accounts()).anyMatch(a -> a.id().equals(projectBank) && a.group().equals("OWN") && a.balance().compareTo(bd(115000)) == 0);
+        // its statement there shows only construction's lines
+        assertThat(bookService.statement(myBank, today.minusDays(1), today).rows()).hasSize(3);
     }
 
     private static MakeRequest make(String kind, Long refId) {

@@ -8,7 +8,9 @@
 import { api } from '../core/api.js';
 import { state, loadAccounts } from '../core/store.js';
 import { esc, toast, openModal, confirmDialog } from '../core/ui.js';
-import { icon } from '../core/icons.js';
+import { evidenceFieldHtml, bindEvidenceField } from './evidence.js';
+import { evalAmount } from './expense-dialog.js';
+import { icon, accountTypeIcon } from '../core/icons.js';
 import { money, moneyShort, date, isoDate } from '../core/format.js';
 import { padHtml, bindPad, signatureSvg } from '../core/bond.js';
 
@@ -19,7 +21,8 @@ const phoneOk = v => !v || /^(\+?91)?[6-9]\d{9}$/.test(v.replace(/[\s-]/g, ''));
 export const AREA_UNITS = [['SQ_YD', 'sq yards'], ['SQ_FT', 'sq ft'], ['SQ_M', 'sq metres'], ['ACRE', 'acres'], ['GUNTA', 'guntas']];
 export const HEAD_ICONS = { LAND: 'home', APPROVALS: 'stamp', DESIGN: 'ruler', CEMENT: 'layers', STEEL: 'layers', SAND_AGGREGATE: 'layers', BRICKS_BLOCKS: 'grid',
     LABOUR: 'users', CONTRACTOR: 'hard-hat', ELECTRICAL: 'bolt', PLUMBING: 'droplet', PAINTING: 'droplet', FLOORING: 'grid', REGISTRATION: 'stamp',
-    MARKETING: 'send', EQUIPMENT: 'wrench', TRANSPORT: 'car', LIFT: 'arrow-up', OTHER: 'more' };
+    MARKETING: 'send', EQUIPMENT: 'wrench', TRANSPORT: 'car', LIFT: 'arrow-up', OTHER: 'more', EXCAVATION: 'wrench', CONCRETE: 'layers',
+    CENTERING: 'grid', DOORS_WINDOWS: 'home', FABRICATION: 'wrench', SITE_EXPENSES: 'receipt' };
 export const headName = h => { const s = String(h || '').replace(/_/g, ' ').toLowerCase(); return s.charAt(0).toUpperCase() + s.slice(1); };
 const MODES = ['Bank', 'UPI', 'Cash', 'Cheque', 'DD', 'Card'];
 
@@ -621,49 +624,254 @@ export function amountInWords(v) {
 
 // ===================================================================== costs
 
+/** The unit a head is usually bought in (filled in when the unit is empty). */
+const HEAD_UNITS = { CEMENT: 'bags', STEEL: 'kg', SAND_AGGREGATE: 'loads', BRICKS_BLOCKS: 'nos', CONCRETE: 'cum', LABOUR: 'days', CONTRACTOR: 'lumpsum',
+    CENTERING: 'sq ft', EXCAVATION: 'cft', FLOORING: 'sq ft', PAINTING: 'sq ft', TRANSPORT: 'trips', EQUIPMENT: 'days', ELECTRICAL: 'lumpsum',
+    PLUMBING: 'lumpsum', DOORS_WINDOWS: 'nos', FABRICATION: 'kg' };
+const TOP_HEADS = 10;
+const VISIBLE_PAYERS = 6;
+
+/**
+ * Adding (or changing) a cost, laid out like the expense dialog: a big amount (a sum like 1200+350, or worked out from
+ * quantity × rate), date chips, what and from whom on the left; on the right the head as tiles (the ones this project
+ * uses most first, the rest found by typing), the account it was paid from as chips (the project's own first, then
+ * the common accounts, then mine and my cards), the stage it was for and how the spending stands against the estimate.
+ * Picking a head fills its usual unit and the last rate paid; a vendor picked from the list fills the last head and
+ * rate bought from them. Shift+Enter saves and starts the next one; a photo of the bill goes with the entry.
+ */
 export async function openCost(d, c, after) {
     const p = d.project;
     const [list, accounts] = await Promise.all([heads(), loadAccounts(true, { all: true })]);
-    const payFrom = accounts.filter(a => a.active && !a.chitBook && (['CASH', 'BANK', 'WALLET', 'CREDIT_CARD'].includes(a.accountType)));
+    const payFrom = accounts.filter(a => a.active && !a.chitBook && ['CASH', 'BANK', 'WALLET', 'CREDIT_CARD'].includes(a.accountType)
+        && (!a.projectBook || !a.projectId || a.projectId === p.id));
+    // the project's own accounts, then the common ones, then mine (the most used for this project's costs first)
+    const used = {};
+    d.costs.forEach(x => { used[x.accountId] = (used[x.accountId] || 0) + 1; });
+    const rank = a => (a.projectBook && a.projectId === p.id) || a.id === p.bankAccountId ? 0 : a.projectBook ? 1 : 2;
+    const payers = payFrom.sort((a, b) => rank(a) - rank(b) || (used[b.id] || 0) - (used[a.id] || 0) || a.name.localeCompare(b.name));
     const offered = list.filter(h => h !== 'LAND' || p.kind === 'DEVELOPMENT');
-    openModal({
-        title: c ? 'Change the cost' : 'Add a cost', sub: p.name, iconName: 'receipt', size: 'lg',
-        body: `<form class="form-grid two" data-f onsubmit="return false">
-            <div class="field span-2"><span>Spent on</span><div class="cn-heads" data-chips data-head>${offered.map(h =>
-                `<button type="button" class="date-chip ${(c?.head || 'CEMENT') === h ? 'selected' : ''}" data-value="${h}">${icon(HEAD_ICONS[h] || 'layers')}${headName(h)}</button>`).join('')}</div>
-                <input name="customHead" maxlength="30" placeholder="or type another head" value="${c && !offered.includes(c.head) ? esc(headName(c.head)) : ''}" data-plain></div>
-            <label class="field span-2"><span>Description</span><input name="description" maxlength="200" value="${esc(c?.description || '')}" placeholder="e.g. OPC 53 grade, 400 bags" data-plain></label>
-            <label class="field"><span>Quantity</span><input name="quantity" type="number" class="num" step="any" min="0" value="${esc(c?.quantity ?? '')}" data-plain></label>
-            <label class="field"><span>Unit</span><input name="unit" maxlength="12" value="${esc(c?.unit || '')}" placeholder="bags, tons, days…" list="cn-units" data-plain></label>
-            <datalist id="cn-units">${['bags', 'tons', 'kg', 'cft', 'brass', 'loads', 'nos', 'sq ft', 'rft', 'days', 'trips', 'lumpsum'].map(u => `<option value="${u}">`).join('')}</datalist>
-            <label class="field"><span>Rate</span><input name="rate" type="number" class="num" step="any" min="0" value="${esc(c?.rate ?? '')}" data-plain></label>
-            <label class="field"><span>Amount</span><input name="amount" type="number" class="num" step="any" min="0" value="${esc(c?.amount ?? '')}" required data-plain></label>
-            <label class="field"><span>Vendor / paid to</span><input name="vendor" maxlength="100" value="${esc(c?.vendor || '')}" data-plain></label>
-            <label class="field"><span>Bill No.</span><input name="billNo" maxlength="40" value="${esc(c?.billNo || '')}" data-plain></label>
-            <label class="field"><span>Date</span><input name="spentOn" type="date" value="${esc(c?.spentOn || isoDate())}"></label>
-            <label class="field"><span>Paid from</span><select name="accountId" required>${moneyOptions(payFrom, p.id, c?.accountId ?? p.bankAccountId, { cards: true })}</select></label>
-            <label class="field span-2"><span>Stage <small class="muted">optional</small></span><select name="stageId"><option value="">—</option>${d.stages.map(s =>
-                `<option value="${s.id}" ${c?.stageId === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
+    let byHead = Object.fromEntries(d.costHeads.map(h => [h.head, h]));
+    const extraHeads = d.costHeads.map(h => h.head).filter(h => !offered.includes(h));
+    const tiles = [...offered, ...extraHeads].sort((a, b) => (byHead[b]?.count || 0) - (byHead[a]?.count || 0) || offered.indexOf(a) - offered.indexOf(b));
+    const lastOf = pred => d.costs.find(pred);   // newest first
+    const vendors = [...new Set(d.costs.map(x => x.vendor).filter(Boolean))];
+    const descriptions = [...new Set(d.costs.map(x => x.description).filter(Boolean))].slice(0, 40);
+    const running = d.stages.find(s => s.status === 'IN_PROGRESS') || d.stages.find(s => s.status === 'PENDING');
+    const head0 = c?.head || null;
+    let f0 = d.figures;
+    const day = n => { const x = new Date(); x.setDate(x.getDate() - n); return isoDate(x); };
+
+    const tile = (h, i) => `<button type="button" class="cat-tile ${h === head0 ? 'selected' : ''}" data-head="${h}" data-search="${esc(headName(h).toLowerCase())}" ${i >= TOP_HEADS && h !== head0 ? 'hidden data-extra' : ''}
+        title="${esc(headName(h))}${byHead[h] ? ` · ${money(byHead[h].amount)} so far, ${byHead[h].count}×` : ''}">
+        <span class="chip-icon sm ${byHead[h] ? 'gold' : ''}">${icon(HEAD_ICONS[h] || 'layers')}</span><span class="cat-name">${esc(headName(h))}</span></button>`;
+    const payer = a => {
+        const { name, tone } = accountTypeIcon(a.accountType);
+        const where = a.projectBook && a.projectId === p.id ? 'this project' : a.projectBook ? 'common' : a.accountType === 'CREDIT_CARD' ? 'my card' : 'mine';
+        return `<button type="button" class="pay-chip" data-payer="${a.id}" title="${esc(a.name)} · ${esc(where)}">
+            <span class="chip-icon sm ${tone}">${icon(name)}</span><span class="pay-text"><b>${esc(a.name)}</b><small>${esc(where)} · ${moneyShort(a.balance)}</small></span></button>`;
+    };
+
+    const modal = openModal({
+        title: c ? 'Change the cost' : 'Add a cost', sub: p.name, iconName: 'receipt', size: 'lg expense-modal cn-cost-modal',
+        body: `<form class="cn-cost-form" data-f onsubmit="return false" autocomplete="off">
+            <input type="hidden" name="head" value="${esc(head0 || '')}"><input type="hidden" name="accountId" value="${esc(c?.accountId ?? '')}">
+            <div class="xp-grid">
+                <section class="xp-left">
+                    <label class="xp-amount"><span class="xp-currency">₹</span>
+                        <input name="amount" type="text" inputmode="decimal" class="num" placeholder="0" value="${esc(c?.amount ?? '')}" title="A sum works too: 12000+3500" data-plain></label>
+                    <div class="xp-amount-calc" data-calc></div>
+                    <div class="xp-dates">
+                        <button type="button" class="date-chip" data-date="${day(0)}">Today</button><button type="button" class="date-chip" data-date="${day(1)}">Yesterday</button>
+                        <button type="button" class="date-chip" data-date="${day(2)}">2 days ago</button>
+                        <input type="date" name="spentOn" value="${esc(c?.spentOn || isoDate())}" max="${isoDate()}" required></div>
+                    <label class="field"><span>What was it <small class="muted">optional</small></span><input name="description" maxlength="200" value="${esc(c?.description || '')}" placeholder="e.g. OPC 53 grade, 400 bags" list="cn-cost-desc" data-plain></label>
+                    <datalist id="cn-cost-desc">${descriptions.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+                    <div class="cn-qty">
+                        <label class="field"><span>Quantity</span><input name="quantity" type="number" class="num" step="any" min="0" value="${esc(c?.quantity ?? '')}" data-plain></label>
+                        <label class="field"><span>Unit</span><input name="unit" maxlength="12" value="${esc(c?.unit || '')}" placeholder="bags…" list="cn-units" data-plain></label>
+                        <label class="field"><span>Rate <button type="button" class="link-btn" data-last-rate hidden></button></span><input name="rate" type="number" class="num" step="any" min="0" value="${esc(c?.rate ?? '')}" data-plain></label>
+                    </div>
+                    <datalist id="cn-units">${['bags', 'tons', 'kg', 'cft', 'cum', 'brass', 'loads', 'nos', 'sq ft', 'rft', 'days', 'trips', 'lumpsum'].map(u => `<option value="${u}">`).join('')}</datalist>
+                    <div class="form-grid two">
+                        <label class="field"><span>Paid to</span><input name="vendor" maxlength="100" value="${esc(c?.vendor || '')}" placeholder="Supplier, contractor…" list="cn-vendors" data-plain></label>
+                        <label class="field"><span>Bill No.</span><input name="billNo" maxlength="40" value="${esc(c?.billNo || '')}" placeholder="Optional" data-plain></label>
+                    </div>
+                    <datalist id="cn-vendors">${vendors.map(v => `<option value="${esc(v)}">`).join('')}</datalist>
+                    ${evidenceFieldHtml({ hint: 'Photo of the bill or the delivery challan' })}
+                </section>
+                <section class="xp-right">
+                    <div>
+                        <div class="xp-section-head"><span class="section-title">${icon('tag')} Spent on</span>
+                            <div class="xp-cat-find">${icon('search')}<input class="xp-cat-search" placeholder="Find or type a new head… Enter" data-head-search data-plain data-enter-self>
+                                ${tiles.length > TOP_HEADS ? `<button type="button" class="link-btn" data-all-heads>All ${tiles.length}</button>` : ''}</div></div>
+                        <div class="cat-grid cn-head-grid" data-heads>${tiles.map(tile).join('')}</div>
+                        <div class="small muted" data-new-head hidden></div>
+                    </div>
+                    <div>
+                        <div class="xp-section-head"><span class="section-title">${icon('wallet')} Paid from</span><span class="small muted">the project’s, common, or yours</span></div>
+                        <div class="pay-grid" data-payers></div>
+                    </div>
+                    ${d.stages.length ? `<label class="field"><span>For the stage <small class="muted">optional</small></span><select name="stageId"><option value="">—</option>${d.stages.map(s =>
+                        `<option value="${s.id}" ${(c ? c.stageId === s.id : running?.id === s.id) ? 'selected' : ''}>${esc(s.name)}${s.status === 'IN_PROGRESS' ? ' · in progress' : s.status === 'DONE' ? ' · done' : ''}</option>`).join('')}</select></label>` : ''}
+                    <div class="xp-budget" data-budget></div>
+                </section>
+            </div>
         </form>`,
-        onOpen: m => {
-            bindChips(m.el);
-            const f = m.el.querySelector('[data-f]');
-            const calc = () => { if (num(f.quantity.value) && num(f.rate.value)) f.amount.value = Math.round(num(f.quantity.value) * num(f.rate.value) * 100) / 100; };
-            f.quantity.addEventListener('input', calc);
-            f.rate.addEventListener('input', calc);
-            f.customHead.addEventListener('input', () => { if (f.customHead.value.trim()) m.el.querySelectorAll('[data-head] .selected').forEach(x => x.classList.remove('selected')); });
-        },
-        actions: [{ label: 'Cancel' }, { label: 'Save', kind: 'primary', iconName: 'check', onClick: async m => {
-            const f = m.el.querySelector('[data-f]');
-            const head = t(f, 'customHead') || chosen(m.el, '[data-head]');
-            const body = { head, description: t(f, 'description'), vendor: t(f, 'vendor'), billNo: t(f, 'billNo'), quantity: n(f, 'quantity'), unit: t(f, 'unit'),
-                rate: n(f, 'rate'), amount: n(f, 'amount'), spentOn: t(f, 'spentOn'), accountId: Number(f.accountId.value) || null, stageId: Number(f.stageId.value) || null };
-            if (!head) throw new Error('Say what the money was spent on');
-            if (!body.amount) throw new Error('Enter the amount');
-            if (!body.accountId) throw new Error('Pick the account it was paid from');
-            after(c ? await api.put(`/construction/${p.id}/costs/${c.id}`, body) : await api.post(`/construction/${p.id}/costs`, body), 'Cost saved');
-        } }],
+        actions: [
+            ...(c ? [] : [{ label: 'Save & add another', iconName: 'plus', left: true, onClick: m => save(m, true) }]),
+            { label: 'Cancel' },
+            { label: c ? 'Save changes' : 'Save', kind: 'primary', iconName: 'check', onClick: m => save(m, false) },
+        ],
     });
+    const el = modal.el;
+    const f = el.querySelector('[data-f]');
+    const evidence = bindEvidenceField(el);
+    const grid = el.querySelector('[data-heads]');
+    let showAll = false;
+
+    const amountOf = () => evalAmount(f.amount.value) || 0;
+    const renderPayers = () => {
+        const sel = Number(f.accountId.value) || (payers.find(a => a.id === p.bankAccountId) || payers[0])?.id;
+        f.accountId.value = sel || '';
+        let shown = showAll ? payers : payers.slice(0, VISIBLE_PAYERS);
+        const chosenOne = payers.find(a => a.id === sel);
+        if (chosenOne && !shown.includes(chosenOne)) shown = [...shown.slice(0, VISIBLE_PAYERS - 1), chosenOne];
+        const more = payers.length - shown.length;
+        el.querySelector('[data-payers]').innerHTML = shown.map(payer).join('')
+            + (more > 0 ? `<button type="button" class="pay-chip more" data-more-payers>${icon('more')}<span class="pay-text"><b>${more} more</b><small>show all</small></span></button>` : '');
+        el.querySelectorAll('[data-payer]').forEach(b => b.classList.toggle('selected', Number(b.dataset.payer) === sel));
+    };
+    const setHead = (h, { fill = true } = {}) => {
+        f.head.value = h || '';
+        grid.querySelectorAll('[data-head]').forEach(t => {
+            t.classList.toggle('selected', t.dataset.head === h);
+            if (t.dataset.head === h) t.hidden = false;
+        });
+        const known = tiles.includes(h);
+        const note = el.querySelector('[data-new-head]');
+        note.hidden = !h || known;
+        note.innerHTML = h && !known ? `${icon('plus')} A new head: <b>${esc(headName(h))}</b>` : '';
+        if (fill && h) {
+            if (!f.unit.value && HEAD_UNITS[h]) f.unit.value = HEAD_UNITS[h];
+            lastRate();
+        }
+        budget();
+    };
+    const setDate = v => { f.spentOn.value = v; el.querySelectorAll('[data-date]').forEach(b => b.classList.toggle('selected', b.dataset.date === v)); };
+    /** The last rate paid for this head (from this vendor when there is one), offered beside "Rate". */
+    const lastRate = () => {
+        const h = f.head.value;
+        const vendor = f.vendor.value.trim().toLowerCase();
+        const last = lastOf(x => x.head === h && x.rate != null && (!vendor || (x.vendor || '').toLowerCase() === vendor)) || lastOf(x => x.head === h && x.rate != null);
+        const b = el.querySelector('[data-last-rate]');
+        b.hidden = !last;
+        if (last) {
+            b.textContent = `last ${money(last.rate)}${last.unit ? `/${last.unit}` : ''}`;
+            b.title = `${date(last.spentOn)}${last.vendor ? ` · ${last.vendor}` : ''}: ${num(last.quantity)} ${last.unit || ''} × ${money(last.rate)}`;
+            b.onclick = () => { f.rate.value = last.rate; if (!f.unit.value && last.unit) f.unit.value = last.unit; calc(); };
+        }
+    };
+    /** quantity × rate fills the amount; an amount with a quantity works out the rate. */
+    const calc = (from = 'qty') => {
+        const q = num(f.quantity.value), r = num(f.rate.value), amount = amountOf();
+        if (from !== 'amount' && q && r) f.amount.value = Math.round(q * r * 100) / 100;
+        else if (from === 'amount' && q && amount && !r) f.rate.value = Math.round(amount / q * 100) / 100;
+        const isSum = /[+\-*/]/.test(f.amount.value.trim().replace(/^-/, ''));
+        el.querySelector('[data-calc]').innerHTML = isSum ? (evalAmount(f.amount.value) === null ? '<span class="neg">not a sum</span>' : `= <b>${money(evalAmount(f.amount.value))}</b>`)
+            : q && r ? `${num(q)} ${esc(f.unit.value || '')} × ${money(r)}` : '';
+        budget();
+    };
+    /** Where the spending stands: the head so far, the project against its estimate, after this cost. */
+    function budget() {
+        const box = el.querySelector('[data-budget]');
+        const amount = amountOf() - (c ? num(c.amount) : 0);
+        const h = f.head.value;
+        const spent = num(f0.totalCost), est = num(f0.estimatedCost);
+        const afterIt = spent + amount;
+        const pct = est ? afterIt / est * 100 : null;
+        const headSoFar = num(byHead[h]?.amount);
+        box.innerHTML = `
+            ${h ? `<div class="row small"><b>${icon(HEAD_ICONS[h] || 'layers')} ${esc(headName(h))}</b><span class="spacer"></span><span class="secondary">${money(headSoFar)} so far${byHead[h] ? ` · ${byHead[h].count}×` : ''}${amount ? ` → <b>${money(headSoFar + amount)}</b>` : ''}</span></div>` : ''}
+            ${est ? `<div class="row small"><b>The project</b><span class="spacer"></span><span class="${pct > 100 ? 'neg' : 'secondary'}">${money(afterIt)} of ${money(est)} estimated · ${Math.round(pct)}%</span></div>
+                <div class="progress ${pct > 100 ? 'over' : pct > 85 ? 'warning' : 'good'}"><span style="width:${Math.min(100, pct)}%"></span></div>
+                <div class="small ${pct > 100 ? 'neg' : 'muted'}">${pct > 100 ? `${icon('alert')} ${money(afterIt - est)} over the estimate` : `${money(est - afterIt)} of the estimate left`}</div>`
+                : `<span class="muted small">${icon('info')} ${money(afterIt)} spent on the project${amount ? ' after this' : ''}. Set an estimated cost in its settings to track it.</span>`}`;
+    }
+
+    renderPayers();
+    if (head0) setHead(head0, { fill: false }); else budget();
+    setDate(f.spentOn.value);
+    calc('init');
+    f.amount.addEventListener('input', () => calc('amount'));
+    f.amount.addEventListener('blur', () => { const v = evalAmount(f.amount.value); if (v !== null && String(v) !== f.amount.value.trim()) { f.amount.value = String(v); calc('amount'); } });
+    f.quantity.addEventListener('input', () => calc('qty'));
+    f.rate.addEventListener('input', () => calc('qty'));
+    f.unit.addEventListener('input', () => calc('init'));
+    f.spentOn.addEventListener('change', () => setDate(f.spentOn.value));
+    // a vendor bought from before brings the head they supplied and its last rate
+    f.vendor.addEventListener('change', () => {
+        const v = f.vendor.value.trim().toLowerCase();
+        const last = v && lastOf(x => (x.vendor || '').toLowerCase() === v);
+        if (last && !f.head.value) setHead(last.head);
+        else lastRate();
+        if (last && !Number(f.accountId.value)) { f.accountId.value = last.accountId; renderPayers(); }
+    });
+    el.addEventListener('click', e => {
+        const t = e.target.closest('[data-head]');
+        if (t && grid.contains(t)) { setHead(t.dataset.head); return; }
+        const pay = e.target.closest('[data-payer]');
+        if (pay) { f.accountId.value = pay.dataset.payer; renderPayers(); return; }
+        if (e.target.closest('[data-more-payers]')) { showAll = true; renderPayers(); return; }
+        const dc = e.target.closest('[data-date]');
+        if (dc) { setDate(dc.dataset.date); return; }
+        const all = e.target.closest('[data-all-heads]');
+        if (all) {
+            const open = all.textContent.startsWith('All');
+            grid.querySelectorAll('[data-extra]').forEach(x => { x.hidden = !open && !x.classList.contains('selected'); });
+            all.textContent = open ? 'Fewer' : `All ${tiles.length}`;
+        }
+    });
+    // find a head by typing; Enter picks the first match, or makes a new head of what was typed
+    const search = el.querySelector('[data-head-search]');
+    search.addEventListener('input', () => {
+        const term = search.value.trim().toLowerCase();
+        grid.querySelectorAll('[data-head]').forEach(x => { x.hidden = term ? !x.dataset.search.includes(term) : (x.hasAttribute('data-extra') && !x.classList.contains('selected')); });
+    });
+    search.addEventListener('keydown', e => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const term = search.value.trim();
+        if (!term) return;
+        const first = [...grid.querySelectorAll('[data-head]')].find(x => !x.hidden);
+        setHead(first ? first.dataset.head : term.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30));
+        search.value = '';
+        search.dispatchEvent(new Event('input'));
+    });
+    setTimeout(() => f.amount.focus(), 40);
+
+    async function save(m, again) {
+        const amount = evalAmount(f.amount.value);
+        if (f.amount.value.trim() && amount === null) { f.amount.focus(); throw new Error('The amount is not a number or a sum'); }
+        const head = f.head.value;
+        if (!head) { search.focus(); throw new Error('Pick what it was spent on (or type a new head and press Enter)'); }
+        if (!(amount > 0)) { f.amount.focus(); throw new Error('Enter the amount'); }
+        if (!Number(f.accountId.value)) throw new Error('Pick the account it was paid from');
+        const body = { head, description: t(f, 'description'), vendor: t(f, 'vendor'), billNo: t(f, 'billNo'), quantity: n(f, 'quantity'), unit: t(f, 'unit'),
+            rate: n(f, 'rate'), amount, spentOn: t(f, 'spentOn'), accountId: Number(f.accountId.value), stageId: f.stageId ? Number(f.stageId.value) || null : null };
+        const known = new Set(d.costs.map(x => x.id));
+        const out = c ? await api.put(`/construction/${p.id}/costs/${c.id}`, body) : await api.post(`/construction/${p.id}/costs`, body);
+        const saved = c ? out.costs.find(x => x.id === c.id) : out.costs.filter(x => !known.has(x.id)).sort((a, b) => b.id - a.id)[0];
+        if (saved?.journalEntryId) await evidence.uploadTo(saved.journalEntryId);
+        after(out, `${headName(head)} · ${money(amount)} ${c ? 'saved' : 'added'}`);
+        if (!again) return false;
+        d = out;   // the next one counts this one in
+        f0 = out.figures;
+        byHead = Object.fromEntries(out.costHeads.map(h => [h.head, h]));
+        ['amount', 'quantity', 'rate', 'description', 'billNo'].forEach(k => { f[k].value = ''; });
+        calc('init');
+        f.amount.focus();
+        return true;
+    }
 }
 
 // ===================================================================== partners
@@ -716,33 +924,73 @@ export function openShares(d, after) {
     });
 }
 
+/**
+ * A partner puts money in (or takes it out). The partner is picked from chips (the one whose button was pressed
+ * first); the project's side is one of its own accounts, a common account or the project's bank; when the partner is
+ * me, the other side is one of my own accounts (a transfer), otherwise the partner's capital account. Shows what the
+ * partner will have in after it and their part of the capital.
+ */
 export async function openCapital(d, partnerId, kind, after) {
     const p = d.project;
+    const invest = kind === 'INVEST';
     const accounts = await moneyAccounts();
-    const partner = () => d.partners.find(v => v.partner.id === Number(modalRef.el.querySelector('[name=partnerId]').value))?.partner;
-    let modalRef = null;
-    modalRef = openModal({
-        title: kind === 'INVEST' ? 'Capital put in' : 'Capital taken out', sub: p.name, iconName: kind === 'INVEST' ? 'arrow-in' : 'arrow-out',
+    const projectSide = accounts.filter(a => (a.projectBook && (a.projectId === p.id || !a.projectId)) || a.id === p.bankAccountId);
+    const mine = accounts.filter(a => !a.projectBook && a.id !== p.bankAccountId);
+    const partnerOf = id => d.partners.find(v => v.partner.id === Number(id));
+    let chosenId = partnerOf(partnerId) ? Number(partnerId) : d.partners[0]?.partner.id;
+    const totalIn = d.partners.reduce((s, v) => s + num(v.invested), 0);
+    openModal({
+        title: invest ? 'Money put in' : 'Money taken out', sub: `${p.name} · partners’ capital`, iconName: invest ? 'arrow-in' : 'arrow-out',
         body: `<form class="form-grid two" data-f onsubmit="return false">
-            <label class="field"><span>Partner</span><select name="partnerId">${d.partners.map(v => `<option value="${v.partner.id}" ${v.partner.id === partnerId ? 'selected' : ''}>${esc(v.partner.name)}${v.partner.me ? ' (me)' : ''}</option>`).join('')}</select></label>
+            <div class="field span-2"><span>Partner</span><div class="ln-chips cn-partner-pick" data-partners>${d.partners.map(v =>
+                `<button type="button" class="date-chip ${v.partner.id === chosenId ? 'selected' : ''}" data-value="${v.partner.id}" title="Put in ${esc(money(v.invested))} · balance ${esc(money(v.balance))}">
+                    ${icon(v.partner.me ? 'user' : 'users')}${esc(v.partner.name)}${v.partner.me ? ' (me)' : ''} <small class="muted">${moneyShort(v.balance)}</small></button>`).join('')}</div></div>
             <label class="field"><span>Amount</span><input name="amount" type="number" class="num" step="any" min="0" required data-plain></label>
-            <label class="field"><span>${kind === 'INVEST' ? 'Into the project’s account' : 'From the project’s account'}</span><select name="accountId">${moneyOptions(accounts.filter(a => a.projectBook), p.id, p.bankAccountId)}</select></label>
-            <label class="field" data-mine><span>${kind === 'INVEST' ? 'From my account' : 'To my account'}</span><select name="fromAccountId">${moneyOptions(accounts.filter(a => !a.projectBook), p.id, null)}</select></label>
-            <label class="field"><span>Date</span><input name="movedOn" type="date" value="${isoDate()}"></label>
-            <label class="field"><span>Note</span><input name="note" maxlength="200" data-plain></label>
+            <label class="field"><span>Date</span><input name="movedOn" type="date" value="${isoDate()}" max="${isoDate()}"></label>
+            <label class="field"><span>${invest ? 'Into the project’s account' : 'From the project’s account'}</span><select name="accountId">${moneyOptions(projectSide, p.id, p.bankAccountId)}</select></label>
+            <label class="field" data-mine><span>${invest ? 'From my account' : 'Into my account'}</span><select name="fromAccountId">${moneyOptions(mine, p.id, null, { placeholder: 'Pick your account' })}</select></label>
+            <label class="field span-2"><span>Note <small class="muted">optional</small></span><input name="note" maxlength="200" placeholder="${invest ? 'e.g. For the first slab · cheque 123456' : 'e.g. Advance against the profit'}" data-plain></label>
+            <div class="span-2 cn-cap-preview" data-preview></div>
         </form>`,
         onOpen: m => {
-            const sync = () => { m.el.querySelector('[data-mine]').hidden = !partner()?.me; };
-            m.el.querySelector('[name=partnerId]').addEventListener('change', sync);
+            const el = m.el;
+            const sync = () => {
+                const v = partnerOf(chosenId);
+                el.querySelector('[data-mine]').hidden = !v?.partner.me;
+                const amount = num(el.querySelector('[name=amount]').value);
+                if (!v) { el.querySelector('[data-preview]').innerHTML = ''; return; }
+                const inAfter = num(v.invested) + (invest ? amount : 0);
+                const balanceAfter = num(v.balance) + (invest ? amount : -amount);
+                const share = totalIn + (invest ? amount : 0) ? inAfter / (totalIn + (invest ? amount : 0)) * 100 : 0;
+                el.querySelector('[data-preview]').innerHTML = `${icon('info')}<span>${esc(v.partner.name)} has put in <b>${money(v.invested)}</b> and taken out ${money(v.withdrawn)}.
+                    ${amount ? `After this: balance <b class="${balanceAfter < 0 ? 'neg' : ''}">${money(balanceAfter)}</b>${invest ? `, <b>${Math.round(share * 10) / 10}%</b> of the capital put in` : ''}.` : ''}
+                    ${v.partner.me ? (invest ? ' Your money moves from your account into the project’s.' : ' The money comes back to your own account.') : ` Booked to ${esc(v.partner.name)}’s capital account (what the business owes them).`}</span>`;
+            };
+            el.querySelector('[data-partners]').addEventListener('click', e => {
+                const c = e.target.closest('[data-value]');
+                if (!c) return;
+                chosenId = Number(c.dataset.value);
+                el.querySelectorAll('[data-partners] [data-value]').forEach(x => x.classList.toggle('selected', x === c));
+                sync();
+            });
+            el.querySelector('[name=amount]').addEventListener('input', sync);
             sync();
+            setTimeout(() => el.querySelector('[name=amount]').focus(), 40);
         },
-        actions: [{ label: 'Cancel' }, { label: 'Record', kind: 'primary', iconName: 'check', onClick: async m => {
+        actions: [{ label: 'Cancel' }, { label: invest ? 'Record money in' : 'Record money out', kind: 'primary', iconName: 'check', onClick: async m => {
             const f = m.el.querySelector('[data-f]');
-            const body = { partnerId: Number(f.partnerId.value), kind, amount: n(f, 'amount'), movedOn: t(f, 'movedOn'), accountId: Number(f.accountId.value) || null,
-                fromAccountId: partner()?.me ? Number(f.fromAccountId.value) || null : null, note: t(f, 'note') };
+            const v = partnerOf(chosenId);
+            if (!v) throw new Error('Pick the partner');
+            const me = !!v.partner.me;
+            const body = { partnerId: v.partner.id, kind, amount: n(f, 'amount'), movedOn: t(f, 'movedOn'), accountId: Number(f.accountId.value) || null,
+                fromAccountId: me ? Number(f.fromAccountId.value) || null : null, note: t(f, 'note') };
             if (!body.amount) throw new Error('Enter the amount');
             if (!body.accountId) throw new Error('Pick the project’s account');
-            after(await api.post(`/construction/${p.id}/capital`, body), 'Recorded');
+            if (me && !body.fromAccountId) throw new Error(`Pick your own account the money ${invest ? 'comes from' : 'goes to'}`);
+            if (me && body.fromAccountId === body.accountId) throw new Error('Pick two different accounts');
+            if (!invest && body.amount > num(v.balance)
+                && !await confirmDialog(`${v.partner.name}'s balance is ${money(v.balance)}; taking out ${money(body.amount)} leaves it below zero. Record it anyway?`, { confirmLabel: 'Record', danger: false })) return true;
+            after(await api.post(`/construction/${p.id}/capital`, body), `${money(body.amount)} ${invest ? 'put in by' : 'taken out by'} ${v.partner.name}`);
         } }],
     });
 }
@@ -878,14 +1126,15 @@ export function openUnit(d, u, after) {
 
 // ===================================================================== accounts
 
-export async function openTransfer(d, after) {
+/** Money moved between accounts for the project; fromId / toId set one side (Move in / Move out on an account). */
+export async function openTransfer(d, after, { fromId = null, toId = null } = {}) {
     const p = d.project;
     const accounts = await moneyAccounts();
     openModal({
         title: 'Move money', sub: p.name, iconName: 'transfer',
         body: `<form class="form-grid two" data-f onsubmit="return false">
-            <label class="field"><span>From</span><select name="fromAccountId">${moneyOptions(accounts, p.id, p.bankAccountId)}</select></label>
-            <label class="field"><span>To</span><select name="toAccountId">${moneyOptions(accounts, p.id, null)}</select></label>
+            <label class="field"><span>From</span><select name="fromAccountId">${moneyOptions(accounts, p.id, fromId ?? (toId === p.bankAccountId ? null : p.bankAccountId))}</select></label>
+            <label class="field"><span>To</span><select name="toAccountId">${moneyOptions(accounts, p.id, toId)}</select></label>
             <label class="field"><span>Amount</span><input name="amount" type="number" class="num" step="any" min="0" required data-plain></label>
             <label class="field"><span>Date</span><input name="movedOn" type="date" value="${isoDate()}"></label>
             <label class="field span-2"><span>Note</span><input name="note" maxlength="200" data-plain></label>
