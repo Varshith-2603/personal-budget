@@ -2777,7 +2777,8 @@ public class HostedChitService {
             Optional<Category> chosen = categoryRepository.findByIdAndTenantId(c.getCommissionCategoryId(), UserContext.tenantId());
             if (chosen.isPresent()) return chosen.get();
         }
-        return categoryRepository.findByName(UserContext.tenantId(), CategoryKind.INCOME, COMMISSION_CATEGORY)
+        return categoryRepository.findBySystemKey(UserContext.tenantId(), DefaultChartOfAccounts.CHIT_COMMISSION)
+                .or(() -> categoryRepository.findByName(UserContext.tenantId(), CategoryKind.INCOME, COMMISSION_CATEGORY))
                 .orElseGet(() -> categoryService.require(categoryService.create(new CategoryRequest(CategoryKind.INCOME, COMMISSION_CATEGORY,
                         null, "Commission and late payment interest from the chits I run (Host a Chit)", true, null)).id()));
     }

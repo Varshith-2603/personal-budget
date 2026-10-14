@@ -76,6 +76,8 @@ class AppSyncTests {
         assertThat(mine.payFrom()).isTrue();
         assertThat(mine.last4()).isEqualTo("4321");
         assertThat(snap.categories()).anyMatch(c -> c.id().equals(category));
+        assertThat(snap.categories()).anyMatch(c -> "EXPENSE".equals(c.kind()) && "Chit Payments".equals(c.name()));
+        assertThat(snap.categories()).anyMatch(c -> "INCOME".equals(c.kind()) && "Chit Commission Income".equals(c.name()));
 
         SyncExpense e = new SyncExpense("phone-" + System.nanoTime(), LocalDate.now(), BigDecimal.valueOf(750), category, bank, "Lunch", "Cafe", "UPI123", null);
         var first = app.sync(new SyncRequest(List.of(e), null));

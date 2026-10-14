@@ -1,7 +1,8 @@
 /**
  * Chits I am a member of: how far each has gone (paid / of months), what is overdue, the next instalment, what is
  * still to pay and its value now. A chit opens to its instalments; an unpaid one can be paid from an account, also
- * offline (it comes off the account's balance at once and goes to the server at the next sync, booked once).
+ * offline (it comes off the account's balance at once and goes to the server at the next sync, booked once). When the
+ * chit has the organizer's UPI ID, the instalment can be paid with Google Pay or PhonePe first, then recorded.
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { BackHandler, FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -12,6 +13,7 @@ import { Chit, Installment, liveBalance } from '../data';
 import { date, isoDate, money, moneyShort, shortDate } from '../format';
 import { AccountBubble, Button, Card, Empty, Field, GradientPanel, Pill, SectionTitle, Sheet } from '../ui';
 import { colors, radius, space } from '../theme';
+import { UpiApp, UpiButtons, payWith, upiLink, upiNote } from '../upi';
 
 const isPaid = (i: Installment) => i.status === 'PAID';
 
@@ -105,6 +107,7 @@ function ChitDetail({ chit: c, onBack }: { chit: Chit; onBack: () => void }) {
             <View style={st.fig}><Text style={st.figLabel}>Dividends</Text><Text style={st.figValue}>{moneyShort(c.dividends)}</Text></View>
             <View style={st.fig}><Text style={st.figLabel}>Still to pay</Text><Text style={st.figValue}>{moneyShort(c.stillToPay)}</Text></View>
           </View>
+          {c.organizerUpi ? <Text style={st.sub}>UPI {c.organizerUpi} · pay with Google Pay or PhonePe</Text> : null}
           <Text style={st.next}>Value now {money(c.currentValue)}{c.maturityAmount ? ` · ${money(c.maturityAmount)} at maturity${c.maturityDate ? ` (${date(c.maturityDate)})` : ''}` : ''}</Text>
         </GradientPanel>
         {firstUnpaid && app.snapshot?.canPayChits ? (
@@ -148,6 +151,7 @@ function PayChit({ chit, inst, onClose }: { chit: Chit; inst: Installment | null
   const [dividend, setDividend] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [paidWith, setPaidWith] = useState<UpiApp | null>(null);
 
   useEffect(() => {
     if (!inst) return;
@@ -156,6 +160,7 @@ function PayChit({ chit, inst, onClose }: { chit: Chit; inst: Installment | null
     setDay(isoDate());
     setDividend(inst.dividend ? String(inst.dividend) : '');
     setError('');
+    setPaidWith(null);
   }, [inst, chit, payers]);
 
   if (!inst) return null;
@@ -163,6 +168,18 @@ function PayChit({ chit, inst, onClose }: { chit: Chit; inst: Installment | null
   const pay = Math.max(0, inst.dueAmount - div);
   const payer = payers.find(p => p.id === from);
   const shift = (n: number) => { const d = new Date(`${day}T00:00:00`); d.setDate(d.getDate() + n); const nx = isoDate(d); if (nx <= isoDate()) setDay(nx); };
+
+  const upi = async (a: UpiApp) => {
+    if (div < 0 || div >= inst.dueAmount) { setError('The dividend must be less than the instalment'); return; }
+    setError('');
+    try {
+      const out = await payWith(a, upiLink(chit, pay, upiNote(chit, inst)));
+      if (out === 'STORE') app.notify(`${a.name} is not installed: opening the Play Store`);
+      else setPaidWith(a);
+    } catch {
+      setError(`${a.name} could not be opened`);
+    }
+  };
 
   const save = async () => {
     if (!payer) { setError('Pick the account it is paid from'); return; }
@@ -177,7 +194,7 @@ function PayChit({ chit, inst, onClose }: { chit: Chit; inst: Installment | null
 
   return (
     <Sheet visible onClose={onClose} title={`Pay instalment ${inst.no}`}
-      footer={<Button title={`Pay ${money(pay)}`} Icon={Check} onPress={save} busy={busy} />}>
+      footer={<Button title={chit.organizerUpi ? `Record ${money(pay)} as paid` : `Pay ${money(pay)}`} Icon={Check} onPress={save} busy={busy} />}>
       <Card style={{ gap: 6 }}>
         <Text style={st.name}>{chit.name}</Text>
         <Text style={st.meta}>Due {date(inst.dueDate)} · instalment {money(inst.dueAmount)}</Text>
@@ -185,6 +202,16 @@ function PayChit({ chit, inst, onClose }: { chit: Chit; inst: Installment | null
       </Card>
       <Field label="Dividend this month" value={dividend} onChangeText={t => setDividend(t.replace(/[^0-9.,]/g, ''))} keyboardType="decimal-pad" placeholder="0"
         hint="What the auction left as dividend: it comes off what you pay." />
+      {chit.organizerUpi ? (
+        <View style={{ gap: 8 }}>
+          <Text style={[st.label, { marginBottom: 0 }]}>Pay {money(pay)} with</Text>
+          <UpiButtons onPay={upi} disabled={pay <= 0} />
+          <Text style={st.meta}>
+            {paidWith ? `Back from ${paidWith.name}? Once the payment went through, record it below.`
+              : `To ${chit.organizer || chit.organizerUpi} (${chit.organizerUpi}) · note “${upiNote(chit, inst)}”`}
+          </Text>
+        </View>
+      ) : null}
       <View>
         <Text style={st.label}>Paid on</Text>
         <View style={st.stepper}>

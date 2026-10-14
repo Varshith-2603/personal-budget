@@ -280,6 +280,28 @@ class BudgetBridgeModule(private val context: ReactApplicationContext) : ReactCo
         }
     }
 
+    /**
+     * Opens a upi://pay link in one UPI app (Google Pay, PhonePe ...) by its package; when that app is not installed,
+     * its Play Store page. Resolves "APP" or "STORE".
+     */
+    @ReactMethod
+    fun openUpi(link: String, pkg: String, promise: Promise) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            promise.resolve("APP")
+        } catch (e: android.content.ActivityNotFoundException) {
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e2: android.content.ActivityNotFoundException) {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$pkg"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+            promise.resolve("STORE")
+        } catch (e: Exception) {
+            promise.reject("UPI", e.message, e)
+        }
+    }
+
     companion object {
         const val NAME = "BudgetBridge"
         private const val REQ_CAMERA = 7301

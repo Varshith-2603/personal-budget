@@ -46,6 +46,8 @@ public final class DefaultChartOfAccounts {
      * chits against it, so chits can have a (committed) budget like rent or an EMI.
      */
     public static final String CHIT_PAYMENTS = "CHIT_PAYMENTS";
+    /** Commission (and its share of late fees) earned from the chits I run (Host a Chit). */
+    public static final String CHIT_COMMISSION = "CHIT_COMMISSION";
 
     public static final List<Template> ACCOUNTS = List.of(
             new Template(CASH, "Cash in Hand", AccountType.CASH, true, "Physical cash / petty cash"),
@@ -77,6 +79,8 @@ public final class DefaultChartOfAccounts {
             new CategoryTemplate("4150", "Tuition & Coaching", CategoryKind.INCOME, null, "Teaching, coaching, training fees"),
             new CategoryTemplate("4160", "Sale of Items", CategoryKind.INCOME, null, "Old items, scrap, second-hand sales"),
             new CategoryTemplate("4170", "Allowances", CategoryKind.INCOME, null, "HRA, travel, meal and other allowances"),
+            new CategoryTemplate("4180", "Chit Commission Income", CategoryKind.INCOME, CHIT_COMMISSION,
+                    "Commission and late payment interest from the chits I run (Host a Chit)"),
             new CategoryTemplate("4990", "Other Income", CategoryKind.INCOME, OTHER_INCOME, null),
             // ---- Expenses
             new CategoryTemplate("5010", "Groceries", CategoryKind.EXPENSE, null, "Food and household supplies"),

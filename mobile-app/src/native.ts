@@ -1,6 +1,7 @@
 /**
- * The app's own Android module (android/.../bridge): a small file store, bank SMS, and photos / files as evidence. On iOS (later) the store falls
- * back to memory and SMS is not available (iOS does not let apps read SMS).
+ * The app's own Android module (android/.../bridge): a small file store, bank SMS, photos / files as evidence, and opening
+ * a UPI payment in a chosen app. On iOS (later) the store falls back to memory and SMS is not available (iOS does not
+ * let apps read SMS).
  */
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 
@@ -21,6 +22,7 @@ type Bridge = {
   evidenceSize(): Promise<number>;
   smsPermissions(): Promise<SmsPermissions>;
   openAppSettings(): Promise<boolean>;
+  openUpi(link: string, pkg: string): Promise<'APP' | 'STORE'>;
 };
 
 /** A photo or a file kept in the app's own files until it is uploaded. */
@@ -81,4 +83,9 @@ export const nativeSettings = {
     return native ? native.smsPermissions() : { receive: false, read: false, notify: false, enabled: false };
   },
   async openApp() { if (native) await native.openAppSettings(); },
+};
+
+export const nativeUpi = {
+  /** Opens a upi://pay link in the app with this package (its Play Store page when it is not installed). */
+  async open(link: string, pkg: string): Promise<'APP' | 'STORE' | null> { return native ? native.openUpi(link, pkg) : null; },
 };

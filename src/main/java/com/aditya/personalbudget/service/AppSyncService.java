@@ -29,8 +29,8 @@ import java.util.stream.Collectors;
 
 /**
  * The phone app ({@code mobile-app/}): one snapshot with everything it keeps for working offline (every account
- * with its balance, grouped as my own, construction, hosted chits and EMIs; the expense categories; the latest
- * expenses), account statements, and the expenses it recorded offline synced in a batch. Each synced expense
+ * with its balance, grouped as my own, construction, hosted chits and EMIs; the expense and income categories; the
+ * latest expenses), account statements, and the expenses it recorded offline synced in a batch. Each synced expense
  * carries the id the app gave it; the id is remembered for good, so an expense sent twice is booked once.
  */
 @Service
@@ -42,7 +42,8 @@ public class AppSyncService {
                              BigDecimal monthIn, BigDecimal monthOut, LocalDate lastActivity, boolean payFrom, boolean system) {
     }
 
-    public record AppCategory(Long id, String name, boolean system, long uses) {
+    /** kind: EXPENSE or INCOME. */
+    public record AppCategory(Long id, String kind, String code, String name, String description, boolean system, long uses) {
     }
 
     public record AppExpense(Long entryId, String entryNo, LocalDate date, String narration, String party, String reference,
@@ -58,7 +59,7 @@ public class AppSyncService {
                           int paidCount, int pendingCount, int overdueCount, BigDecimal overdueAmount, LocalDate nextDueDate,
                           BigDecimal nextDueAmount, BigDecimal paidIn, BigDecimal dividends, BigDecimal stillToPay, BigDecimal currentValue,
                           BigDecimal maturityAmount, LocalDate maturityDate, Long defaultPaymentAccountId, BigDecimal progressPercent,
-                          List<AppInstallment> installments) {
+                          List<AppInstallment> installments, String organizerUpi, String upiNote) {
     }
 
     public record Snapshot(LocalDateTime serverTime, String user, String household, String currency, List<AppAccount> accounts,
@@ -116,7 +117,7 @@ public class AppSyncService {
         this.writer = writer;
     }
 
-    /** What the app keeps: every account, the expense categories and the expenses of the last {@code days} days. */
+    /** What the app keeps: every account, the expense and income categories and the expenses of the last {@code days} days. */
     public Snapshot snapshot(int days) {
         Long tenant = UserContext.tenantId();
         Map<Long, String> projectName = projects.findByTenantId(tenant).stream().collect(Collectors.toMap(ConstructionProject::getId, ConstructionProject::getName));
@@ -134,9 +135,11 @@ public class AppSyncService {
                     number == null || number.length() < 4 ? null : number.substring(number.length() - 4), a.balance(), a.creditLimit(), a.availableCredit(),
                     a.monthIn(), a.monthOut(), a.lastActivity(), "OWN".equals(group) && payTypes.contains(a.accountType().name()), a.systemAccount()));
         }
-        List<AppCategory> cats = categories.list().stream().filter(c -> c.kind() == CategoryKind.EXPENSE && c.active())
-                .map(c -> new AppCategory(c.id(), c.name(), c.system(), c.entries()))
-                .sorted(Comparator.comparing(AppCategory::system).thenComparing(AppCategory::uses, Comparator.reverseOrder()).thenComparing(AppCategory::name))
+        // expense categories first (the order the app offers them in), then income
+        List<AppCategory> cats = categories.list().stream().filter(c -> c.active() && (c.kind() == CategoryKind.EXPENSE || c.kind() == CategoryKind.INCOME))
+                .map(c -> new AppCategory(c.id(), c.kind().name(), c.code(), c.name(), c.description(), c.system(), c.entries()))
+                .sorted(Comparator.comparing((AppCategory c) -> !"EXPENSE".equals(c.kind())).thenComparing(AppCategory::system)
+                        .thenComparing(AppCategory::uses, Comparator.reverseOrder()).thenComparing(AppCategory::name))
                 .toList();
         LocalDate from = LocalDate.now().minusDays(Math.max(1, Math.min(days, 730)));
         List<AppExpense> recent = expenses.list(from, LocalDate.now().plusDays(1)).stream()
@@ -151,7 +154,8 @@ public class AppSyncService {
                     c.paidIn(), c.dividendsEarned(), c.stillToPay(), c.currentValue(), c.maturityAmount(), c.maturityDate(),
                     c.defaultPaymentAccountId(), c.progressPercent(),
                     d.installments().stream().map(i -> new AppInstallment(i.id(), i.installmentNo(), i.dueDate(), i.dueAmount(), i.dividend(),
-                            i.paidAmount(), i.paidDate(), i.status().name(), i.overdue(), i.paidFromAccountName(), i.journalEntryId())).toList());
+                            i.paidAmount(), i.paidDate(), i.status().name(), i.overdue(), i.paidFromAccountName(), i.journalEntryId())).toList(),
+                    c.organizerUpi(), c.upiNote());
         }).toList();
         boolean canPay = seesChits && com.aditya.personalbudget.security.RolePolicy.allows(me.role(), com.aditya.personalbudget.security.Permission.MANAGE_CHITS);
         return new Snapshot(LocalDateTime.now(), me.fullName(), me.tenantName(), me.currency(), list, cats, recent, from, chitList, canPay);

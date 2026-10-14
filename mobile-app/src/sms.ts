@@ -14,7 +14,7 @@
  *   Union   "A/c *1234 Debited for Rs:500.00 on 13-10-2026 by Mob Bk ref no 628512345678 Avl Bal Rs:1000.00"
  * and more (Canara, PNB, IDFC FIRST, IndusInd, Yes, Federal, AU, Paytm, Airtel, SBI Card, Amex, OneCard …).
  */
-import type { Account, Category } from './data';
+import { Account, Category, isExpense } from './data';
 import { isoDate } from './format';
 import type { RawSms } from './native';
 
@@ -39,20 +39,47 @@ const BANKS: [RegExp, string][] = [
   [/PSB|PUNJAB ?&? ?SIND/i, 'Punjab & Sind'], [/J&K|JKBANK/i, 'J&K Bank'], [/APGVB|APGB|TGB|GRAMEEN/i, 'Grameena Bank'],
 ];
 
-/** Merchant words → words of a category name. */
+/**
+ * Merchant words → words of a category name, the most specific first: when the household has no such category (say no
+ * "Food Delivery"), the next line that matches the merchant is tried (say "Dining Out").
+ */
 const CATEGORY_HINTS: [RegExp, RegExp][] = [
+  [/swiggy|zomato|eatsure|magicpin/i, /food deliver|takeaway/i],
+  [/milk|dairy|heritage|nandini|amul|aavin|vijaya|jersey|country delight|akshayakalpa|milkbasket/i, /milk|dairy/i],
+  [/vegetable|fruits?\b|sabzi|kisan|farm fresh|otipy|fraazo|pluckk/i, /vegetable|fruit/i],
+  [/starbucks|\bchai\b|\btea\b|coffee|ccd|cafe coffee|bakery|bakers|juice|haldiram/i, /snack|beverage|coffee|tea/i],
   [/swiggy|zomato|restaurant|cafe|hotel|dominos|pizza|kfc|mcdonald|starbucks|burger|biryani|bakery|eatsure|food/i, /dining|food|eat|restaurant/i],
   [/bigbasket|blinkit|zepto|dmart|d-mart|grocer|supermarket|kirana|fresh|instamart|ratnadeep|more retail|jiomart|vegetable|reliance retail|spencer/i, /grocer/i],
-  [/uber|ola\b|olacabs|rapido|metro|irctc|redbus|railway|fastag|toll|parking|namma yatri|bmtc|ksrtc|tsrtc|apsrtc/i, /transport|travel|cab|commute/i],
+  [/uber|ola\b|olacabs|rapido|namma yatri|blusmart|meru|auto ?rickshaw/i, /cab|auto/i],
+  [/fastag|toll|parking|netc/i, /parking|toll/i],
   [/petrol|fuel|hpcl|bpcl|iocl|indian oil|shell|filling|bharat petro|hp pay/i, /fuel|transport|petrol/i],
+  [/uber|ola\b|olacabs|rapido|metro|irctc|redbus|railway|fastag|toll|parking|namma yatri|bmtc|ksrtc|tsrtc|apsrtc/i, /transport|travel|cab|commute/i],
+  [/makemytrip|goibibo|cleartrip|yatra|indigo|air india|vistara|akasa|spicejet|oyo|airbnb|booking\.com|agoda/i, /travel|vacation|trip/i],
+  [/service cent|car wash|tyre|tire|bosch car|gomechanic|motors|automobiles|bike service/i, /vehicle|mainten/i],
+  [/croma|reliance digital|vijay sales|apple|samsung|oneplus|xiaomi|mi store|bajaj electronics|sangeetha/i, /gadget|electronic/i],
+  [/ikea|pepperfry|urban ladder|home centre|wakefit|sleepyhead|durian/i, /furniture|decor/i],
   [/amazon|flipkart|myntra|ajio|meesho|nykaa|croma|reliance digital|shopping|tata cliq|lenskart|decathlon/i, /shopping|clothing/i],
+  [/indane|bharatgas|bharat gas|hp gas|hpgas|lpg|cylinder/i, /gas|lpg|cylinder/i],
+  [/tata play|tatasky|tata sky|dish tv|d2h|airtel dth|sun direct|cable/i, /dth|cable/i],
+  [/bisleri|water can|kinley|aquaguard|ro service|kent ro/i, /water/i],
   [/electricity|bescom|tsspdcl|apspdcl|tneb|msedcl|kseb|tata power|adani elec|water|gas|indane|bharatgas|billdesk|bbps|cred club/i, /utilit|bill/i],
   [/jio|airtel|vodafone|\bvi\b|bsnl|broadband|act fibernet|hathway|recharge|tata play|dish tv/i, /mobile|internet|phone|recharge/i],
+  [/pharma|medplus|1mg|netmeds|pharmeasy|chemist|medical store|apollo pharmacy|wellness forever/i, /pharma|medicine/i],
   [/apollo|pharma|medplus|hospital|clinic|1mg|netmeds|diagnostic|lab\b|healthcare|pharmeasy/i, /medic|health/i],
-  [/netflix|hotstar|prime video|spotify|bookmyshow|pvr|inox|youtube|zee5|sonyliv|jiocinema/i, /entertain|subscription|movie/i],
-  [/rent|landlord|nobroker|maintenance/i, /rent|hous/i],
+  [/cult\.?fit|cultfit|gym|fitness|yoga|gold's|anytime fitness|decathlon/i, /gym|fitness/i],
+  [/netflix|hotstar|prime video|spotify|youtube premium|zee5|sonyliv|jiocinema|apple\.com|google play|icloud|google one|audible/i, /subscription/i],
+  [/netflix|hotstar|prime video|spotify|bookmyshow|pvr|inox|youtube|zee5|sonyliv|jiocinema|district/i, /entertain|subscription|movie/i],
+  [/salon|parlour|parlor|\bspa\b|urban company|naturals|lakme|barber/i, /personal care|beauty|salon/i],
+  [/laundry|dry ?clean|ironing|uclean|washmart/i, /laundry|ironing/i],
+  [/temple|devasthanam|pooja|puja|tirumala|ttd|isha|iskcon/i, /festival|pooja/i],
+  [/petsmart|heads up for tails|supertails|\bvet\b|veterinary|\bpets?\b/i, /pet/i],
+  [/rent|landlord|nobroker/i, /rent|hous/i],
+  [/maintenance|plumber|electrician|carpenter|painter|urban company/i, /home mainten|repair/i],
+  [/\bmaid\b|\bcook\b|driver salary|watchman|househelp|house help|broomees/i, /maid|household help/i],
   [/school|college|tuition|fees|udemy|coursera|byju|vedantu|unacademy/i, /educat/i],
-  [/insurance|lic\b|policy|premium|policybazaar/i, /insur/i],
+  [/sapna|crossword|stationery|stationary|bookstore|book store|xerox/i, /book|stationery/i],
+  [/insurance|lic\b|policy|premium|policybazaar|acko|go digit/i, /insur/i],
+  [/income ?tax|gst payment|gstn|\btds\b|property tax|municipal|ghmc|bbmp|challan|tin-?nsdl|incometax/i, /tax/i],
 ];
 
 const MONEY = String.raw`(?:rs\.?|inr|₹)\s*:?\s*([0-9][0-9,]*(?:\.\d{1,2})?)`;
@@ -215,7 +242,7 @@ export function matchAccount(accounts: Account[], { last4, bank, card }: { last4
 export function matchCategory(categories: Category[], text: string): number | null {
   for (const [merchant, name] of CATEGORY_HINTS) {
     if (!merchant.test(text)) continue;
-    const c = categories.find(x => !x.system && name.test(x.name));
+    const c = categories.find(x => !x.system && isExpense(x) && name.test(x.name));
     if (c) return c.id;
   }
   return null;

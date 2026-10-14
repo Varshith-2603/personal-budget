@@ -8,7 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Check, ChevronLeft, ChevronRight, MessageSquareText, Search, Trash2, X } from 'lucide-react-native';
 import { useApp } from '../state';
-import { Account, LocalExpense, liveBalance } from '../data';
+import { Account, LocalExpense, isExpense, liveBalance } from '../data';
 import { date, isoDate, money } from '../format';
 import { AccountBubble, Button, Field, IconBubble, Sheet, categoryLook } from '../ui';
 import { colors, radius, space } from '../theme';
@@ -24,7 +24,7 @@ const startsWord = (name: string, q: string) => name.toLowerCase().split(/[\s&/,
 
 export function AddExpense({ visible, onClose, prefill, editing }: { visible: boolean; onClose: () => void; prefill?: Prefill; editing?: LocalExpense }) {
   const app = useApp();
-  const cats = useMemo(() => app.snapshot?.categories || [], [app.snapshot]);
+  const cats = useMemo(() => (app.snapshot?.categories || []).filter(isExpense), [app.snapshot]);
   const wanted = editing?.paidFromId ?? prefill?.paidFromId;
   // the accounts shown on the phone (and the one an SMS or an edit names, even if hidden)
   const payers = useMemo(() => (app.snapshot?.accounts || []).filter(a => a.payFrom && (app.accounts.includes(a) || a.id === wanted))

@@ -7,8 +7,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, PermissionsAndroid, Platform, ToastAndroid } from 'react-native';
 import {
-  Account, BalanceSheet, Chit, DEFAULT_SETTINGS, Installment, LocalChitPayment, LocalExpense, Meta, Settings, Snapshot, Statement, Upload,
-  enforceLimit, fetchBalanceSheet, fetchStatement, login, normalizeUrl, store, syncNow, usage, visibleAccounts,
+  Account, BalanceSheet, Budgets, Chit, DEFAULT_SETTINGS, Installment, LocalChitPayment, LocalExpense, Meta, Settings, Snapshot, Statement, Upload,
+  enforceLimit, fetchBalanceSheet, fetchBudgets, fetchStatement, login, normalizeUrl, store, syncNow, thisMonth, usage, visibleAccounts,
 } from './data';
 import { uuid } from './format';
 import { PickedFile, RawSms, SmsPermissions, nativeFiles, nativeSettings, nativeSms, smsSupported } from './native';
@@ -29,6 +29,8 @@ type AppContext = {
   chitQueue: LocalChitPayment[];
   uploads: Upload[];
   sheet: BalanceSheet | null;
+  /** this month's budgets (kept for offline use) */
+  budgets: Budgets | null;
   meta: Meta;
   syncing: boolean;
   step: string;
@@ -48,6 +50,8 @@ type AppContext = {
   payChit(chit: Chit, inst: Installment, p: { paidDate: string; fromAccountId: number; dividend: number }): Promise<void>;
   removeChitPayment(clientId: string): Promise<void>;
   loadSheet(): Promise<BalanceSheet | null>;
+  /** a month's budgets from the server (this month when none is given; offline: the kept copy of this month) */
+  loadBudgets(month?: string): Promise<Budgets | null>;
   statement(id: number): Promise<Statement | null>;
   dismissSms(ids: string[]): Promise<void>;
   scanInbox(days: number): Promise<number>;
@@ -76,6 +80,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [chitQueue, setChitQueue] = useState<LocalChitPayment[]>([]);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [sheet, setSheet] = useState<BalanceSheet | null>(null);
+  const [budgets, setBudgets] = useState<Budgets | null>(null);
   const [meta, setMeta] = useState<Meta>({ lastSync: null, lastError: null, lastServerOk: null });
   const [syncing, setSyncing] = useState(false);
   const [step, setStep] = useState('');
@@ -123,6 +128,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await persistUploads([...addedU, ...out.uploads]);
       if (out.snapshot) setSnapshot(out.snapshot);
       if (out.sheet) setSheet(out.sheet);
+      if (out.budgets) setBudgets(out.budgets);
       setOnline(out.ok || out.message.startsWith('Please sign in'));
       const m: Meta = { lastSync: out.ok ? Date.now() : meta.lastSync, lastError: out.ok ? null : out.message, lastServerOk: out.ok ? Date.now() : meta.lastServerOk };
       setMeta(m);
@@ -144,9 +150,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // ---- load what is on the phone, then sync
   useEffect(() => {
     (async () => {
-      const [s, snap, q, cq, ups, bs, m] = await Promise.all([store.settings(), store.snapshot(), store.queue(), store.chitQueue(), store.uploads(),
-        store.balanceSheet(), store.meta()]);
-      setSettings(s); setSnapshot(snap); setQueue(q); setChitQueue(cq); setUploads(ups); setSheet(bs); setMeta(m);
+      const [s, snap, q, cq, ups, bs, bg, m] = await Promise.all([store.settings(), store.snapshot(), store.queue(), store.chitQueue(), store.uploads(),
+        store.balanceSheet(), store.budgets(), store.meta()]);
+      setSettings(s); setSnapshot(snap); setQueue(q); setChitQueue(cq); setUploads(ups); setSheet(bs); setBudgets(bg); setMeta(m);
       ref.current = { settings: s, queue: q, chitQueue: cq, uploads: ups, syncing: false, snapshot: snap };
       setReady(true);
       // the receiver's own switch follows the app's setting (it is what decides whether an SMS is caught)
@@ -262,6 +268,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return kept;
   }, [refreshUsage]);
 
+  const loadBudgets = useCallback(async (month?: string) => {
+    const s = ref.current.settings;
+    const current = !month || month === thisMonth();
+    if (s.token && !s.offline) {
+      try {
+        const b = await fetchBudgets(s, month);
+        if (current) { setBudgets(b); refreshUsage(); }
+        return b;
+      } catch { /* the kept copy (this month only) */ }
+    }
+    if (!current) return null;
+    const kept = await store.budgets();
+    if (kept) setBudgets(kept);
+    return kept;
+  }, [refreshUsage]);
+
   const statement = useCallback(async (id: number) => {
     const s = ref.current.settings;
     if (s.token && !s.offline) {
@@ -313,6 +335,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await store.clearCache();
     setSnapshot(null);
     setSheet(null);
+    setBudgets(null);
     refreshUsage();
     if (ref.current.settings.token && !ref.current.settings.offline) sync(true);
   }, [refreshUsage, sync]);
@@ -348,8 +371,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [raw, snapshot, queue, accounts]);
 
   const value: AppContext = {
-    ready, settings, snapshot, accounts, queue, chitQueue, uploads, sheet, meta, syncing, step, online, detected, used, perms,
-    saveSettings, signIn, signOut, sync, addExpense, updateExpense, removeExpense, addEvidence, removeEvidence, payChit, removeChitPayment, loadSheet,
+    ready, settings, snapshot, accounts, queue, chitQueue, uploads, sheet, budgets, meta, syncing, step, online, detected, used, perms,
+    saveSettings, signIn, signOut, sync, addExpense, updateExpense, removeExpense, addEvidence, removeEvidence, payChit, removeChitPayment, loadSheet, loadBudgets,
     statement, dismissSms, scanInbox, enableSms, checkPerms, readSms, clearCache, notify,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

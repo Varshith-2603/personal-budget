@@ -1,19 +1,27 @@
-/** More: the balance sheet, bank SMS (with how many wait to be recorded) and settings. */
+/** More: the budget, categories, the balance sheet, bank SMS (with how many wait to be recorded) and settings. */
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { ChevronRight, MessageSquareText, Scale, Settings as Cog } from 'lucide-react-native';
+import { ChartPie, ChevronRight, MessageSquareText, Scale, Settings as Cog, Tags } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../state';
+import { isExpense } from '../data';
 import { ago, money } from '../format';
 import { Card, IconBubble } from '../ui';
 import { colors, space } from '../theme';
 
-export type MorePage = 'sheet' | 'sms' | 'settings';
+export type MorePage = 'budget' | 'categories' | 'sheet' | 'sms' | 'settings';
 
 export function MoreScreen({ onOpen }: { onOpen: (p: MorePage) => void }) {
   const app = useApp();
   const insets = useSafeAreaInsets();
+  const cats = app.snapshot?.categories || [];
+  const expense = cats.filter(isExpense).length;
+  const b = app.budgets;
   const items: [MorePage, any, string, string, string, string, number][] = [
+    ['budget', ChartPie, colors.coral, colors.coralSoft, 'Budget',
+      b && b.totalLimit ? `${money(b.totalSpent)} of ${money(b.totalLimit)} spent · ${money(b.totalRemaining)} left` : 'This month’s budgets and what is spent', 0],
+    ['categories', Tags, colors.aqua, colors.aquaSoft, 'Categories',
+      cats.length ? `${expense} expense · ${cats.length - expense} income` : 'Expense and income categories', 0],
     ['sheet', Scale, colors.green, colors.greenSoft, 'Balance sheet',
       app.sheet ? `Net worth ${money(app.sheet.netWorth)} · updated ${ago(app.sheet.fetchedAt)}` : 'What you own and owe, by group', 0],
     ['sms', MessageSquareText, colors.violet, colors.violetSoft, 'Bank SMS',

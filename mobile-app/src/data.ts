@@ -3,7 +3,8 @@
  *
  * Kept on the phone (src/native.ts store), within the size set in Settings:
  *   settings   the server address, sign-in, offline mode, the limits
- *   snapshot   every account with its balance, the expense categories, the latest expenses (from the server)
+ *   snapshot   every account with its balance, the expense and income categories, the latest expenses (from the server)
+ *   budgets    this month's budgets against what was spent (from the server)
  *   queue      expenses recorded on the phone, not yet on the server (never trimmed)
  *   stmt-<id>  an account's statement, for the most active accounts first, as far as the size allows
  *
@@ -23,7 +24,10 @@ export type Account = {
   monthIn: number; monthOut: number; lastActivity: string | null; payFrom: boolean; system: boolean;
 };
 
-export type Category = { id: number; name: string; system: boolean; uses: number };
+/** kind and code are missing in a snapshot kept from before the server sent income categories: those are all expense. */
+export type Category = { id: number; kind?: 'EXPENSE' | 'INCOME'; code?: string; name: string; description?: string | null; system: boolean; uses: number };
+
+export const isExpense = (c: Category) => (c.kind || 'EXPENSE') === 'EXPENSE';
 
 export type ServerExpense = {
   entryId: number; entryNo: string; date: string; narration: string; party: string | null; reference: string | null;
@@ -41,6 +45,8 @@ export type Chit = {
   paidCount: number; pendingCount: number; overdueCount: number; overdueAmount: number; nextDueDate: string | null; nextDueAmount: number | null;
   paidIn: number; dividends: number; stillToPay: number; currentValue: number; maturityAmount: number | null; maturityDate: string | null;
   defaultPaymentAccountId: number | null; progressPercent: number; installments: Installment[];
+  /** the organizer's UPI ID: instalments can be paid with Google Pay or PhonePe; upiNote starts the payment note */
+  organizerUpi?: string | null; upiNote?: string | null;
 };
 
 export type Snapshot = {
@@ -84,6 +90,24 @@ export type BalanceSheet = {
   balanced: boolean; fetchedAt: number;
 };
 
+/** A category's budget this month (or, without one, what was spent in it): as the server's Budgets page shows it. */
+export type BudgetLine = {
+  budgetId: number | null; categoryId: number; categoryCode: string; categoryName: string; monthlyLimit: Money | null; alertPercent: number | null;
+  spent: Money; remaining: Money | null; usedPercent: Money | null; averageLast3Months: Money; health: 'OK' | 'WARNING' | 'OVER' | 'UNBUDGETED';
+  notes: string | null; committed: boolean; dueDay: number | null; dueDate: string | null;
+  /** PAID, PARTLY_PAID, DUE, DUE_SOON, OVERDUE (committed budgets) */
+  paymentStatus: string | null; paidOn: string | null;
+  /** ON_TRACK, AHEAD_OF_PACE, HEADING_OVER, OVER, UNDER, NOT_STARTED (ordinary budgets) */
+  pace: string | null; expectedByToday: Money | null; projected: Money | null; dailyAverage: Money | null; safePerDay: Money | null;
+  limitReachedOn: string | null; insight: string | null;
+};
+export type BudgetAlert = { severity: 'critical' | 'warning' | 'info' | 'good'; categoryId: number | null; title: string; message: string; hint: string | null };
+export type Budgets = {
+  month: string; totalLimit: Money; totalSpent: Money; totalRemaining: Money; usedPercent: Money | null; unbudgetedSpent: Money; lines: BudgetLine[];
+  daysInMonth: number; daysElapsed: number; daysLeft: number; projectedTotal: Money; committedTotal: Money; committedPaid: Money;
+  committedOutstanding: Money; alerts: BudgetAlert[]; fetchedAt: number;
+};
+
 export type StatementRow = { entryId: number; entryNo: string; date: string; voucher: string; narration: string; other: string | null;
   debit: number; credit: number; balance: number };
 export type Statement = { accountId: number; name: string; accountClass: string; from: string; to: string; opening: number; closing: number;
@@ -121,7 +145,7 @@ export function visibleAccounts(settings: Settings, accounts: Account[]): Accoun
 
 // ===================================================================== the store
 
-const K = { settings: 'settings', snapshot: 'snapshot', queue: 'queue', meta: 'meta', chitQueue: 'chit-queue', uploads: 'uploads', sheet: 'balance-sheet' };
+const K = { settings: 'settings', snapshot: 'snapshot', queue: 'queue', meta: 'meta', chitQueue: 'chit-queue', uploads: 'uploads', sheet: 'balance-sheet', budgets: 'budgets' };
 const stmtKey = (id: number) => `stmt-${id}`;
 
 async function read<T>(key: string, fallback: T): Promise<T> {
@@ -149,6 +173,8 @@ export const store = {
   saveUploads: (u: Upload[]) => write(K.uploads, u),
   balanceSheet: () => read<BalanceSheet | null>(K.sheet, null),
   saveBalanceSheet: (b: BalanceSheet) => write(K.sheet, b),
+  budgets: () => read<Budgets | null>(K.budgets, null),
+  saveBudgets: (b: Budgets) => write(K.budgets, b),
   meta: () => read<Meta>(K.meta, { lastSync: null, lastError: null, lastServerOk: null }),
   saveMeta: (m: Meta) => write(K.meta, m),
   statement: (id: number) => read<Statement | null>(stmtKey(id), null),
@@ -156,7 +182,7 @@ export const store = {
   sizes: () => nativeStore.sizes(),
   clearCache: async () => {
     const sizes = await nativeStore.sizes();
-    await Promise.all(Object.keys(sizes).filter(k => k.startsWith('stmt-') || k === K.snapshot || k === K.sheet).map(k => nativeStore.remove(k)));
+    await Promise.all(Object.keys(sizes).filter(k => k.startsWith('stmt-') || k === K.snapshot || k === K.sheet || k === K.budgets).map(k => nativeStore.remove(k)));
   },
   removeStatement: (id: number) => nativeStore.remove(stmtKey(id)),
 };
@@ -168,7 +194,7 @@ export async function usage(): Promise<{ total: number; cache: number; statement
   for (const [k, n] of Object.entries(sizes)) {
     total += n;
     if (k.startsWith('stmt-')) { statements += n; cache += n; }
-    if (k === K.snapshot || k === K.sheet) cache += n;
+    if (k === K.snapshot || k === K.sheet || k === K.budgets) cache += n;
   }
   return { total, cache, statements };
 }
@@ -273,13 +299,13 @@ type SyncResult = { clientId: string; status: 'CREATED' | 'DUPLICATE' | 'PENDING
 export type Outbox = { queue: LocalExpense[]; chits: LocalChitPayment[]; uploads: Upload[] };
 
 export type SyncOutcome = Outbox & { ok: boolean; offline?: boolean; sent: number; failed: number; uploaded: number; message: string;
-  snapshot?: Snapshot; sheet?: BalanceSheet | null };
+  snapshot?: Snapshot; sheet?: BalanceSheet | null; budgets?: Budgets | null };
 
 const waits = (s: LocalStatus) => s === 'QUEUED' || s === 'FAILED';
 
 /**
  * One sync: send what waits (expenses and chit payments in one batch, then evidence), then bring down the latest
- * balances, expenses, chits, the balance sheet and statements. Resolves with what happened (never throws); the
+ * balances, expenses, chits, the balance sheet, the budgets and statements. Resolves with what happened (never throws); the
  * outbox it returns is the one to keep.
  */
 export async function syncNow(settings: Settings, outbox: Outbox, onStep?: (s: string) => void): Promise<SyncOutcome> {
@@ -361,11 +387,18 @@ export async function syncNow(settings: Settings, outbox: Outbox, onStep?: (s: s
     } catch {
       // not allowed for this user, or a hiccup: the kept copy stays
     }
+    let budgets: Budgets | null = null;
+    try {
+      onStep?.('Getting the budgets…');
+      budgets = await fetchBudgets(settings);
+    } catch {
+      // the kept copy stays
+    }
     onStep?.('Saving statements for offline use…');
     await cacheStatements(settings, snapshot);
     await enforceLimit(settings, snapshot);
     const bits = [sent ? `${sent} sent` : '', uploaded ? `${uploaded} evidence uploaded` : '', failed ? `${failed} not accepted` : ''].filter(Boolean);
-    return { ok: true, sent, failed, uploaded, queue: q, chits: cq, uploads: ups, snapshot, sheet, message: ['Synced', ...bits].join(' · ') };
+    return { ok: true, sent, failed, uploaded, queue: q, chits: cq, uploads: ups, snapshot, sheet, budgets, message: ['Synced', ...bits].join(' · ') };
   } catch (e: any) {
     await store.saveQueue(q);
     await store.saveChitQueue(cq);
@@ -404,6 +437,20 @@ export async function fetchBalanceSheet(settings: Settings): Promise<BalanceShee
   const sheet = { ...b, fetchedAt: Date.now() };
   await store.saveBalanceSheet(sheet);
   return sheet;
+}
+
+/** A month's budgets against what was spent (this month when none is given); this month's is kept for offline use. */
+export async function fetchBudgets(settings: Settings, month?: string): Promise<Budgets> {
+  const b = await request<Omit<Budgets, 'fetchedAt'>>(settings, `/api/budgets${month ? `?month=${month}` : ''}`, { timeoutMs: 20000 });
+  const out = { ...b, fetchedAt: Date.now() };
+  if (!month || month === thisMonth()) await store.saveBudgets(out);
+  return out;
+}
+
+/** "2026-10" */
+export function thisMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 /** The statements of the most active accounts shown on the phone, as far as the size limit allows. */
