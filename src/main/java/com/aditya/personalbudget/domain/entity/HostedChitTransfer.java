@@ -37,8 +37,8 @@ public class HostedChitTransfer implements TenantOwned {
     @GeneratedValue
     private Long id;
 
-    @References(Tenant.class)
-    @Column(nullable = false)
+    @References(Organization.class)
+    @Column(name = "organizationId", nullable = false)
     private Long tenantId;
 
     /** The chit whose money moves; empty for the organiser's own money between common accounts. */

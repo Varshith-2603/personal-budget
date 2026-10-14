@@ -1931,3 +1931,25 @@ td.c-ctst, th.c-ctst { width: 112px; white-space: nowrap; }
 .emi-panel .xd-top { flex-wrap: wrap; row-gap: 6px; }
 .emi-panel .xd-actions { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
 .emi-panel .xd-actions .switch { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- money lent: the interest card */
+.expense-form.mode-LENT .xp-interest {
+    flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-radius: 12px;
+    background: var(--grad-brand-soft); border: 1px solid rgba(11, 124, 189, 0.18);
+}
+.xp-interest .xi-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.xp-interest .xi-label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+.xp-interest .xi-label svg { width: 13px; height: 13px; color: var(--ocean-500); }
+.xp-interest .xi-seg { background: rgba(255, 255, 255, 0.8); }
+.xp-interest .xi-seg .seg-chip { height: 28px; padding: 0 12px; }
+.modal .xp-interest .check-line { min-height: 38px; background: rgba(255, 255, 255, 0.75); cursor: pointer; }
+.modal .xp-interest .check-line span { flex: 1; min-width: 0; }
+.xp-interest .check-line .post-amount {
+    padding: 2px 8px; border-radius: 999px; background: rgba(11, 124, 189, 0.1); white-space: nowrap;
+}
+.xp-interest.on-payment .xi-auto { display: none; }   /* nothing falls due on a schedule to book */
+@media (max-width: 640px) {
+    .xp-interest .xi-row { flex-direction: column; align-items: stretch; gap: 5px; }
+    .xp-interest .xi-seg { display: flex; }
+    .xp-interest .xi-seg .seg-chip { flex: 1; justify-content: center; }
+}

@@ -31,8 +31,8 @@ public class JournalLine implements TenantOwned {
     @GeneratedValue
     private Long id;
 
-    @References(Tenant.class)
-    @Column(nullable = false)
+    @References(Organization.class)
+    @Column(name = "organizationId", nullable = false)
     private Long tenantId;
 
     @References(JournalEntry.class)
@@ -72,4 +72,12 @@ public class JournalLine implements TenantOwned {
      */
     @References(HostedChit.class)
     private Long hostedChitId;
+    /**
+     * Snapshot of the account's balance (natural sign) right before this line, in ledger order: entry date, then
+     * entry, then line. Kept by the ledger with {@link #balanceAfter}: an entry posted, changed or deleted on an
+     * earlier date moves the snapshots of the lines after it.
+     */
+    private BigDecimal balanceBefore;
+    /** Snapshot of the account's balance (natural sign) right after this line; see {@link #balanceBefore}. */
+    private BigDecimal balanceAfter;
 }

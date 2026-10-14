@@ -5,7 +5,7 @@ import com.aditya.personalbudget.domain.entity.HostedChitAgreement;
 import com.aditya.personalbudget.domain.entity.HostedChitMember;
 import com.aditya.personalbudget.domain.entity.HostedChitPayment;
 import com.aditya.personalbudget.domain.entity.HostedChitShare;
-import com.aditya.personalbudget.domain.entity.Tenant;
+import com.aditya.personalbudget.domain.entity.Organization;
 import com.aditya.personalbudget.domain.type.Feature;
 import com.aditya.personalbudget.domain.type.UserRole;
 import com.aditya.personalbudget.exception.BusinessException;
@@ -17,7 +17,7 @@ import com.aditya.personalbudget.repository.HostedChitMemberRepository;
 import com.aditya.personalbudget.repository.HostedChitPaymentRepository;
 import com.aditya.personalbudget.repository.HostedChitRepository;
 import com.aditya.personalbudget.repository.HostedChitShareRepository;
-import com.aditya.personalbudget.repository.TenantRepository;
+import com.aditya.personalbudget.repository.OrganizationRepository;
 import com.aditya.personalbudget.security.CurrentUser;
 import com.aditya.personalbudget.security.UserContext;
 import com.aditya.personalbudget.service.HostedChitService.AgreementView;
@@ -171,7 +171,7 @@ public class HostedChitShareService {
     private final HostedChitMemberRepository members;
     private final HostedChitPaymentRepository payments;
     private final HostedChitAgreementRepository agreements;
-    private final TenantRepository tenants;
+    private final OrganizationRepository tenants;
     private final HostedChitService service;
     private final ActivityService activity;
     private final AppSettingsService settings;
@@ -181,7 +181,7 @@ public class HostedChitShareService {
 
     public HostedChitShareService(HostedChitShareRepository shares, HostedChitRepository chits, HostedChitMemberRepository members,
                                   HostedChitPaymentRepository payments, HostedChitAgreementRepository agreements,
-                                  TenantRepository tenants, HostedChitService service, ActivityService activity,
+                                  OrganizationRepository tenants, HostedChitService service, ActivityService activity,
                                   AppSettingsService settings, AccountRepository accountRepo, AttachmentService files) {
         this.files = files;
         this.settings = settings;
@@ -311,7 +311,7 @@ public class HostedChitShareService {
         if (!RECEIPT.equals(kind(s)) || s.getPaymentId() == null) {
             throw new BusinessException("This link is not a receipt");
         }
-        Tenant tenant = tenant(s);
+        Organization tenant = tenant(s);
         return asTenant(tenant, () -> {
             Detail d = service.detail(s.getChitId());
             return ReceiptPdf.render(tenant.getName(), d.chit().name(), receipt(d, s.getPaymentId()));
@@ -355,7 +355,7 @@ public class HostedChitShareService {
         s.setViews((s.getViews() == null ? 0 : s.getViews()) + 1);
         s.setLastViewedAt(LocalDateTime.now());
         shares.save(s);
-        Tenant tenant = tenant(s);
+        Organization tenant = tenant(s);
         return asTenant(tenant, () -> toPublic(service.detail(s.getChitId()), s, tenant));
     }
 
@@ -380,7 +380,7 @@ public class HostedChitShareService {
         if (!java.util.Set.of("AADHAAR_FRONT", "AADHAAR_BACK", "PAN", "SELFIE").contains(type)) {
             throw new BusinessException("Add your Aadhaar card, PAN card or a selfie");
         }
-        Tenant tenant = tenant(s);
+        Organization tenant = tenant(s);
         return asTenant(tenant, () -> {
             files.addToAgreement(HostedChitService.AGREEMENT_FILES, a.getId(), type, fileName, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD", "chit agreement " + a.getAgreementNo());
             return toPublic(service.detail(s.getChitId()), s, tenant);
@@ -478,7 +478,7 @@ public class HostedChitShareService {
         a.setEvidencePayload(ActivityService.cut(Kyc.json(ev), 4000));
         a.setDigitalSignature(settings.signPayLink(a.getEvidencePayload()));
         agreements.save(a);
-        Tenant tenant = tenant(s);
+        Organization tenant = tenant(s);
         return asTenant(tenant, () -> {
             HostedChit c = chits.findById(s.getChitId()).orElseThrow();
             activity.record(new CurrentUser(null, "link", name, UserRole.VIEWER, tenant.getId(), tenant.getCode(), tenant.getName(),
@@ -488,7 +488,7 @@ public class HostedChitShareService {
         });
     }
 
-    private PublicChit toPublic(Detail d, HostedChitShare s, Tenant t) {
+    private PublicChit toPublic(Detail d, HostedChitShare s, Organization t) {
         var c = d.chit();
         String kind = kind(s);
         boolean earnings = Boolean.TRUE.equals(s.getShowEarnings());
@@ -525,7 +525,7 @@ public class HostedChitShareService {
      * The account the member pays into: theirs if one is set, else the chit's, else the chit's collection account (when
      * it has a UPI ID or bank details); otherwise the chit's own UPI ID. Null when there is nothing to pay into.
      */
-    private PublicPayTo payTo(Detail d, HostedChitShare s, Tenant t) {
+    private PublicPayTo payTo(Detail d, HostedChitShare s, Organization t) {
         var c = d.chit();
         HostedChit chit = chits.findById(c.id()).orElseThrow();
         HostedChitMember m = s.getMemberId() == null ? null : members.findById(s.getMemberId()).orElse(null);
@@ -608,7 +608,7 @@ public class HostedChitShareService {
             throw new BusinessException("This link has no payment details");
         }
         boolean valid = settings.verifyPayLink(payload, signature);
-        Tenant tenant = tenant(s);
+        Organization tenant = tenant(s);
         PublicPayTo now = asTenant(tenant, () -> payTo(service.detail(s.getChitId()), s, tenant));
         boolean current = valid && now != null && payload.contains("\"pay\":" + payDetails(s.getChitId(), s.getMemberId(), now.upiId(),
                 now.payeeName(), now.holderName(), now.bankName(), now.accountNumber(), now.ifsc(), now.toMember(), now.toMemberPhone()) + ",");
@@ -708,12 +708,12 @@ public class HostedChitShareService {
         return s;
     }
 
-    private Tenant tenant(HostedChitShare s) {
+    private Organization tenant(HostedChitShare s) {
         return tenants.findById(s.getTenantId()).filter(t -> Boolean.TRUE.equals(t.getActive()))
                 .orElseThrow(() -> new BusinessException("This chit is no longer shared"));
     }
 
-    private static <T> T asTenant(Tenant tenant, Supplier<T> work) {
+    private static <T> T asTenant(Organization tenant, Supplier<T> work) {
         CurrentUser previous = UserContext.current().orElse(null);
         UserContext.set(new CurrentUser(null, "share", "Chit link", UserRole.VIEWER, tenant.getId(), tenant.getCode(),
                 tenant.getName(), tenant.getCurrency(), Feature.all(), false));

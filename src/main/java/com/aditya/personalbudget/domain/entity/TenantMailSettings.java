@@ -18,10 +18,10 @@ import java.time.LocalDateTime;
 /**
  * A household's own e-mail (SMTP) account, used to send Host a Chit reminders and receipts from the household's
  * address. The password is kept encrypted (AES-GCM, key in {@code data/app-settings.properties}) and never sent back
- * to the browser. Table file: {@code data/tenant_mail_settings.tbl}
+ * to the browser. Table file: {@code data/organization_mail_settings.tbl}
  */
 @Entity
-@Table(name = "tenant_mail_settings", uniqueConstraints = @UniqueConstraint(columnNames = {"tenantId"}))
+@Table(name = "organization_mail_settings", uniqueConstraints = @UniqueConstraint(columnNames = {"organizationId"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -35,8 +35,8 @@ public class TenantMailSettings implements TenantOwned {
     @GeneratedValue
     private Long id;
 
-    @References(Tenant.class)
-    @Column(nullable = false)
+    @References(Organization.class)
+    @Column(name = "organizationId", nullable = false)
     private Long tenantId;
 
     /** Off: the installation's e-mail settings (application.yml) are used, if any. */

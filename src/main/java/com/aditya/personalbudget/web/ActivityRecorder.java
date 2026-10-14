@@ -127,7 +127,7 @@ public class ActivityRecorder implements HandlerInterceptor, ResponseBodyAdvice<
         String path = path(request);
         if (path.startsWith("/auth") || path.startsWith("/events") || path.startsWith("/approvals")
                 || path.startsWith("/admin/links") || path.startsWith("/admin/approval") || path.startsWith("/activity")
-                || path.startsWith("/hosted-chits") || path.startsWith("/construction") || path.startsWith("/expenses/emis") || path.matches("/claims/\\d+/agreement.*")) {
+                || path.startsWith("/hosted-chits") || path.startsWith("/construction") || path.startsWith("/expenses/emis") || path.startsWith("/app/") || path.matches("/claims/\\d+/agreement.*")) {
             return;   // sign-in, approvals, links, hosted chits, construction and loan agreements write their own, clearer lines
         }
         Optional<CurrentUser> user = UserContext.current();

@@ -18,7 +18,7 @@ import { setPageKeys, listNavigator } from '../core/keys.js';
 import { evidenceFieldHtml, bindEvidenceField } from '../components/evidence.js';
 import { exportButton, bindExport } from '../core/export.js';
 
-const view = { selectedId: null, tab: 'installments', interestFilter: 'all' };
+const view = { selectedId: null, tab: 'installments', interestFilter: 'all', search: '' };
 
 const prefs = getPref('chits', { includeMatured: false });
 const savePrefs = () => setPref('chits', prefs);
@@ -35,14 +35,20 @@ export async function render(container, _params, isCurrent) {
     <div class="page chits-page">
         <section class="cp-card" id="chit-brand"></section>
         <div class="cs-cards" id="chit-cards"></div>
-        ${panel({
-            title: 'My chits', iconName: 'chit', cls: 'p-chit-list', bodyClass: 'flush',
-            sub: `${chits.filter(isRunning).length} running`,
-            actions: `<a class="btn sm ghost icon" href="#/reports/chit-summary" title="Chit summary: the selected chits together, printable">${icon('printer')}</a>
-                <a class="btn sm ghost icon" href="#/forecast/chit" title="Chit illustrator: bids, dividends and the best month to lift">${icon('calculator')}</a>`
-                + (can('MANAGE_CHITS') ? `<button class="btn sm primary" id="new-chit">${icon('plus')}Chit</button>` : ''),
-            body: `<div class="chit-rows scroll" id="chit-list">${chits.length ? chitRows(chits) : emptyState('Add your first chit', 'chit')}</div>`,
-        })}
+        <section class="panel p-chit-list headless">
+            <div class="panel-body flush">
+                <div class="list-tools">
+                    <div class="lt-top">
+                        <div class="search-box">${icon('search')}<input id="chit-search" name="q-chits" data-plain placeholder="Search chits…  ↑↓ to move" value="${esc(view.search)}">
+                            <span class="lt-count" id="chit-count" title="Running chits">${chits.filter(isRunning).length} running</span></div>
+                        <a class="btn ghost icon lt-micro" href="#/reports/chit-summary" title="Chit summary: the selected chits together, printable">${icon('printer')}</a>
+                        <a class="btn ghost icon lt-micro" href="#/forecast/chit" title="Chit illustrator: bids, dividends and the best month to lift">${icon('calculator')}</a>
+                        ${can('MANAGE_CHITS') ? `<button class="btn primary icon lt-add" id="new-chit" title="Add chit">${icon('plus')}</button>` : ''}
+                    </div>
+                </div>
+                <div class="chit-rows scroll" id="chit-list" tabindex="0" aria-label="Chits, use the arrow keys to move">${chits.length ? chitRows(chits) : emptyState('Add your first chit', 'chit')}</div>
+            </div>
+        </section>
         <div class="chit-detail" id="chit-detail">${chits.length ? '' : panel({ title: 'Chit', iconName: 'chit', body: emptyState('No chits yet') })}</div>
     </div>`;
 
@@ -66,6 +72,29 @@ export async function render(container, _params, isCurrent) {
         if (card) show(Number(card.dataset.id));
     });
 
+    // the search narrows the list on name, organizer, ticket, status and the account it is paid from
+    const matching = () => {
+        const term = view.search.trim().toLowerCase();
+        return term ? chits.filter(c => [c.name, c.organizer, c.ticketNo, c.status, c.accountName, c.notes]
+            .some(v => v && String(v).toLowerCase().includes(term))) : chits;
+    };
+    const drawRows = () => {
+        const list = matching();
+        container.querySelector('#chit-list').innerHTML = list.length ? chitRows(list)
+            : emptyState(chits.length ? 'No chits match' : 'Add your first chit', 'chit');
+        container.querySelector('#chit-count').textContent = view.search.trim() ? `${list.length} of ${chits.length}` : `${chits.filter(isRunning).length} running`;
+        return list;
+    };
+    const search = container.querySelector('#chit-search');
+    search.addEventListener('input', () => {
+        view.search = search.value;
+        const list = drawRows();
+        if (list.length && !list.some(c => c.id === view.selectedId)) show(list[0].id);
+    });
+    search.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && search.value) { search.value = ''; view.search = ''; drawRows(); }
+    });
+
     async function show(id) {
         view.selectedId = id;
         container.querySelectorAll('#chit-list [data-id]').forEach(el => el.classList.toggle('selected', Number(el.dataset.id) === id));
@@ -85,10 +114,13 @@ export async function render(container, _params, isCurrent) {
             clearTimeout(keyTimer);
             keyTimer = setTimeout(() => show(Number(el.dataset.id)), 130);
         },
-        open: () => container.querySelector('.p-chit-head [data-pay]')?.click(),
+        // Enter in the search box only moves to the list; from the list it pays the next installment
+        open: () => (document.activeElement === search ? listEl.focus() : container.querySelector('.p-chit-head [data-pay]')?.click()),
+        allowWhileTyping: search,
     }));
 
-    if (chits.length) await show(chits.some(c => c.id === view.selectedId) ? view.selectedId : chits[0].id);
+    const shown = view.search.trim() ? drawRows() : chits;
+    if (shown.length) await show(shown.some(c => c.id === view.selectedId) ? view.selectedId : shown[0].id);
 }
 
 /**

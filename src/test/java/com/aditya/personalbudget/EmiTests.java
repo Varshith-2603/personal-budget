@@ -1,7 +1,7 @@
 package com.aditya.personalbudget;
 
 import com.aditya.personalbudget.domain.entity.AppUser;
-import com.aditya.personalbudget.domain.entity.Tenant;
+import com.aditya.personalbudget.domain.entity.Organization;
 import com.aditya.personalbudget.domain.type.AccountType;
 import com.aditya.personalbudget.domain.type.CategoryKind;
 import com.aditya.personalbudget.domain.type.Feature;
@@ -9,7 +9,7 @@ import com.aditya.personalbudget.domain.type.UserRole;
 import com.aditya.personalbudget.dto.AccountDtos.AccountRequest;
 import com.aditya.personalbudget.exception.BusinessException;
 import com.aditya.personalbudget.repository.AppUserRepository;
-import com.aditya.personalbudget.repository.TenantRepository;
+import com.aditya.personalbudget.repository.OrganizationRepository;
 import com.aditya.personalbudget.security.CurrentUser;
 import com.aditya.personalbudget.security.UserContext;
 import com.aditya.personalbudget.service.AccountService;
@@ -52,7 +52,7 @@ class EmiTests {
         registry.add("budget.seed.demo-data", () -> "false");
     }
 
-    @Autowired TenantRepository tenants;
+    @Autowired OrganizationRepository tenants;
     @Autowired AppUserRepository users;
     @Autowired AccountService accounts;
     @Autowired CategoryService categories;
@@ -63,7 +63,7 @@ class EmiTests {
     @BeforeEach
     void signIn() {
         AppUser admin = users.findByUsername("admin").orElseThrow();
-        Tenant tenant = tenants.findById(admin.getTenantId()).orElseThrow();
+        Organization tenant = tenants.findById(admin.getTenantId()).orElseThrow();
         UserContext.set(new CurrentUser(admin.getId(), "admin", "Admin", UserRole.ADMIN, tenant.getId(), tenant.getCode(), tenant.getName(),
                 tenant.getCurrency(), Feature.all(), false, null, false));
     }

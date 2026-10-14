@@ -110,11 +110,28 @@ function claimEntryHtml(e, claim) {
                 <span class="ed-arrow">${icon('chevron-left')}</span>
                 <div class="ed-side">${e.lines.filter(l => Number(l.credit) > 0).map(l => pill(l, 'cr')).join('')}</div>
             </div>
+            ${balancesHtml(e.lines)}
             <div class="small muted">${esc(e.entryNo)} · ${date(e.entryDate)} · recorded ${dateTime(e.createdAt)} by ${esc(e.createdBy)}</div>
             ${claimFiguresHtml(claim)}
         </div>
         <div data-ev-entry="${e.id}" data-ev-count="${e.attachmentCount || 0}"></div>
     </div>`;
+}
+
+/**
+ * Each account the entry touches, with its balance just before and just after this entry (the stored snapshots,
+ * in ledger order): one slim line per account, the amounts being in the pills above.
+ */
+function balancesHtml(lines) {
+    const shown = lines.filter(l => l.balanceAfter !== null && l.balanceAfter !== undefined);
+    if (!shown.length) return '';
+    return `<div class="ed-balances" title="Each account's balance just before and just after this entry">
+        <span class="edb-head">Balance</span>${shown.map(l => {
+            const move = Number(l.balanceAfter) - Number(l.balanceBefore);
+            return `<span class="edb-row"><span class="edb-name ellipsis" title="${esc(l.ledgerAccountName || l.accountName)}">${esc(l.accountName)}</span>
+                <span class="edb-before">${money(l.balanceBefore, { decimals: 2 })}</span><i>→</i><b>${money(l.balanceAfter, { decimals: 2 })}</b>
+                <em class="${move > 0 ? 'up' : move < 0 ? 'down' : ''}">${move > 0 ? '▲' : move < 0 ? '▼' : ''}</em></span>`;
+        }).join('')}</div>`;
 }
 
 function detailHtml(e) {
@@ -134,6 +151,7 @@ function detailHtml(e) {
             <span class="ed-arrow" title="Debit ← Credit">${icon('chevron-left')}</span>
             <div class="ed-side">${credits}</div>
         </div>
+        ${balancesHtml(e.lines)}
         ${chitTrailHtml(e.chitTrail)}
         <div class="ed-bar">
             ${fact('journal', `<b>${esc(e.entryNo)}</b> ${esc(e.voucherLabel)}`)}

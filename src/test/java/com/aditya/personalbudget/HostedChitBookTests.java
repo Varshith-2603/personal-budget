@@ -2,7 +2,7 @@ package com.aditya.personalbudget;
 
 import com.aditya.personalbudget.domain.entity.AppUser;
 import com.aditya.personalbudget.domain.entity.JournalLine;
-import com.aditya.personalbudget.domain.entity.Tenant;
+import com.aditya.personalbudget.domain.entity.Organization;
 import com.aditya.personalbudget.domain.type.AccountType;
 import com.aditya.personalbudget.domain.type.Feature;
 import com.aditya.personalbudget.domain.type.UserRole;
@@ -13,7 +13,7 @@ import com.aditya.personalbudget.exception.BusinessException;
 import com.aditya.personalbudget.repository.AccountRepository;
 import com.aditya.personalbudget.repository.AppUserRepository;
 import com.aditya.personalbudget.repository.JournalLineRepository;
-import com.aditya.personalbudget.repository.TenantRepository;
+import com.aditya.personalbudget.repository.OrganizationRepository;
 import com.aditya.personalbudget.security.CurrentUser;
 import com.aditya.personalbudget.security.UserContext;
 import com.aditya.personalbudget.service.AccountService;
@@ -66,7 +66,7 @@ class HostedChitBookTests {
         registry.add("budget.seed.demo-data", () -> "false");
     }
 
-    @Autowired TenantRepository tenants;
+    @Autowired OrganizationRepository tenants;
     @Autowired AppUserRepository users;
     @Autowired AccountRepository accountRepository;
     @Autowired JournalLineRepository lines;
@@ -76,7 +76,7 @@ class HostedChitBookTests {
     @Autowired ReportService reports;
     @Autowired HostedChitShareService shares;
 
-    private Tenant tenant;
+    private Organization tenant;
 
     @BeforeEach
     void signIn() {

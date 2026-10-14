@@ -9,12 +9,12 @@ import com.aditya.personalbudget.domain.entity.ConstructionPartner;
 import com.aditya.personalbudget.domain.entity.ConstructionProject;
 import com.aditya.personalbudget.domain.entity.ConstructionSale;
 import com.aditya.personalbudget.domain.entity.ConstructionUnit;
-import com.aditya.personalbudget.domain.entity.Tenant;
+import com.aditya.personalbudget.domain.entity.Organization;
 import com.aditya.personalbudget.domain.type.Feature;
 import com.aditya.personalbudget.domain.type.UserRole;
 import com.aditya.personalbudget.exception.BusinessException;
 import com.aditya.personalbudget.exception.NotFoundException;
-import com.aditya.personalbudget.repository.TenantRepository;
+import com.aditya.personalbudget.repository.OrganizationRepository;
 import com.aditya.personalbudget.security.CurrentUser;
 import com.aditya.personalbudget.security.UserContext;
 import com.aditya.personalbudget.service.AttachmentService.AgreementFile;
@@ -139,10 +139,10 @@ public class ConstructionAgreementService {
     private final ConstructionService core;
     private final AttachmentService files;
     private final AppSettingsService settings;
-    private final TenantRepository tenants;
+    private final OrganizationRepository tenants;
     private final SecureRandom random = new SecureRandom();
 
-    public ConstructionAgreementService(ConstructionService core, AttachmentService files, AppSettingsService settings, TenantRepository tenants) {
+    public ConstructionAgreementService(ConstructionService core, AttachmentService files, AppSettingsService settings, OrganizationRepository tenants) {
         this.core = core;
         this.files = files;
         this.settings = settings;
@@ -359,7 +359,7 @@ public class ConstructionAgreementService {
     @Transactional(noRollbackFor = VerificationFailed.class)
     public PublicAgreement open(String token, OpenRequest r) {
         ConstructionAgreement a = active(token);
-        Tenant tenant = tenant(a);
+        Organization tenant = tenant(a);
         a.setViews((a.getViews() == null ? 0 : a.getViews()) + 1);
         a.setLastViewedAt(LocalDateTime.now());
         core.agreements().save(a);
@@ -380,7 +380,7 @@ public class ConstructionAgreementService {
         if (!"DRAFT".equals(a.getStatus())) throw new BusinessException("This agreement is already accepted");
         String type = docType == null ? "" : docType.trim().toUpperCase();
         if (!AttachmentService.KYC_TYPES.contains(type)) throw new BusinessException("Add your Aadhaar card, PAN card or a selfie");
-        Tenant tenant = tenant(a);
+        Organization tenant = tenant(a);
         return asTenant(tenant, () -> {
             files.addToAgreement(FILES, a.getId(), type, name, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD", a.getTitle().toLowerCase() + " " + a.getAgreementNo());
             core.activity().record(linkUser(tenant, a.getPartyName()), "ADDED", ConstructionService.AREA, a.getPartyName() + " added "
@@ -398,7 +398,7 @@ public class ConstructionAgreementService {
         String name = r.name() == null ? "" : r.name().trim().replaceAll("\\s+", " ");
         if (name.length() < 2) throw new BusinessException("Type your full name as on your Aadhaar card");
         String signature = HostedChitService.drawn(r.signature(), "your signature with your finger");
-        Tenant tenant = tenant(a);
+        Organization tenant = tenant(a);
         List<AgreementFile> kyc = asTenant(tenant, () -> files.listForAgreement(FILES, a.getId())).stream()
                 .filter(f -> AttachmentService.KYC_TYPES.contains(f.docType())).toList();
         Set<String> have = kyc.stream().map(AgreementFile::docType).collect(Collectors.toSet());
@@ -581,7 +581,7 @@ public class ConstructionAgreementService {
                 settings.payLinkFingerprint(), files.listForAgreement(FILES, a.getId()), p.getName(), a.getCreatedBy(), a.getCreatedAt());
     }
 
-    private PublicAgreement gate(ConstructionAgreement a, Tenant t, String error) {
+    private PublicAgreement gate(ConstructionAgreement a, Organization t, String error) {
         int left = MAX_ATTEMPTS - (a.getFailedAttempts() == null ? 0 : a.getFailedAttempts());
         ConstructionProject p = core.projects().findById(a.getProjectId()).orElseThrow();
         String hint = Arrays.stream(a.getPartyName().split("\\s+")).map(w -> w.isEmpty() ? w : w.charAt(0) + "•••").collect(Collectors.joining(" "));
@@ -591,7 +591,7 @@ public class ConstructionAgreementService {
                 null, null, null, null, null, false, false, false, false, null, null, null, null, null, null, null, false, null, null, null, null);
     }
 
-    private PublicAgreement full(ConstructionAgreement a, Tenant t) {
+    private PublicAgreement full(ConstructionAgreement a, Organization t) {
         ConstructionProject p = core.projects().findById(a.getProjectId()).orElseThrow();
         List<String> docs = files.listForAgreement(FILES, a.getId()).stream().map(AgreementFile::docType).distinct().toList();
         String step = "DRAFT".equals(a.getStatus()) ? "OPEN" : "DONE";
@@ -648,16 +648,16 @@ public class ConstructionAgreementService {
         return core.agreements().findById(id).filter(a -> p.getId().equals(a.getProjectId())).orElseThrow(() -> new NotFoundException("Agreement", id));
     }
 
-    private Tenant tenant(ConstructionAgreement a) {
+    private Organization tenant(ConstructionAgreement a) {
         return tenants.findById(a.getTenantId()).filter(t -> Boolean.TRUE.equals(t.getActive()))
                 .orElseThrow(() -> new BusinessException("This agreement is no longer shared"));
     }
 
-    private static CurrentUser linkUser(Tenant t, String name) {
+    private static CurrentUser linkUser(Organization t, String name) {
         return new CurrentUser(null, "link", name, UserRole.VIEWER, t.getId(), t.getCode(), t.getName(), t.getCurrency(), Feature.all(), false);
     }
 
-    private static <T> T asTenant(Tenant tenant, Supplier<T> work) {
+    private static <T> T asTenant(Organization tenant, Supplier<T> work) {
         CurrentUser previous = UserContext.current().orElse(null);
         UserContext.set(new CurrentUser(null, "agreement-link", "Agreement link", UserRole.VIEWER, tenant.getId(), tenant.getCode(),
                 tenant.getName(), tenant.getCurrency(), Feature.all(), false));

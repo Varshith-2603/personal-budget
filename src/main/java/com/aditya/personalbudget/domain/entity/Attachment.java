@@ -29,8 +29,8 @@ public class Attachment implements TenantOwned {
     @GeneratedValue
     private Long id;
 
-    @References(Tenant.class)
-    @Column(nullable = false)
+    @References(Organization.class)
+    @Column(name = "organizationId", nullable = false)
     private Long tenantId;
 
     /** The entry it belongs to; empty while it belongs to an entry still waiting for approval. */

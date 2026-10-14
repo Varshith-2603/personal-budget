@@ -122,30 +122,36 @@ export async function openExpenseDialog({ expense = null, copy = false, claim = 
                 </div>
                 <div class="claim-only form-grid two">
                     <label class="field"><span>Expect it back by</span><input type="date" name="dueDate" value="${values.dueDate}" data-dp-base="entryDate"></label>
-                    <label class="field lent-only"><span>Interest % a year</span>
-                        <span class="rate-type">
-                            <input name="interestRate" type="number" step="0.1" min="0" max="60" data-plain value="${values.interestRate}" placeholder="None">
-                            <select name="interestType" title="Simple: interest on the principal only. Compound: unpaid interest is added every month.">
-                                <option value="SIMPLE" ${values.interestType === 'SIMPLE' ? 'selected' : ''}>Simple</option>
-                                <option value="COMPOUND" ${values.interestType === 'COMPOUND' ? 'selected' : ''}>Compound</option>
-                            </select></span></label>
-                    <label class="field lent-only span-2 collect-line rate-dep" title="Monthly or yearly: interest falls due on each anniversary of the loan. Whenever paid: it keeps adding up until they pay.">
-                        <span>Interest is collected</span>
-                        <span class="row"><select name="interestCollection" title="When the interest is expected to be paid">
-                            <option value="MONTHLY" ${values.interestCollection === 'MONTHLY' ? 'selected' : ''}>Interest every month</option>
-                            <option value="YEARLY" ${values.interestCollection === 'YEARLY' ? 'selected' : ''}>Interest every year</option>
-                            <option value="ON_PAYMENT" ${values.interestCollection === 'ON_PAYMENT' ? 'selected' : ''}>Interest whenever paid</option>
-                        </select>
-                        <label class="check-line" title="Books the interest as income as each month (or year) ends, without waiting for the payment">
-                            <input type="checkbox" name="postInterestMonthly" ${values.postInterestMonthly ? 'checked' : ''}> Book it automatically as it falls due
-                            <b class="post-amount" data-post-amount></b></label></span></label>
-                    <label class="field lent-only span-2 rate-dep" title="Receivables: interest is owed to you until paid. A bank account: the interest is received there every month.">
-                        <span>Post interest to <small class="muted">optional</small></span>
-                        <select name="interestAccountId">${accountOptions(accounts, interestAccountFilter('LENT'), values.interestAccountId, 'Receivables (default)')}</select></label>
+                    <label class="field lent-only"><span>Interest <small class="muted">% a year</small></span>
+                        <input name="interestRate" type="number" step="0.1" min="0" max="60" data-plain value="${values.interestRate}" placeholder="No interest"></label>
                     <div class="xp-due-chips span-2">
                         <span class="small muted">Due in</span>
                         ${dueChip(7, '1 week')}${dueChip(30, '1 month')}${dueChip(90, '3 months')}${dueChip(180, '6 months')}
                         <button type="button" class="date-chip" data-due="">No date</button>
+                    </div>
+                    <div class="lent-only span-2 xp-interest rate-dep ${values.interestCollection === 'ON_PAYMENT' ? 'on-payment' : ''}">
+                        <input type="hidden" name="interestType" value="${values.interestType}">
+                        <input type="hidden" name="interestCollection" value="${values.interestCollection}">
+                        <div class="xi-row">
+                            <span class="xi-label">${icon('percent')}Worked out as</span>
+                            ${segPick('interestType', values.interestType, [
+                                ['SIMPLE', 'Simple', 'Interest on the principal only'],
+                                ['COMPOUND', 'Compound', 'Unpaid interest is added to the principal every month']])}
+                        </div>
+                        <div class="xi-row">
+                            <span class="xi-label">${icon('calendar')}Collected</span>
+                            ${segPick('interestCollection', values.interestCollection, [
+                                ['MONTHLY', 'Every month', 'Interest falls due on each monthly anniversary of the loan'],
+                                ['YEARLY', 'Every year', 'Interest falls due on each yearly anniversary of the loan'],
+                                ['ON_PAYMENT', 'Whenever paid', 'It keeps adding up until they pay']])}
+                        </div>
+                        <label class="check-line xi-auto" title="Books the interest as income as each month (or year) ends, without waiting for the payment">
+                            <input type="checkbox" name="postInterestMonthly" ${values.postInterestMonthly ? 'checked' : ''}>
+                            <span>Book as income automatically when due</span>
+                            <b class="post-amount" data-post-amount></b></label>
+                        <label class="field" title="Receivables: interest is owed to you until paid. A bank account: the interest is received there every month.">
+                            <span>Post interest to <small class="muted">optional</small></span>
+                            <select name="interestAccountId">${accountOptions(accounts, interestAccountFilter('LENT'), values.interestAccountId, 'Receivables (default)')}</select></label>
                     </div>
                 </div>
                 <label class="field xp-notes"><span>Notes <small class="muted">optional</small></span>
@@ -324,6 +330,12 @@ function dateChip(daysAgo, label) {
     return `<button type="button" class="date-chip" data-date="${isoDate(d)}">${label}</button>`;
 }
 
+// a small segmented choice that writes into the hidden input of the same name
+function segPick(name, value, options) {
+    return `<span class="seg-chips xi-seg" data-seg="${name}">${options.map(([v, label, title]) =>
+        `<button type="button" class="seg-chip ${v === value ? 'active' : ''}" data-seg-value="${v}" title="${title}">${label}</button>`).join('')}</span>`;
+}
+
 function dueChip(days, label) {
     return `<button type="button" class="date-chip" data-due-days="${days}">${label}</button>`;
 }
@@ -450,6 +462,15 @@ function bind(form, { categories, budgets, payers, allPayers, claimList, history
         if (pay && !form.hasAttribute('data-emi-locked')) setPayer(pay.dataset.payer);
         if (day) setDate(day.dataset.date);
         if (modeBtn && !modeBtn.disabled) applyMode(modeBtn.dataset.mode);
+        const seg = e.target.closest('[data-seg-value]');
+        if (seg) {
+            const group = seg.closest('[data-seg]');
+            const input = form.elements[group.dataset.seg];
+            group.querySelectorAll('[data-seg-value]').forEach(b => b.classList.toggle('active', b === seg));
+            input.value = seg.dataset.segValue;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            if (input.name === 'interestCollection') form.querySelector('.xp-interest').classList.toggle('on-payment', input.value === 'ON_PAYMENT');
+        }
         if (e.target.closest('[data-more-payers]')) { showAllPayers = true; renderPayers(); }
         if (due) {
             if (due.dataset.dueDays) {

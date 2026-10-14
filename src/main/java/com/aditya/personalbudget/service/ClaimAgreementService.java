@@ -1,7 +1,7 @@
 package com.aditya.personalbudget.service;
 
 import com.aditya.personalbudget.domain.entity.ClaimAgreement;
-import com.aditya.personalbudget.domain.entity.Tenant;
+import com.aditya.personalbudget.domain.entity.Organization;
 import com.aditya.personalbudget.domain.type.ClaimKind;
 import com.aditya.personalbudget.domain.type.Feature;
 import com.aditya.personalbudget.domain.type.UserRole;
@@ -9,7 +9,7 @@ import com.aditya.personalbudget.dto.ClaimDtos.ClaimView;
 import com.aditya.personalbudget.exception.BusinessException;
 import com.aditya.personalbudget.exception.NotFoundException;
 import com.aditya.personalbudget.repository.ClaimAgreementRepository;
-import com.aditya.personalbudget.repository.TenantRepository;
+import com.aditya.personalbudget.repository.OrganizationRepository;
 import com.aditya.personalbudget.security.CurrentUser;
 import com.aditya.personalbudget.security.UserContext;
 import com.aditya.personalbudget.service.AttachmentService.AgreementFile;
@@ -151,12 +151,12 @@ public class ClaimAgreementService {
     private final ClaimService claims;
     private final AttachmentService files;
     private final AppSettingsService settings;
-    private final TenantRepository tenants;
+    private final OrganizationRepository tenants;
     private final ActivityService activity;
     private final SecureRandom random = new SecureRandom();
 
     public ClaimAgreementService(ClaimAgreementRepository agreements, ClaimService claims, AttachmentService files,
-                                 AppSettingsService settings, TenantRepository tenants, ActivityService activity) {
+                                 AppSettingsService settings, OrganizationRepository tenants, ActivityService activity) {
         this.agreements = agreements;
         this.claims = claims;
         this.files = files;
@@ -351,7 +351,7 @@ public class ClaimAgreementService {
     @Transactional(noRollbackFor = VerificationFailed.class)
     public PublicAgreement open(String token, OpenRequest r) {
         ClaimAgreement a = active(token);
-        Tenant tenant = tenant(a);
+        Organization tenant = tenant(a);
         a.setViews((a.getViews() == null ? 0 : a.getViews()) + 1);
         a.setLastViewedAt(LocalDateTime.now());
         agreements.save(a);
@@ -379,7 +379,7 @@ public class ClaimAgreementService {
         if (!Set.of("AADHAAR_FRONT", "AADHAAR_BACK", "PAN", "SELFIE").contains(type)) {
             throw new BusinessException("Add your Aadhaar card, PAN card or a selfie");
         }
-        Tenant tenant = tenant(a);
+        Organization tenant = tenant(a);
         return asTenant(tenant, () -> {
             AgreementFile f = files.addToAgreement(FILES, a.getId(), type, name, bytes, "SELFIE".equals(type) ? "CAMERA" : "UPLOAD", "loan agreement " + a.getAgreementNo());
             activity.record(linkUser(tenant, a.getBorrowerName()), "ADDED", AREA, a.getBorrowerName() + " added "
@@ -404,7 +404,7 @@ public class ClaimAgreementService {
             throw new BusinessException("Type your full name as on your Aadhaar card");
         }
         String signature = HostedChitService.drawn(r.signature(), "your signature with your finger");
-        Tenant tenant = tenant(a);
+        Organization tenant = tenant(a);
         List<AgreementFile> kyc = asTenant(tenant, () -> files.listForAgreement(FILES, a.getId()));
         Set<String> have = kyc.stream().map(AgreementFile::docType).collect(Collectors.toSet());
         String aadhaar = null;
@@ -573,7 +573,7 @@ public class ClaimAgreementService {
         return digits;
     }
 
-    private PublicAgreement gate(ClaimAgreement a, Tenant t, String error) {
+    private PublicAgreement gate(ClaimAgreement a, Organization t, String error) {
         int left = MAX_ATTEMPTS - (a.getFailedAttempts() == null ? 0 : a.getFailedAttempts());
         String hint = a.getBorrowerName() == null ? null : java.util.Arrays.stream(a.getBorrowerName().split("\\s+"))
                 .map(w -> w.isEmpty() ? w : w.charAt(0) + "•••").collect(Collectors.joining(" "));
@@ -585,7 +585,7 @@ public class ClaimAgreementService {
                 null, null, null);
     }
 
-    private PublicAgreement full(ClaimAgreement a, Tenant t) {
+    private PublicAgreement full(ClaimAgreement a, Organization t) {
         List<String> docs = files.listForAgreement(FILES, a.getId()).stream().map(AgreementFile::docType).distinct().toList();
         boolean done = !ClaimAgreement.DRAFT.equals(a.getStatus());
         return new PublicAgreement(done ? "DONE" : "OPEN", null, null, t.getName(), a.getLenderName(), null,
@@ -646,16 +646,16 @@ public class ClaimAgreementService {
         return a;
     }
 
-    private Tenant tenant(ClaimAgreement a) {
+    private Organization tenant(ClaimAgreement a) {
         return tenants.findById(a.getTenantId()).filter(t -> Boolean.TRUE.equals(t.getActive()))
                 .orElseThrow(() -> new BusinessException("This agreement is no longer shared"));
     }
 
-    private static CurrentUser linkUser(Tenant t, String name) {
+    private static CurrentUser linkUser(Organization t, String name) {
         return new CurrentUser(null, "link", name, UserRole.VIEWER, t.getId(), t.getCode(), t.getName(), t.getCurrency(), Feature.all(), false);
     }
 
-    private static <T> T asTenant(Tenant tenant, Supplier<T> work) {
+    private static <T> T asTenant(Organization tenant, Supplier<T> work) {
         CurrentUser previous = UserContext.current().orElse(null);
         UserContext.set(new CurrentUser(null, "agreement-link", "Agreement link", UserRole.VIEWER, tenant.getId(), tenant.getCode(),
                 tenant.getName(), tenant.getCurrency(), Feature.all(), false));

@@ -36,8 +36,8 @@ public class EmiPlan implements TenantOwned {
     @GeneratedValue
     private Long id;
 
-    @References(Tenant.class)
-    @Column(nullable = false)
+    @References(Organization.class)
+    @Column(name = "organizationId", nullable = false)
     private Long tenantId;
 
     /** CARD (credit card EMI) or LOAN (a loan / finance company). */

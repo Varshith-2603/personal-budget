@@ -24,13 +24,15 @@ import java.time.LocalDateTime;
 
 /**
  * A ledger account in the chart of accounts: bank, card, loan, gold, an expense category, an income source ...
- * The balance is never stored; it is always derived from journal lines.
+ * {@link #balance} is kept by the ledger itself (see {@code AccountLedgerSync}): every debit and credit posted,
+ * changed or deleted updates it when the transaction commits. Every insert and update of an account is also
+ * written to {@link AccountLog}.
  * Table file: {@code data/accounts.tbl}
  */
 @Entity
 @Table(name = "accounts", uniqueConstraints = {
-        @UniqueConstraint(columnNames = {"tenantId", "code"}),
-        @UniqueConstraint(columnNames = {"tenantId", "name"})
+        @UniqueConstraint(columnNames = {"organizationId", "code"}),
+        @UniqueConstraint(columnNames = {"organizationId", "name"})
 })
 @Getter
 @Setter
@@ -41,8 +43,8 @@ public class Account implements TenantOwned {
     @GeneratedValue
     private Long id;
 
-    @References(Tenant.class)
-    @Column(nullable = false)
+    @References(Organization.class)
+    @Column(name = "organizationId", nullable = false)
     private Long tenantId;
 
     /** Chart-of-accounts code, e.g. 1100 for a bank account, 5000 for groceries. */
@@ -68,7 +70,10 @@ public class Account implements TenantOwned {
     @Column(length = 40)
     private String accountNumber;
 
-    /** Balance on the opening date, in the account's natural sign (posted as an opening journal). */
+    /**
+     * Balance on the opening date, in the account's natural sign (posted as an opening journal). Set when the
+     * account is created and never changed after that: a correction is a journal entry.
+     */
     @PositiveOrZero
     private BigDecimal openingBalance;
 
@@ -145,6 +150,12 @@ public class Account implements TenantOwned {
     /** What is still owed on something bought on a loan / finance EMI: kept off the Accounts list unless asked for. */
     private Boolean emiAccount;
 
+    /**
+     * The current balance in the account's natural sign (a positive asset is money you own, a positive liability
+     * money you owe): the sum of all its journal lines, kept up to date by the ledger on every debit and credit.
+     * Saves of the account itself never change it.
+     */
+    private BigDecimal balance;
     /** System accounts are created automatically and cannot be deleted. */
     @Column(nullable = false)
     private Boolean systemAccount;

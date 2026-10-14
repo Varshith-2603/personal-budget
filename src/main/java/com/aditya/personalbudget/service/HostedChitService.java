@@ -434,7 +434,7 @@ public class HostedChitService {
     private final JournalLineRepository lines;
     private final HostedChitBookService book;
     private final HostedChitLegRepository legs;
-    private final com.aditya.personalbudget.repository.TenantRepository tenants;
+    private final com.aditya.personalbudget.repository.OrganizationRepository tenants;
     private final AttachmentService files;
     private final AppSettingsService settings;
     private final ChitTrailService trails;
@@ -446,7 +446,7 @@ public class HostedChitService {
                              JournalEntryRepository entries, AccountService accountService, CategoryService categoryService,
                              LedgerService ledger, ActivityService activity, JournalLineRepository lines,
                              HostedChitBookService book, HostedChitLegRepository legs,
-                             com.aditya.personalbudget.repository.TenantRepository tenants, AttachmentService files,
+                             com.aditya.personalbudget.repository.OrganizationRepository tenants, AttachmentService files,
                              AppSettingsService settings, ChitTrailService trails) {
         this.trails = trails;
         this.files = files;
@@ -506,14 +506,14 @@ public class HostedChitService {
     }
 
     public ChitSettings chitSettings() {
-        com.aditya.personalbudget.domain.entity.Tenant t = tenants.findById(UserContext.tenantId())
+        com.aditya.personalbudget.domain.entity.Organization t = tenants.findById(UserContext.tenantId())
                 .orElseThrow(() -> new NotFoundException("Household", UserContext.tenantId()));
         return new ChitSettings(t.getChitCompanyName(), t.getName(), null);
     }
 
     @Transactional
     public ChitSettings saveChitSettings(ChitSettingsRequest r) {
-        com.aditya.personalbudget.domain.entity.Tenant t = tenants.findById(UserContext.tenantId())
+        com.aditya.personalbudget.domain.entity.Organization t = tenants.findById(UserContext.tenantId())
                 .orElseThrow(() -> new NotFoundException("Household", UserContext.tenantId()));
         String name = blank(r.companyName());
         if (name != null) {
@@ -1120,7 +1120,7 @@ public class HostedChitService {
             Long entryId = p.getJournalEntryId();
             shares.deleteAll(shares.findByChitId(c.getId()).stream().filter(x -> p.getId().equals(x.getPaymentId())).toList());
             payments.deleteById(p.getId());
-            if (entryId != null) ledger.delete(entryId);
+            ledger.deleteForSource(SOURCE_COLLECTION, p.getId(), entryId);
             total = total.add(p.getAmount());
         }
         activity.record("DELETED", AREA, "Reverted \"everyone has paid\" · " + c.getName() + " month " + monthNo + " · "
@@ -1166,7 +1166,7 @@ public class HostedChitService {
             Long entryId = p.getJournalEntryId();
             p.setJournalEntryId(null);
             payments.save(p);
-            ledger.delete(entryId);
+            ledger.deleteForSource(SOURCE_COLLECTION, p.getId(), entryId);
         } else if (Boolean.TRUE.equals(c.getPostToBooks()) && post) {
             p.setJournalEntryId(ledger.post(collectionDraft(c, member, p)).getId());
         }
@@ -1186,9 +1186,7 @@ public class HostedChitService {
         Long entryId = p.getJournalEntryId();
         shares.deleteAll(shares.findByChitId(c.getId()).stream().filter(x -> p.getId().equals(x.getPaymentId())).toList());
         payments.deleteById(p.getId());
-        if (entryId != null) {
-            ledger.delete(entryId);
-        }
+        ledger.deleteForSource(SOURCE_COLLECTION, p.getId(), entryId);
         activity.record("DELETED", AREA, "Undid a collection · " + member.getName() + " · " + c.getName() + " month "
                 + p.getMonthNo() + " · " + ActivityService.money(p.getAmount()));
         return detail(chitId);
@@ -2067,7 +2065,9 @@ public class HostedChitService {
         month.setCommissionTransferEntryId(null);
         months.save(month);   // release the foreign keys before deleting the journal
         legs.deleteAll(legs.findByMonthId(month.getId()));
-        journal.forEach(ledger::delete);
+        // the payout and every commission entry of the month, linked or not: none may stay in the books
+        ledger.deleteForSource(SOURCE_PAYOUT, month.getId(), journal.toArray(Long[]::new));
+        ledger.deleteForSource(SOURCE_COMMISSION, month.getId());
         if (HostedChit.COMPLETED.equals(c.getStatus())) {
             c.setStatus(HostedChit.ACTIVE);
             chits.save(c);

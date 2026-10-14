@@ -36,6 +36,7 @@ import * as activity from './views/activity.js';
 import * as gifts from './views/gifts.js';
 import * as documents from './views/documents.js';
 import * as construction from './views/construction.js';
+import * as integrity from './views/integrity.js';
 
 /** Top menu, in display order. */
 const ROUTES = [
@@ -46,7 +47,7 @@ const ROUTES = [
     { path: 'accounts', label: 'Accounts', iconName: 'wallet', view: accounts, feature: 'ACCOUNTS' },
     { path: 'chits', label: 'Chits', iconName: 'chit', view: chits, feature: 'CHITS' },
     // chits the user runs as the organiser (shared with the Chits section)
-    { path: 'host-chits', label: 'Host a Chit', iconName: 'hand-coins', view: hostChits, feature: 'CHITS' },
+    { path: 'host-chits', label: 'Host a Chit', iconName: 'hand-coins', view: hostChits, feature: 'HOST_CHITS' },
     // the construction business: contract works and developments, their books, sales and agreements
     { path: 'construction', label: 'Construction', iconName: 'hard-hat', view: construction, feature: 'CONSTRUCTION' },
     { path: 'planning', label: 'Budgets', iconName: 'target', view: planning, feature: 'BUDGETS' },
@@ -56,7 +57,9 @@ const ROUTES = [
     { path: 'gifts', label: 'Gifts', iconName: 'gift', view: gifts, feature: 'GIFTS' },
     { path: 'documents', label: 'Documents', iconName: 'file-text', view: documents, feature: 'DOCUMENTS' },
     // who changed what, approvals (maker-checker) and access links: checkers and admins only
-    { path: 'activity', label: 'Activity', iconName: 'history', view: activity, permission: 'APPROVE_ENTRIES' },
+    { path: 'activity', label: 'Activity', iconName: 'history', view: activity, permission: 'APPROVE_ENTRIES', feature: 'ACTIVITY' },
+    // what the check of the books found: admins and super admins only
+    { path: 'integrity', label: 'Data integrity', iconName: 'shield', view: integrity, permission: 'DATA_INTEGRITY' },
     // users, roles and tenants: opened from Settings and the user menu, not the top menu
     { path: 'admin', label: 'Users & roles', iconName: 'shield', view: admin, hidden: true },
     { path: 'settings', label: 'Settings', iconName: 'settings', view: settings, hidden: true },
@@ -73,6 +76,17 @@ async function refreshApprovalBadge() {
         const { pending } = await api.get('/approvals/count');
         link.querySelector('.menu-badge')?.remove();
         if (pending) link.insertAdjacentHTML('beforeend', `<i class="menu-badge" title="${pending} waiting for approval">${pending}</i>`);
+    } catch { /* not important */ }
+}
+
+/** Data integrity issues, as a badge on its menu item (admins only; refreshed with live updates). */
+async function refreshIntegrityBadge() {
+    const link = document.querySelector('#main-menu a[data-path="integrity"]');
+    if (!link || !can('DATA_INTEGRITY')) return;
+    try {
+        const issues = await api.get('/integrity');
+        link.querySelector('.menu-badge')?.remove();
+        if (issues.length) link.insertAdjacentHTML('beforeend', `<i class="menu-badge" title="${issues.length} data integrity issue(s)">${issues.length}</i>`);
     } catch { /* not important */ }
 }
 
@@ -277,6 +291,7 @@ function startLiveUpdates() {
         invalidateAccounts();
         refreshFooter(true);
         refreshApprovalBadge();
+        refreshIntegrityBadge();
         const who = change.userId === state.user?.userId ? 'You (another window)' : (change.by || 'Someone');
         if (document.querySelector('.modal-backdrop, .ev-overlay')) {
             if (!pendingRefresh) toast(`${who} changed data; this page refreshes when you close the dialog`, 'info');
@@ -332,6 +347,7 @@ async function enterApp() {
     startFooter();
     startLiveUpdates();
     refreshApprovalBadge();
+    refreshIntegrityBadge();
     if (!location.hash) location.hash = '#/' + allowedRoutes()[0].path;
     else route();
 }

@@ -278,14 +278,14 @@ async function renderChitSettings(body, reload) {
         body: `<form class="form-grid one chit-settings" id="chit-settings" onsubmit="return false" style="max-width:560px">
             <label class="field"><span>Chit-funds company name</span>
                 <input type="text" name="companyName" maxlength="60" value="${esc(cfg.companyName || '')}" placeholder="${esc(cfg.householdName || 'e.g. Aditya Chitfunds')}" ${admin ? '' : 'disabled'} data-plain>
-                <small>New chits are named after it; empty uses the household's name.</small></label>
+                <small>New chits are named after it; empty uses the organization's name.</small></label>
             <div class="book-note">${icon('sparkles')}<span>A new chit of ₹5L over 20 months starting this month is named <b data-sample>${esc(sample(cfg.companyName))}</b>.
                 Auction and planned chits add “Auction” or “Planned”. You can always type another name.</span></div>
             ${cfg.keyFingerprint ? `<div class="book-note">${icon('shield')}<span><b>Signing key for payment links</b>: the bank details and UPI ID on members' links are digitally signed
                 (ECDSA P-256) with this installation's private key. Give members this fingerprint (on the chit card or in the group):
                 their page shows the same key when the details are genuine.<br><span class="hc-key-fp">${icon('lock')}<code>${esc(cfg.keyFingerprint)}</code></span></span></div>` : ''}
             ${admin ? `<div class="row"><button class="btn primary" type="submit">${icon('check')}Save</button></div>`
-                : `<p class="small muted">${icon('lock')} Only an admin of the household can change it.</p>`}
+                : `<p class="small muted">${icon('lock')} Only an admin of the organization can change it.</p>`}
         </form>` });
     const form = body.querySelector('#chit-settings');
     form.companyName.addEventListener('input', () => { body.querySelector('[data-sample]').textContent = sample(form.companyName.value); });
@@ -304,7 +304,7 @@ async function renderChitSettings(body, reload) {
 
 async function renderMail(body, reload) {
     if (!can('MANAGE_USERS')) {
-        body.innerHTML = panel({ title: 'E-mail', iconName: 'mail', body: emptyState('Only an admin of the household can set up e-mail.', 'lock') });
+        body.innerHTML = panel({ title: 'E-mail', iconName: 'mail', body: emptyState('Only an admin of the organization can set up e-mail.', 'lock') });
         return;
     }
     const s = await api.get('/admin/mail-settings');
@@ -357,7 +357,7 @@ async function renderMail(body, reload) {
                 <div class="section-title">${icon('shield')}Good to know</div>
                 <ul class="ml-notes">
                     <li>The password is stored encrypted on this installation and is never shown again.</li>
-                    <li>Each household has its own account; switch it off to use the installation's account${s.serverConfigured ? ` (${esc(s.serverFrom)})` : ' (none is set up)'}.</li>
+                    <li>Each organization has its own account; switch it off to use the installation's account${s.serverConfigured ? ` (${esc(s.serverFrom)})` : ' (none is set up)'}.</li>
                     <li>Receipts are sent with the signed PDF attached.</li>
                     ${s.updatedAt ? `<li>Last changed by ${esc(s.updatedBy || '')} on ${new Date(s.updatedAt).toLocaleString('en-GB')}.</li>` : ''}
                 </ul>

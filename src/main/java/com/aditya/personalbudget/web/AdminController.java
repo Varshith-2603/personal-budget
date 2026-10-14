@@ -78,6 +78,13 @@ public class AdminController {
         return mail.test(request);
     }
 
+    /** The sections (menu items) the signed-in user's organization has: what can be shared with its users. */
+    @GetMapping("/organization/sections")
+    @RequiresPermission(Permission.MANAGE_USERS)
+    public java.util.Set<com.aditya.personalbudget.domain.type.Feature> organizationSections() {
+        return users.organizationSections();
+    }
+
     @GetMapping("/users")
     @RequiresPermission(Permission.MANAGE_USERS)
     public List<UserView> users() {

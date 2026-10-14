@@ -32,7 +32,9 @@ public final class JournalDtos {
                            AccountClass accountClass, BigDecimal debit, BigDecimal credit, String memo,
                            Long categoryId, Long chitId, String ledgerAccountName,
                            /* the hosted chit whose money the line moves (Host a Chit) */
-                           Long hostedChitId) {
+                           Long hostedChitId,
+                           /* the account's balance just before and just after this line (natural sign, ledger order) */
+                           BigDecimal balanceBefore, BigDecimal balanceAfter) {
     }
 
     /** A full journal entry with its lines. */

@@ -14,15 +14,15 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 /**
- * A tenant is an isolated book of accounts: a household, a family, or a small organisation.
- * Table file: {@code data/tenants.tbl}
+ * A tenant (shown as an <b>organization</b>) is an isolated book of accounts: a household, a family, a business.
+ * Table file: {@code data/organizations.tbl}
  */
 @Entity
-@Table(name = "tenants")
+@Table(name = "organizations")
 @Getter
 @Setter
 @NoArgsConstructor
-public class Tenant implements Identifiable {
+public class Organization implements Identifiable {
 
     @Id
     @GeneratedValue
@@ -59,6 +59,12 @@ public class Tenant implements Identifiable {
     @Column(length = 60)
     private String chitCompanyName;
 
+    /**
+     * The sections (menu items) the organization has, e.g. "EXPENSES,CHITS" ({@code Feature} names); empty = every
+     * section. Its users get at most these.
+     */
+    @Column(length = 400)
+    private String features;
     /** Optimistic locking: a save based on an older version is rejected. */
     @jakarta.persistence.Version
     private Long version;
