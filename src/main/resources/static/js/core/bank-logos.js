@@ -21,7 +21,6 @@ const DRAWN = {
     axis: `<svg viewBox="0 0 48 48"><rect width="48" height="48" rx="11" fill="#97144d"/><path d="M24 9 39 39H30.5L24 25.5 17.5 39H9z" fill="#fff"/><path d="M24 25.5 30.5 39h-13z" fill="#97144d"/></svg>`,
     pnb: tile('#a20a3a', 'pnb', '#fbbc09', 19),
     yes: tile('#00518f', 'YES', '#fff', 16),
-    idbi: tile('#00836c', 'IDBI', '#f58220', 14),
     boi: tile('#f37021', 'BOI', '#fff', 16),
     bandhan: tile('#d71920', 'b', '#fff', 28),
     southindian: tile('#bc1f2d', 'SIB', '#fff', 16),
