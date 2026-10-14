@@ -1278,9 +1278,19 @@ table.grid tr.best-row td:first-child { box-shadow: inset 3px 0 0 var(--brand-go
 .chit-banner::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: linear-gradient(90deg, rgba(201, 154, 59, 0.9), rgba(240, 212, 154, 0.6) 40%, transparent); }
 .chit-banner .hero-icon { color: #f0d49a; }
 .chit-banner .badge { transform: scale(0.92); }
-.cb-progress { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
-.cb-progress .split-bar { flex: 1; max-width: 260px; height: 6px; margin: 0; display: flex; }
-.cb-progress small { font-size: 10.5px; color: #a9c6de; white-space: nowrap; }
+/* the chit's progress in its banner: paid (and overdue) against the whole contribution, a tick for today */
+.cb-progress { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; max-width: 420px; }
+.cb-track { position: relative; display: flex; height: 8px; border-radius: 999px; overflow: visible;
+    background: rgba(255, 255, 255, 0.16); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.cb-track .cb-paid { height: 100%; border-radius: 999px 0 0 999px; background: linear-gradient(90deg, #2fd0bf, #7de3b0); }
+.cb-track .cb-paid[style="width:100%"] { border-radius: 999px; }
+.cb-track .cb-overdue { height: 100%; background: repeating-linear-gradient(45deg, #ff8a8a 0 4px, #e25555 4px 8px); }
+.cb-track .cb-now { position: absolute; top: -3px; width: 2px; height: 14px; margin-left: -1px; border-radius: 1px; background: #f0d49a;
+    box-shadow: 0 0 0 1px rgba(8, 26, 46, 0.6); }
+.cb-legend { display: flex; flex-wrap: wrap; gap: 0 5px; font-size: 10.5px; color: #a9c6de; line-height: 1.35; }
+.cb-legend b { color: #fff; font-weight: 750; }
+.cb-legend .cb-late { color: #ffa3a3; font-weight: 650; }
+.cb-legend .cb-ahead { color: #7de3b0; }
 .chit-actions { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; max-width: 260px; }
 .metric.gold { border-color: rgba(201, 154, 59, 0.45); background: linear-gradient(180deg, #fffdf6, #fff6dc); }
 .book-note { display: flex; gap: 6px; align-items: flex-start; padding: 6px 9px; border-radius: 8px; background: var(--grad-brand-soft); font-size: var(--font-size-sm); color: var(--text-secondary); }

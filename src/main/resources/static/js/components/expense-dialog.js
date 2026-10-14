@@ -8,7 +8,7 @@
  *                        (Expenses › EMIs: months, interest, the first and last EMI worked out from each other)
  *
  * Built to need as few clicks as possible: big amount field (sums such as 120+45 are added up), date chips,
- * the eight categories you use most (often and lately) as tiles with Alt+1…8 to pick them, the rest one click
+ * the ten categories you use most (often and lately; everyday ones and bills due early in the month first) as tiles with Alt+1…9 to pick them, the rest one click
  * away or found by typing; the description picks the category by itself when it matches a past expense,
  * only the accounts you can actually pay from (most used first, no scrolling), optional notes,
  * a live budget check. Enter saves, Shift+Enter saves and starts the next one.
@@ -34,7 +34,17 @@ import { addMonths, monthsBetween, emiPreviewHtml } from './emi.js';
 const typeRank = a => ({ BANK: 0, CREDIT_CARD: 1, CASH: 2, WALLET: 3, PAYABLE: 4 }[a.accountType] ?? 9);
 const VISIBLE_PAYERS = 6;
 /** Category tiles shown before "All categories". */
-const TOP_CATEGORIES = 8;
+/** Category tiles shown before "All": two full rows of the five-column grid; the rest are a search away. */
+const TOP_CATEGORIES = 10;
+/**
+ * A head start for the everyday categories, so a new household sees the right ten before it has any history (a
+ * fraction of one real use: what you actually use soon takes over).
+ */
+const EVERYDAY = [/^groceries$/i, /milk/i, /vegetable/i, /dining|food deliver/i, /fuel|transport/i, /^shopping$/i, /mobile|internet/i,
+    /utilit/i, /medic|pharma/i, /maid/i, /snack/i, /cab|auto/i];
+const everydayBoost = c => { const i = EVERYDAY.findIndex(re => re.test(c.name)); return i < 0 ? 0 : 0.9 - i * 0.05; };
+/** Bills that come once a month: early in the month, one used before but not yet this month moves up. */
+const MONTHLY = /rent|maid|milk|gym|subscription|mobile|internet|dth|cable|newspaper|water can|utilit|insurance|school|tuition|education/i;
 /** What each mode records, for the history suggestions (voucher types). */
 const SUGGEST_KINDS = { EXPENSE: 'EXPENSE', PAID_FOR: 'PAID_FOR,LENDING,REPAYMENT', LENT: 'LENDING,PAID_FOR,REPAYMENT', EMI: 'EXPENSE' };
 /** Months offered as chips on EMI. */
@@ -69,7 +79,12 @@ export async function openExpenseDialog({ expense = null, copy = false, claim = 
     const usage = usageCounts(history);
     // most used first, recent use counting more (what you bought this week beats what you bought a lot last year);
     // system categories (chit commission ...) are booked by their features, so they come last
-    const score = c => (usage.recent[c.id] || 0) * 3 + (usage.category[c.id] || 0) + Math.sqrt(c.entries || 0) + (Number(c.thisMonth) ? 2 : 0);
+    // ... plus a head start for everyday categories (new users), and in the first days of a month the regular bills
+    // not yet paid this month
+    const earlyInMonth = new Date().getDate() <= 7;
+    const dueBill = c => earlyInMonth && MONTHLY.test(c.name) && (c.entries || 0) > 0 && !Number(c.thisMonth) ? 3 : 0;
+    const score = c => (usage.recent[c.id] || 0) * 3 + (usage.category[c.id] || 0) + Math.sqrt(c.entries || 0) + (Number(c.thisMonth) ? 2 : 0)
+        + everydayBoost(c) + dueBill(c);
     const categories = [...expenseCategories].sort((a, b) => Number(!!a.systemKey) - Number(!!b.systemKey) || score(b) - score(a)
         || a.name.localeCompare(b.name));
     const payers = accounts.filter(a => a.active && ['BANK', 'CREDIT_CARD', 'CASH', 'WALLET', 'PAYABLE'].includes(a.accountType))
@@ -158,7 +173,7 @@ export async function openExpenseDialog({ expense = null, copy = false, claim = 
                     <textarea name="notes" rows="2" maxlength="255" placeholder="Anything worth remembering: items, who was there, warranty…">${esc(values.notes)}</textarea></label>
                 ${evidenceFieldHtml({ hint: 'Bill, receipt or UPI screenshot' })}
                 <div class="xp-keys"><span><kbd>Enter</kbd> save</span>${editingExpense || editingClaim ? '' : '<span><kbd>Shift</kbd>+<kbd>Enter</kbd> save &amp; next</span>'}
-                    <span class="expense-only"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>8</kbd> category</span><span><kbd>Alt</kbd>+<kbd>↓</kbd> calendar</span></div>
+                    <span class="expense-only"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> category</span><span><kbd>Alt</kbd>+<kbd>↓</kbd> calendar</span></div>
             </section>
             <section class="xp-right">
                 <div class="expense-only xp-cat-pick">
@@ -168,7 +183,7 @@ export async function openExpenseDialog({ expense = null, copy = false, claim = 
                     </div>
                     <div class="xp-cat-find">${icon('search')}<input class="xp-cat-search" placeholder="Find a category… Enter picks the first" data-plain data-enter-self>
                         ${categories.length > TOP_CATEGORIES ? `<button type="button" class="link-btn" data-all-cats>All ${categories.length}</button>` : ''}</div>
-                    <div class="cat-grid" data-categories>${categories.map((c, i) => categoryTile(c, i >= TOP_CATEGORIES, i < TOP_CATEGORIES ? i + 1 : null)).join('')}</div>
+                    <div class="cat-grid" data-categories>${categories.map((c, i) => categoryTile(c, i >= TOP_CATEGORIES, i < 9 ? i + 1 : null)).join('')}</div>
                 </div>
                 <div class="claim-only xp-claim-info" data-claim-info></div>
                 <div>
@@ -214,7 +229,7 @@ export async function openExpenseDialog({ expense = null, copy = false, claim = 
         const data = readForm(form);
         data.amount = total;
         if (!(total > 0)) { form.amount.focus(); throw new Error('Enter the amount'); }
-        if (current === 'EXPENSE' && !data.categoryId) { form.querySelector('.xp-cat-search')?.focus(); throw new Error('Pick a category: type its name and press Enter, or Alt+1…8'); }
+        if (current === 'EXPENSE' && !data.categoryId) { form.querySelector('.xp-cat-search')?.focus(); throw new Error('Pick a category: type its name and press Enter, or Alt+1…9'); }
         if (!data.paidFromId) throw new Error('Pick the account you paid from');
         if (current !== 'EXPENSE' && current !== 'EMI' && !data.party) { form.party.focus(); throw new Error(`Enter who ${current === 'LENT' ? 'borrowed the money' : 'you paid for'}`); }
         if (current === 'EMI') {
@@ -497,9 +512,9 @@ function bind(form, { categories, budgets, payers, allPayers, claimList, history
         if (v !== null && String(v) !== form.amount.value.trim()) { form.amount.value = String(v); showCalc(); updateBudget(); updateClaimInfo(); }
     });
     form.addEventListener('expense-next', () => { calc.innerHTML = ''; autoPicked = false; });
-    // Alt+1…8 picks one of the top category tiles from anywhere in the dialog
+    // Alt+1…9 picks one of the top category tiles from anywhere in the dialog
     form.closest('.modal')?.addEventListener('keydown', e => {
-        if (!e.altKey || mode !== 'EXPENSE' || !/^Digit[1-8]$/.test(e.code)) return;
+        if (!e.altKey || mode !== 'EXPENSE' || !/^Digit[1-9]$/.test(e.code)) return;
         const tile = grid.querySelectorAll('.cat-tile:not(.extra)')[Number(e.code.slice(5)) - 1];
         if (tile) { e.preventDefault(); setCategory(tile.dataset.category); tile.classList.add('auto-picked'); setTimeout(() => tile.classList.remove('auto-picked'), 900); }
     });

@@ -91,56 +91,63 @@ export function chitTag(name) {
     return b.slice(0, 4) || 'CHIT';
 }
 
-const CHIT_ACCOUNT = /^(.+?)\s+-\s+(collections|commission|late interest)$/i;
-
-/** "My Household 75K (Oct26–Dec26) - collections" → "MH75 collections" (code: the chit's own code, when known). */
+/**
+ * A chit account's name as shown. The chit's full name is kept ("My Household 75K (Oct26–Dec26) - collections"), never
+ * cut down to a code; `code` is ignored and kept so callers stay unchanged.
+ */
 export function shortAccount(name, code = null) {
-    const m = CHIT_ACCOUNT.exec(String(name || '').trim());
-    return m ? `${code || chitTag(m[1])} ${m[2].toLowerCase()}` : name;
+    return name;
 }
 
-/** Every chit account named inside a sentence, shortened ("ICICI Savings → Gather 40K - collections"). */
+/** Text naming chit accounts, as shown: their full names are kept. */
 export function shortAccountsIn(text, code = null) {
-    return String(text || '').replace(/([^:→+,;(·]+?)\s+-\s+(collections|commission|late interest)\b/gi, (_, n, role) => `${code || chitTag(n.trim())} ${role.toLowerCase()}`);
+    return String(text || '');
 }
 
 const codeOf = t => (t?.payCode || '').replace(/-M\d+$/, '') || null;
 
+/** "the chit's full name · month 3" for a chit entry (the month from the trail or its pay code). */
+function chitAndMonth(t) {
+    const no = t.monthNo || Number((/-M(\d+)$/.exec(t.payCode || '') || [])[1]) || null;
+    return [t.chitName, no ? `month ${no}` : ''].filter(Boolean).join(' · ') || t.payCode || '';
+}
+
 /**
- * A short, plain description of a chit entry for a collapsed row, in place of its long narration (which stays as the
- * tooltip and in the expanded view): "Ravi Kumar paid · GA40-M02", "Gathered for the GA40-M01 payout",
- * "Payout GA40-M01 to Ravi Kumar", "Commission earned · GA40-M01". Null for an entry that is not a chit's.
+ * A plain description of a chit entry for a collapsed row, in place of its long narration (which stays as the
+ * tooltip and in the expanded view), always with the chit's full name: "Ravi Kumar paid · Gather 40K · month 2",
+ * "Payout to Ravi Kumar · Gather 40K · month 1", "Commission earned · Gather 40K · month 1". Null for an entry that is
+ * not a chit's.
  */
 export function chitDescription(t, { narration = '', party = '' } = {}) {
     if (!t) return null;
-    const code = t.payCode || (t.monthNo ? `month ${t.monthNo}` : '');
+    const code = chitAndMonth(t);
     const member = (/^Chit collection - (.+?) - /.exec(narration) || [])[1] || (party && party !== t.chitName ? party : '');
     switch (t.kind) {
         case 'COLLECTION': return `${member || 'Member'} paid${code ? ` · ${code}` : ''}`;
-        case 'PAYOUT': return `Payout${code ? ` ${code}` : ''}${t.winner || member ? ` to ${t.winner || member}` : ''}`;
+        case 'PAYOUT': return `Payout${t.winner || member ? ` to ${t.winner || member}` : ''}${code ? ` · ${code}` : ''}`;
         case 'COMMISSION': return `${/to its account/i.test(narration) ? 'Commission set aside' : 'Commission earned'}${code ? ` · ${code}` : ''}`;
         case 'MOVE':
-            if (t.moveType === 'Gathered into collections') return `Gathered for the ${code || 'chit'} payout`;
+            if (t.moveType === 'Gathered into collections') return `Gathered for the payout${code ? ` · ${code}` : ''}`;
             if (t.moveType === 'Commission to my bank') return `Commission to my bank${code ? ` · ${code}` : ''}`;
-            return shortAccountsIn(narration.replace(/\s*\([^()]*\)\s*$/, ''), codeOf(t));
+            return narration;
         default: return null;
     }
 }
 
-/** What a collapsed row says: the chit description, or the narration with chit account names shortened. */
+/** What a collapsed row says: the chit description, or the narration as it is. */
 export function shortNarration(narration, trail, party = '') {
-    return chitDescription(trail, { narration, party }) || memberChit(narration) || shortAccountsIn(narration, codeOf(trail));
+    return chitDescription(trail, { narration, party }) || memberChit(narration) || narration;
 }
 
-/** A chit I am a member of: "Shriram 5L Group A - installment 3/20" → "Instalment 3/20 · S5LG". */
+/** A chit I am a member of: "Shriram 5L Group A - installment 3/20" → "Instalment 3/20 · Shriram 5L Group A". */
 function memberChit(narration) {
     const s = String(narration || '');
     let m = /^(.+?) - installment (\d+\/\d+)$/.exec(s);
-    if (m) return `Instalment ${m[2]} · ${chitTag(m[1])}`;
+    if (m) return `Instalment ${m[2]} · ${m[1]}`;
     m = /^(.+?) - installment (\d+) \(paid before tracking\)$/.exec(s);
-    if (m) return `Instalment ${m[2]} (before tracking) · ${chitTag(m[1])}`;
+    if (m) return `Instalment ${m[2]} (before tracking) · ${m[1]}`;
     m = /^(.+?) - (prize money|maturity payout)$/.exec(s);
-    if (m) return `${m[2] === 'prize money' ? 'Prize money' : 'Maturity payout'} · ${chitTag(m[1])}`;
+    if (m) return `${m[2] === 'prize money' ? 'Prize money' : 'Maturity payout'} · ${m[1]}`;
     return null;
 }
 

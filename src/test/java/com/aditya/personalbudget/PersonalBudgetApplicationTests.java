@@ -372,7 +372,7 @@ class PersonalBudgetApplicationTests {
         Long tenantId = UserContext.tenantId();
         Long bank = accounts.findByTenantId(tenantId).stream()
                 .filter(a -> a.getAccountType() == AccountType.BANK).findFirst().orElseThrow().getId();
-        Long shopping = categoryRepository.findByName(tenantId, CategoryKind.EXPENSE, "Shopping & Clothing").orElseThrow().getId();
+        Long shopping = categoryRepository.findByName(tenantId, CategoryKind.EXPENSE, "Clothing & Footwear").orElseThrow().getId();
         LocalDate day = LocalDate.now().minusDays(2);
         var expense = expenseService.create(new com.aditya.personalbudget.dto.JournalDtos.ExpenseRequest(day, new BigDecimal("3000"),
                 shopping, bank, "Shoes", "Store", null, null, null));

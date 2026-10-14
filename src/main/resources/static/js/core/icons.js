@@ -123,6 +123,10 @@ const PATHS = {
     send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>',
     signature: '<path d="M3 17c3-1 4-9 6-9s1 7 3 7 2-4 4-4 2 3 5 3"/><path d="M3 21h18"/>',
     share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>',
+    milk: '<path d="M8 2h8"/><path d="M9 2v2.8a4 4 0 0 1-.7 2.2l-.6 1A4 4 0 0 0 7 10.2V20a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-9.8a4 4 0 0 0-.7-2.2l-.6-1A4 4 0 0 1 15 4.8V2"/><path d="M7 15a6.5 6.5 0 0 1 5 0 6.5 6.5 0 0 0 5 0"/>',
+    dumbbell: '<path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/><path d="m18 22 4-4"/><path d="m2 6 4-4"/><path d="m3 10 7-7"/><path d="m14 21 7-7"/>',
+    leaf: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.5 19 2c1 2 2 4.2 2 8 0 5.5-4.8 10-10 10Z"/><path d="M2 21c0-3 1.9-5.4 5.1-6 2.4-.5 4.9-2 5.9-3"/>',
+    monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
     timeline: '<path d="M3 6h4M3 12h4M3 18h4"/><circle cx="10" cy="6" r="1.5"/><circle cx="10" cy="12" r="1.5"/><circle cx="10" cy="18" r="1.5"/><path d="M14 6h7M14 12h7M14 18h7"/>',
 };
 
@@ -132,13 +136,26 @@ const PATHS = {
  */
 export function categoryIcon(name = '') {
     const rules = [
+        // the specific ones first: "Food Delivery" is not groceries, "Commission & Brokerage" is not a chit
+        [/chit/i, 'chit', 'gold'], [/milk|dairy/i, 'milk', 'aqua'], [/maid|household help|cook|driver/i, 'users', 'violet'],
+        [/gym|fitness|yoga|sport/i, 'dumbbell', 'coral'], [/gadget|electronic|laptop|computer/i, 'monitor', 'violet'],
+        [/vegetable|fruit/i, 'leaf', 'aqua'], [/agricult|farm|crop/i, 'leaf', 'gold'], [/food deliver|swiggy|zomato|takeaway/i, 'utensils', 'coral'],
+        [/snack|beverage|tea|coffee|bakery/i, 'utensils', 'gold'], [/subscription|ott/i, 'repeat', 'violet'],
+        [/lpg|cylinder/i, 'fuel', 'gold'], [/water can|drinking water/i, 'droplet', 'aqua'], [/dth|cable/i, 'film', 'violet'],
+        [/vehicle|car |bike/i, 'car', 'gray'], [/cab|auto|uber|ola|rapido/i, 'car', 'coral'], [/parking|toll|fastag/i, 'car', 'gray'],
+        [/laundry|ironing|dry clean/i, 'sparkles', 'aqua'], [/pharmac|medicine/i, 'heart', 'red'], [/furniture|decor/i, 'home', 'gold'],
+        [/festiv|pooja|puja|temple/i, 'gift', 'gold'], [/\bpets?\b|\bvet/i, 'heart', 'coral'], [/book|stationer/i, 'journal', 'gray'],
+        [/newspaper|magazine/i, 'report', 'gray'], [/savings/i, 'piggy', 'aqua'], [/bonus|incentive/i, 'trending', 'gold'],
+        [/pension/i, 'clock', 'aqua'], [/cashback|reward/i, 'coins', 'gold'], [/refund|reimburs/i, 'undo', 'aqua'],
+        [/commission|brokerage/i, 'percent', 'violet'], [/allowance/i, 'wallet', 'aqua'], [/sale of|scrap/i, 'tag', 'gray'],
+        [/coaching|teaching/i, 'journal', 'aqua'],
         [/grocer|supermarket|food/i, 'cart', 'aqua'], [/rent|home|house/i, 'home', ''],
         [/utilit|electric|water|gas/i, 'bolt', 'gold'], [/mobile|internet|phone|broadband/i, 'phone', 'violet'],
         [/fuel|transport|petrol|cab|taxi/i, 'fuel', 'coral'], [/dining|restaurant|eat|dinner/i, 'utensils', 'coral'],
         [/medic|health|doctor|pharma/i, 'heart', 'red'], [/educat|school|course|tuition/i, 'journal', 'violet'],
         [/entertain|movie|ott|fun/i, 'film', 'violet'], [/shop|cloth|apparel/i, 'bag', 'coral'],
         [/insur/i, 'shield', ''], [/loan|interest|emi/i, 'briefcase', 'red'], [/bank|fee|charge/i, 'bank', 'gray'],
-        [/chit|commission|discount/i, 'chit', 'gold'], [/travel|vacation|trip|flight/i, 'plane', ''],
+        [/chit|discount/i, 'chit', 'gold'], [/travel|vacation|trip|flight/i, 'plane', ''],
         [/maint|repair/i, 'wrench', 'gray'], [/personal|salon|care|beauty/i, 'sparkles', 'violet'],
         [/gift|donat|charity/i, 'gift', 'red'], [/tax/i, 'percent', 'gray'], [/kid|family|child/i, 'users', 'aqua'],
         [/salary|wage/i, 'briefcase', 'aqua'], [/dividend|capital/i, 'trending', 'aqua'], [/rental/i, 'home', 'aqua'],

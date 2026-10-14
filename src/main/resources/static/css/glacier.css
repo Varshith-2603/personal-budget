@@ -1754,3 +1754,80 @@ tr.detail-row td { white-space: normal; }
 .access-role svg { width: 13px; height: 13px; color: var(--ocean-600); grid-row: span 2; }
 .access-role small { font-size: 10px; color: var(--text-muted); line-height: 1.25; }
 .access-foot { margin: 2px 0 0; }
+
+/* ===================================================================== chit portfolio: still to pay beside paid in */
+.cp-head .cp-still { display: block; margin-top: 1px; font-size: 11px; font-weight: 600; color: #a46a00; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cp-head .cp-still.done { color: var(--positive, #0b7a3b); }
+.cp-progress .cp-split { background: repeating-linear-gradient(90deg, rgba(208, 138, 0, 0.18) 0 6px, rgba(208, 138, 0, 0.1) 6px 9px); }
+.cp-progress span b:not(.up) { color: var(--ocean-900); }
+
+/* dashboard KPIs carry a second fact: up to two lines */
+.kpi-sub { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; }
+.kpi-sub b { color: var(--text-secondary); font-weight: 650; }
+
+/* ===================================================================== chits: a top band as slim as the accounts one */
+.chits-page .cp-card { gap: 4px; padding: 7px 12px 8px; align-content: start; }
+.chits-page .cp-head { gap: 8px; }
+.chits-page .cp-head b { font-size: 17px; line-height: 1.1; }
+.chits-page .cp-head small .cp-count { letter-spacing: 0.02em; color: var(--ocean-700); }
+.chits-page .cp-head .cp-still { margin-top: 0; font-size: 10.5px; }
+.chits-page .cp-rate { padding: 2px 7px; font-size: 11.5px; }
+.chits-page .cp-progress { gap: 3px; }
+.chits-page .cp-progress .onc-bar { height: 5px; }
+.chits-page .cp-progress span { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; font-size: 10.5px; line-height: 1.35; }
+.chits-page .cp-progress .cs-mini-switch { margin-left: auto; font-size: 10px; }
+.chits-page .cs-cards .ov-card { padding: 7px 10px; gap: 8px; align-items: center; }
+.chits-page .cs-cards .ov-card .ov-ico { width: 26px; height: 26px; }
+.chits-page .cs-cards .ov-card b { font-size: 15px; }
+
+/* the chit detail: slimmer banner, key tiles and stat line */
+.chits-page .chit-banner { padding-top: 8px; padding-bottom: 8px; }
+.chits-page .cb-progress { margin-top: 4px; }
+.chits-page .chit-key { gap: 6px; padding: 6px 8px 2px; }
+.chits-page .ck-tile { padding: 6px 9px; gap: 7px; align-items: center; }
+.chits-page .ck-tile .ck-icon { width: 24px; height: 24px; border-radius: 8px; }
+.chits-page .ck-tile .ck-icon svg { width: 12px; height: 12px; }
+.chits-page .ck-tile b { font-size: 15px; line-height: 1.2; }
+.chits-page .ck-bar { margin: 2px 0 1px; height: 3px; }
+.chits-page .chit-statline { margin: 2px 8px 6px; padding: 3px 10px; gap: 2px 14px; font-size: 10.5px; }
+
+/* ===================================================================== dashboard: more panels, so it scrolls once they no longer fit */
+.page.dashboard { overflow-y: auto; overflow-x: hidden; padding-right: 2px; }
+.dashboard .dash-grid { flex: none; grid-auto-rows: 290px; }
+.dashboard .panel-body.chart:has(.dx-facts) { display: flex; flex-direction: column; gap: 6px; }
+.dashboard .panel-body.chart:has(.dx-facts) .chart-wrap { flex: 1; min-height: 120px; }
+.dashboard .chart-wrap.short { flex: 0 0 110px !important; min-height: 110px; }
+.dx-facts { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 0 2px; }
+.dx-facts span { display: grid; line-height: 1.2; }
+.dx-facts small { font-size: 9px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted); }
+.dx-facts b { font-size: 13px; font-weight: 750; color: var(--ocean-900); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dx-facts b.pos { color: var(--positive); } .dx-facts b.neg { color: var(--negative); }
+.dx-plans, .dx-cards { display: grid; gap: 4px; }
+.dx-plan { display: grid; grid-template-columns: minmax(0, 1fr) 90px 62px; align-items: center; gap: 8px; font-size: 11.5px; }
+.dx-plan b { text-align: right; font-variant-numeric: tabular-nums; }
+.dx-plan .cr-bar, .dx-plan .progress { margin: 0; }
+.dx-debt { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; height: 100%; align-items: center; }
+.dx-debt .donut-wrap { grid-template-columns: 140px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: center; height: 100%; }
+.dx-debt .donut-wrap .chart { height: 140px; }
+.dx-ratio { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; }
+.dx-ratio small { color: var(--text-muted); }
+.dx-ratio .progress { margin: 0; }
+@media (max-width: 1100px) { .dx-debt { grid-template-columns: minmax(0, 1fr); } }
+.dx-debt .donut-legend { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.dashboard .panel-body.chart .empty svg { width: 34px; height: 34px; }
+.dx-loans { gap: 7px; margin-top: 4px; }
+.dx-note { margin: auto 0 0; font-size: 10.5px; color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
+.dx-note svg { width: 11px; height: 11px; }
+
+/* ===================================================================== reports › EMI analysis */
+.emi-report { display: flex; flex-direction: column; gap: 10px; min-height: 0; height: 100%; overflow: auto; padding-bottom: 6px; }
+.emi-cards { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.emi-cards .ov-card b { font-size: 16px; }
+.emi-charts { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 10px; flex: 0 0 270px; }
+.emi-charts .panel { min-height: 0; }
+.emi-report > .panel { flex: none; }
+.emi-controls { display: inline-flex; align-items: center; gap: 12px; }
+.emi-controls input[type=number] { height: 26px; }
+.emi-how { margin: 0; display: flex; gap: 6px; align-items: flex-start; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+.emi-how svg { width: 13px; height: 13px; flex-shrink: 0; margin-top: 2px; }
+@media (max-width: 1200px) { .emi-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .emi-charts { grid-template-columns: minmax(0, 1fr); flex-basis: auto; } .emi-charts .panel { height: 260px; } }

@@ -1887,7 +1887,7 @@ public class HostedChitService {
             }
             TransferView t = book.transfer(new HostedChitBookService.TransferRequest(c.getId(), date, c.getCommissionBankAccountId(),
                     List.of(new LegInput(c.getCommissionAccountId(), toBank, mode, reference, null, note)), false, mode, reference,
-                    note != null ? note : "Commission " + payCode(shortCodeOf(c), monthNo), null));
+                    note != null ? note : "Commission - " + c.getName() + " month " + monthNo, null));
             month.setCommissionBankTransferId(t.id());
         } else if (!moved) {
             throw new BusinessException("Month " + monthNo + "'s commission is already in " + commissionAccount);
