@@ -1831,3 +1831,48 @@ tr.detail-row td { white-space: normal; }
 .emi-how { margin: 0; display: flex; gap: 6px; align-items: flex-start; font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
 .emi-how svg { width: 13px; height: 13px; flex-shrink: 0; margin-top: 2px; }
 @media (max-width: 1200px) { .emi-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } .emi-charts { grid-template-columns: minmax(0, 1fr); flex-basis: auto; } .emi-charts .panel { height: 260px; } }
+
+/* chits top band, slimmer still: paid in and still to pay on one line, every card in three short lines */
+.chits-page .cp-card { gap: 3px; padding: 5px 10px 6px; }
+.chits-page .cp-mark { width: 24px; height: 24px; border-radius: 8px; }
+.chits-page .cp-mark svg { width: 13px; height: 13px; }
+.chits-page .cp-head small { font-size: 9px; line-height: 1.2; }
+.chits-page .cp-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.chits-page .cp-line b { font-size: 15px; line-height: 1.15; }
+.chits-page .cp-line .cp-still { flex: 1; min-width: 0; font-size: 10px; }
+.chits-page .cp-rate { padding: 1px 6px; font-size: 11px; line-height: 1.15; }
+.chits-page .cp-rate small { font-size: 8.5px; }
+.chits-page .cp-progress { gap: 2px; }
+.chits-page .cp-progress .onc-bar { height: 4px; }
+.chits-page .cp-progress span { font-size: 10px; line-height: 1.25; }
+.chits-page .cs-cards { gap: 6px; }
+.chits-page .cs-cards .ov-card { padding: 5px 9px; gap: 7px; border-radius: 12px; }
+.chits-page .cs-cards .ov-card .ov-ico { width: 22px; height: 22px; border-radius: 7px; }
+.chits-page .cs-cards .ov-card .ov-ico svg { width: 12px; height: 12px; }
+.chits-page .cs-cards .ov-card .min-0 { gap: 0; }
+.chits-page .cs-cards .ov-card .ov-label { font-size: 9px; line-height: 1.2; }
+.chits-page .cs-cards .ov-card b { font-size: 14px; line-height: 1.2; }
+.chits-page .cs-cards .ov-card small { font-size: 10px; line-height: 1.25; }
+.chits-page .cs-cards .ov-card .ov-meter { margin-top: 2px; height: 3px; }
+
+/* chit detail, slimmer still: progress bar and its legend side by side, tiles with value and note on one line */
+.chits-page .chit-banner { padding: 6px 12px; gap: 10px; }
+.chits-page .chit-banner .hero-icon { width: 30px; height: 30px; }
+.chits-page .chit-banner .ab-name { font-size: 14px; line-height: 1.25; }
+.chits-page .chit-banner .ab-meta { line-height: 1.3; }
+.chits-page .chit-banner .ab-bal b { font-size: 18px; line-height: 1.15; }
+.chits-page .chit-banner .ab-bal small, .chits-page .chit-banner .ab-change { line-height: 1.2; }
+.chits-page .cb-progress { flex-direction: row; align-items: center; gap: 8px; margin-top: 3px; max-width: none; }
+.chits-page .cb-track { flex: 0 0 200px; height: 6px; }
+.chits-page .cb-track .cb-now { top: -2px; height: 10px; }
+.chits-page .cb-legend { flex: 1; min-width: 0; flex-wrap: nowrap; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10px; }
+.chits-page .chit-key { gap: 5px; padding: 5px 8px 1px; }
+.chits-page .ck-tile { padding: 4px 8px; gap: 7px; border-radius: 9px; }
+.chits-page .ck-tile .ck-icon { width: 22px; height: 22px; border-radius: 7px; }
+.chits-page .ck-tile small { font-size: 9px; line-height: 1.2; }
+.chits-page .ck-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.chits-page .ck-line b { font-size: 14px; line-height: 1.2; flex-shrink: 0; }
+.chits-page .ck-line .ck-note { flex: 1; min-width: 0; font-size: 10px; }
+.chits-page .ck-bar { margin: 2px 0 0; height: 3px; }
+.chits-page .chit-statline { margin: 4px 8px 5px; padding: 2px 10px; font-size: 10px; line-height: 1.5; }
+.chits-page .chit-statline svg { width: 11px; height: 11px; }

@@ -161,8 +161,9 @@ function portfolioStrip(chits) {
     const dividends = sum(pool, 'dividendsEarned');
     const card = `
         <div class="cp-head"><span class="cp-mark">${icon('chit')}</span>
-            <div class="min-0"><small>Chit portfolio · <span class="cp-count">${running.length} running${done.length ? ` · ${done.length} done` : ''}</span></small><b>${moneyShort(sum(pool, 'paidIn'))} <em>paid in</em></b>
-                ${stillToPay > 0 ? `<span class="cp-still" title="${pending} installments left in the running chits">${moneyShort(stillToPay)} still to pay · ${pending} installments</span>` : '<span class="cp-still done">all installments paid</span>'}</div>
+            <div class="min-0"><small>Chit portfolio · <span class="cp-count">${running.length} running${done.length ? ` · ${done.length} done` : ''}</span></small>
+                <div class="cp-line"><b>${moneyShort(sum(pool, 'paidIn'))} <em>paid in</em></b>
+                ${stillToPay > 0 ? `<span class="cp-still" title="${pending} installments left in the running chits">${moneyShort(stillToPay)} to pay · ${pending} left</span>` : '<span class="cp-still done">all installments paid</span>'}</div></div>
             <span class="cp-rate" title="Yearly return, weighted by what is paid in">${percent(weighted, 1)}<small>a year</small></span></div>
         <div class="cp-progress" title="${percent(paidPct, 0)} of the ${moneyShort(total)} the running chits ask for: paid in, then still to pay">
             <i class="onc-bar cp-split"><em style="width:${Math.min(100, paidPct)}%"></em></i>
@@ -484,7 +485,7 @@ function drawDetail(container, { chit: c, installments, interestSchedule }, relo
 /** A key figure of the selected chit: label, value, a short note and an optional bar. */
 function keyTile(iconName, label, value, note, extra = '', cls = '', title = '') {
     return `<div class="ck-tile ${cls}" ${title ? `title="${esc(title)}"` : ''}><span class="ck-icon">${icon(iconName)}</span>
-        <div class="min-0 grow"><small>${esc(label)}</small><b>${value}</b>${extra}<span class="ck-note">${note}</span></div></div>`;
+        <div class="min-0 grow"><small>${esc(label)}</small><div class="ck-line"><b>${value}</b><span class="ck-note">${note}</span></div>${extra}</div></div>`;
 }
 
 function tile(iconName, label, value, note, cls = '') {
